@@ -84,6 +84,10 @@ I will document the content of these folders in due time.
     + ChIP-seq or CM? (probably dependent on CM paper coming out)
     + IgG or Input?
 
+Could we have ATAC-seq done on several hematopoietic lineages as a way of seeing samples in light of development and maybe classifying them according to where in differentiation things went wrong?
+
+Could we have gene expression for (at least some of the samples) to show that chromatin opening does change things, and that they correlate?
+
 #### Timeline
 2-3 months for ATAC-seq data production (end-to-end)
 
@@ -112,6 +116,7 @@ I will document the content of these folders in due time.
     + Motif-search
     + Enhancer-TF pairing
     + With evolution build GRN
++ Show chromatin opening in enhancers though normal differentiation and the different states of chromatin opening during disease.
 + De novo enhancers
     + Comparison with Roadmap + Encode
 + Super-enhancers
@@ -125,3 +130,4 @@ I will document the content of these folders in due time.
     + Do certain type of genes get enriched in time over all/clusters of samples? (test all functional classes, correct p*values)
 + Finding new biomarkers
     + Look at earliest points (if possible before diagnosis) for consistent activation
+
