@@ -111,6 +111,11 @@ Could we have gene expression for (at least some of the samples) to show that ch
 + Decide on the *spin* of the paper:
     + focus on GRNs, biomarkers or deeper characterization
 
+##### Aditional ideas using only ATAC-seq data:
++ Call nucleosomes and dyads using NucleoATAC
++ Look for global nucleosome positioning differences between clusters and compared with controls
++ Look for global nucleosome positioning differences within groups of gene classes (e.g. genes involved in cellular proliferation, cell cycle, B-cell biology and other classes).
+
 #### Several ideas for downstream:
 + GRNs
     + Motif-search
