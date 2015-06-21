@@ -1,0 +1,23 @@
+"sampleName","cellLine","numberCells","technique","ip","patientID","sampleID","condition","experimentName","technicalReplicate","genome","unmappedBam"
+,"CLL","1.5M","ChIP-seq","H3K4me1",5147,"1-5-48105"," ","ChIP17-7",,"hg19","/fhgfs/groups/lab_bsf/samples/BSF_0133_C5GW4ACXX/BSF_0133_C5GW4ACXX_5_samples/BSF_0133_C5GW4ACXX_5#H3K4me1_CLL_1_5_48105_1_5mio_ChIP_ChIP17_7.bam"
+,"CLL","1.5M","ChIP-seq","H3K27me3",5147,"1-5-48105"," ","ChIP17-5",,"hg19","/fhgfs/groups/lab_bsf/samples/BSF_0133_C5GW4ACXX/BSF_0133_C5GW4ACXX_5_samples/BSF_0133_C5GW4ACXX_5#H3K27me3_CLL_1_5_48105_1_5mio_ChIP_ChIP17_5.bam"
+,"CLL","1.5M","ChIP-seq","H3K27me3",5147,"1-5-48105","abcam","ChIP17-2",,"hg19","/fhgfs/groups/lab_bsf/samples/BSF_0133_C5GW4ACXX/BSF_0133_C5GW4ACXX_5_samples/BSF_0133_C5GW4ACXX_5#H3K27me3_ab_CLL_1_5_48105_1_5mio_ChIP_ChIP17_2.bam"
+,"CLL","1.5M","ChIP-seq","H3K27ac",5147,"1-5-48105","millipore","ChIP17-1",,"hg19","/fhgfs/groups/lab_bsf/samples/BSF_0133_C5GW4ACXX/BSF_0133_C5GW4ACXX_5_samples/BSF_0133_C5GW4ACXX_5#H3K27ac_mp_CLL_1_5_48105_1_5mio_ChIP_ChIP17_1.bam"
+,"CLL","1.5M","ChIP-seq","H3K27ac",5147,"1-5-48105"," ","ChIP17-6",,"hg19","/fhgfs/groups/lab_bsf/samples/BSF_0133_C5GW4ACXX/BSF_0133_C5GW4ACXX_5_samples/BSF_0133_C5GW4ACXX_5#H3K27ac_CLL_1_5_48105_1_5mio_ChIP_ChIP17_6.bam"
+,"CLL","500k","ChIP-seq","H3K4me3",4621,"1-5-36904"," ","CM19-1",,"hg19","/fhgfs/groups/lab_bsf/samples/BSF_0130_C5HM6ACXX/BSF_0130_C5HM6ACXX_8_samples/BSF_0130_C5HM6ACXX_8#H3K4me3_CLL_1_5_36904_500k_ChIP_CM19_1.bam"
+,"CLL","500k","ChIP-seq","H3K4me1",4621,"1-5-36904"," ","CM19-4",,"hg19","/fhgfs/groups/lab_bsf/samples/BSF_0130_C5HM6ACXX/BSF_0130_C5HM6ACXX_8_samples/BSF_0130_C5HM6ACXX_8#H3K4me1_CLL_1_5_36904_500k_ChIP_CM19_4.bam"
+,"CLL","500k","ChIP-seq","H3K27me3",4621,"1-5-36904"," ","CM19-2",,"hg19","/fhgfs/groups/lab_bsf/samples/BSF_0130_C5HM6ACXX/BSF_0130_C5HM6ACXX_8_samples/BSF_0130_C5HM6ACXX_8#H3K27me3_CLL_1_5_36904_500k_ChIP_CM19_2.bam"
+,"CLL",,"ATAC-seq"," ",5277,"1-5-57269"," ","ATAC17-8",,"hg19","/fhgfs/groups/lab_bsf/samples/BSF_0130_C5HM6ACXX/BSF_0130_C5HM6ACXX_8_samples/BSF_0130_C5HM6ACXX_8#ATAC17_8_CLL_1_5_57269.bam"
+,"CLL",,"ATAC-seq"," ",4784,"1-5-52817"," ","ATAC17-6",,"hg19","/fhgfs/groups/lab_bsf/samples/BSF_0130_C5HM6ACXX/BSF_0130_C5HM6ACXX_8_samples/BSF_0130_C5HM6ACXX_8#ATAC17_6_CLL_1_5_52817.bam"
+,"CLL",,"ATAC-seq"," ",5186,"1-5-57350"," ","ATAC17-4",,"hg19","/fhgfs/groups/lab_bsf/samples/BSF_0130_C5HM6ACXX/BSF_0130_C5HM6ACXX_8_samples/BSF_0130_C5HM6ACXX_8#ATAC17_4_CLL_1_5_57350.bam"
+,"CLL",,"ATAC-seq"," ",5147,"1-5-48105"," ","ATAC17-2",,"hg19","/fhgfs/groups/lab_bsf/samples/BSF_0130_C5HM6ACXX/BSF_0130_C5HM6ACXX_8_samples/BSF_0130_C5HM6ACXX_8#ATAC17_2_CLL_1_5_48105.bam"
+,"CLL",,"ATAC-seq",,981,"1-5-42480",,"ATAC16-6",,"hg19","/fhgfs/groups/lab_bsf/samples/BSF_0120_C5CVMACXX/BSF_0120_C5CVMACXX_3_samples/BSF_0120_C5CVMACXX_3#ATAC16_6_CLL_1_5_42480.bam"
+,"CLL",,"ATAC-seq",,4621,"1-5-36904",,"ATAC16-2",,"hg19","/fhgfs/groups/lab_bsf/samples/BSF_0120_C5CVMACXX/BSF_0120_C5CVMACXX_3_samples/BSF_0120_C5CVMACXX_3#ATAC16_2_CLL_1_5_36904.bam"
+,"CLL",,"ATAC-seq",,5204,"1-5-58365",,"ATAC27-1",,"hg19",
+,"CLL",,"ATAC-seq",,4189,"1-5-48773",,"ATAC27-2",,"hg19",
+,"CLL",,"ATAC-seq",,4963,"1-5-37169",,"ATAC27-3",,"hg19",
+,"CLL",,"ATAC-seq",,1303,"1-5-35065",,"ATAC27-4",,"hg19",
+,"CLL",,"ATAC-seq",,4034,"1-5-47284",,"ATAC27-5",,"hg19",
+,"CLL",,"ATAC-seq",,3069,"1-5-27496",,"ATAC27-6",,"hg19",
+,"CLL",,"ATAC-seq",,3823,"1-5-51124",,"ATAC27-7",,"hg19",
+,"CLL",,"ATAC-seq",,50,"1-5-35290",,"ATAC27-8",,"hg19",

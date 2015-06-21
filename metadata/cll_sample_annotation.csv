@@ -1,9 +1,0 @@
-sampleName,cellLine,technique,patientID,sampleID,experimentName,biologicalReplicate,technicalReplicate,genome,unmappedBam
-,CLL,ATAC-seq,5204,1-5-58365,ATAC27-1,1,1,hg19,
-,CLL,ATAC-seq,4189,1-5-48773,ATAC27-2,1,1,hg19,
-,CLL,ATAC-seq,4963,1-5-37169,ATAC27-3,1,1,hg19,
-,CLL,ATAC-seq,1303,1-5-35065,ATAC27-4,1,1,hg19,
-,CLL,ATAC-seq,4034,1-5-47284,ATAC27-5,1,1,hg19,
-,CLL,ATAC-seq,3069,1-5-27496,ATAC27-6,1,1,hg19,
-,CLL,ATAC-seq,3823,1-5-51124,ATAC27-7,1,1,hg19,
-,CLL,ATAC-seq,50,1-5-35290,ATAC27-8,1,1,hg19,
