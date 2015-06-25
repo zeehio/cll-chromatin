@@ -63,33 +63,20 @@ I will document the content of these folders in due time.
 # Todo
 
 ## Patient description
-+ B-cell CLL or other chronic leukaemias?
-+ Patient history
-    + ZAP-70 (T-cell r) tested?
-    + Blood cells counts? Yes
-    + Remissions annotated?
-    + Medication history?
-+ Time-linked
-+ 94 samples
-+ ~50 patients (+ ~50 coming)
-+ 2 vials with ~20M cells
-+ are we getting also samples from normal donors?
+See [annotation](metadata/patient_clinical_annotation.csv)
 
 ## Data production
 + Open-chromatin
     + ATAC-seq
-+ Histone mods:
++ Histone mods (possible):
     + H3K27AC
     + H3K4ME3?
     + ChIP-seq or CM? (probably dependent on CM paper coming out)
     + IgG or Input?
 
-Could we have ATAC-seq done on several hematopoietic lineages as a way of seeing samples in light of development and maybe classifying them according to where in differentiation things went wrong?
+Could we have ATAC-seq done on lymphoid progenitors, small lymphiocytes and B cells of normal donors as a way of seeing samples in light of development and maybe classifying them according to where in differentiation things went wrong?
 
 Could we have gene expression for (at least some of the samples) to show that chromatin opening does change things, and that they correlate?
-
-#### Timeline
-2-3 months for ATAC-seq data production (end-to-end)
 
 ## Analysis (ideas)
 + Preprocessing
