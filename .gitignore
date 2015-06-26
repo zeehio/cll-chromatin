@@ -1,5 +1,10 @@
 # Project-specific
 *.pdf
+cll-patients.annotation_sheet.csv
+data/
+runs/
+ucsc_tracks_hg19.html
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
