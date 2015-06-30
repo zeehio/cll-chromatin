@@ -91,6 +91,10 @@ Could we have gene expression for (at least some of the samples) to show that ch
 + Machine learning on stratified patients
     1. Test several approaches
     2. Get metrics (ROC, AUCs, ...)
++ Accounting for genetic variability:
+    + http://www.nature.com/nmeth/journal/v12/n5/full/nmeth.3326.html
+    + http://biorxiv.org/content/early/2015/04/30/018788
+
 
 #### Decision time:
 + Decide at this point if we proceed with histone mods profiling
