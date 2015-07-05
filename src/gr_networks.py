@@ -58,4 +58,5 @@ samples = [s for s in prj.samples if type(s) == ATACseqSample]
 # for groups of patients:
 # - come up with a way of combining signal from several patients from one group
 # - build networks specific to groups
-# - compare networks
+
+# Compare Networks
