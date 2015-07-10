@@ -24,3 +24,8 @@ samples = [s for s in prj.samples if type(s) == ATACseqSample]
 # test enrichment of site clusters
 
 # Think how to analyse data from few patients tretated with several drugs at different times
+
+
+# The protein intereaction quantification (PIQ) algorithm tries to
+# deconvolute TF function during a temporal series and classify TFs
+# according to their mode of action (pioneers, settlers, migrants)
