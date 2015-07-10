@@ -34,7 +34,7 @@ samples = [s for s in prj.samples if type(s) == ATACseqSample]
 # GET DUPLICATES IN MITOCHONDRIAL GENOME ONLY
 # Submit job marking duplicates for each sample
 for sample in samples:
-    dupsLog = "~/scratch/{0}.dupLog.txt".format(sample.name)
+    dupsLog = os.path.join(sample.dirs.sampleRoot, sample.name + ".dupLog.txt")
 
     cmd = tk.slurmHeader("_".join([sample.name, "mitochondria_duplicates"]), "scratch/mitoLog.txt", cpusPerTask=4)
     cmd += """sambamba slice {0} chrM | sambamba markdup -t 4 /dev/stdin ~/scratch/{1}.dups.rmMe 2>  {2}\n""".format(sample.mapped, sample.name, dupsLog)
@@ -52,7 +52,7 @@ df = pd.DataFrame(columns=["name", "total", "%duplicates", "total MT", "%dups nu
 for sample in samples:
     s = pd.Series(index=["name", "total", "%duplicates", "total MT", "%dups MT", "%dups nuclear"])
 
-    dupsLog = "~/scratch/{0}.dupLog.txt".format(sample.name)
+    dupsLog = os.path.join(sample.dirs.sampleRoot, sample.name + ".dupLog.txt")
 
     allDups = tk.parseDuplicateStats(sample.dupsMetrics)
     mtDups = tk.parseDuplicateStats(dupsLog)
