@@ -41,6 +41,11 @@ def normalizeByLibrarySize(series, samples):
     return (series / size) * 1e6
 
 
+def hexbin(x, y, color, **kwargs):
+    cmap = sns.light_palette(color, as_cmap=True)
+    plt.hexbin(x, y, gridsize=15, cmap=cmap, **kwargs)
+
+
 # Read configuration file
 with open("config.yaml", 'r') as handle:
     config = yaml.load(handle)
@@ -138,8 +143,11 @@ sns.boxplot(x="rpkm", y="sample", data=rpkmMelted)
 plt.savefig(os.path.join(plotsDir, "fpkm_per_sample.boxplot.pdf"), bbox_inches="tight")
 
 # pairwise rpkm scatter plot between samples
-sns.pairplot(rpkm[[sample.name for sample in samples]])
-plt.savefig(os.path.join(plotsDir, "fpkm_per_sample.pairwise_reg.pdf"), bbox_inches="tight")
+fig = plt.figure(figsize=(8, 6), dpi=300, facecolor='w', edgecolor='k')
+g = sns.PairGrid(rpkm[[sample.name for sample in samples]])
+g.map(hexbin)
+g.fig.subplots_adjust(wspace=.02, hspace=.02);
+plt.savefig(os.path.join(plotsDir, "fpkm_per_sample.pairwise_hexbin.pdf"), bbox_inches="tight")
 
 # qv2 vs mean rpkm
 rpkm['qv2'] = rpkm[[sample.name for sample in samples]].apply(lambda x: (np.std(x) / np.mean(x)) ** 2, axis=1)
@@ -154,6 +162,8 @@ plt.savefig(os.path.join(plotsDir, "fpkm_per_sample.qv2_vs_mean.pdf"), bbox_inch
 # Overview:
 # Correlation
 sns.clustermap(rpkm[samples].corr(), square=True)
+plt.savefig(os.path.join(dataDir, "all_sample_peaks.concatenated.correlation_clustering.pdf"), bbox_inches="tight")
+
 # Heatmap sites vs patients
 # hierarchical clustering
 
