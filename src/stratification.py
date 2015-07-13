@@ -4,8 +4,10 @@ import yaml
 import os
 from pipelines import Project, ATACseqSample
 import pybedtools
-from collections import Counter
+import seaborn as sns
 import pysam
+
+sns.set_style("whitegrid")
 
 
 def normalizeByIntervalLength(series):
@@ -51,7 +53,7 @@ samples = [s for s in prj.samples if type(s) == ATACseqSample]
 # GET CONSENSUS SITES ACROSS SAMPLES
 for i, sample in enumerate(samples):
     # Get summits of peaks and window around them
-    peaks = pybedtools.BedTool(sample.filteredPeaks).slop(g=pybedtools.chromsizes('hg19'), b=250)
+    peaks = pybedtools.BedTool(sample.peaks) # .slop(g=pybedtools.chromsizes('hg19'), b=250)
     # Merge overlaping peaks within a sample
     peaks = peaks.merge()
     if i == 0:
@@ -65,12 +67,22 @@ sites = sites.merge()
 sites.saveas(os.path.join(dataDir, "all_sample_peaks.concatenated.bed"))
 
 # Loop at summary statistics:
-# interval lengths, calculate support (number of samples overlaping each final one) etc...
-lengths = Counter([interval.length for interval in sites])
-support = sites.multi_intersect(i=[sample.filteredPeaks for sample in samples])
-# plot these frequencies now
+# interval lengths
+sns.distplot([interval.length for interval in sites])
 
-# Remove some regions chtMT, chr.*random
+# support (number of samples overlaping each final one)
+for i, sample in enumerate(samples):
+    if i ==0:
+        support = sites.intersect(sample.peaks, wa=True, c=True)
+    else:
+        support = support.intersect(sample.peaks, wa=True, c=True)
+support = support.to_dataframe()
+support = support.reset_index()
+support.columns = ["chrom", "start", "end"] + range(len(samples))
+support["support"] = support[range(len(samples))].apply(lambda x: sum(x) / float(len(samples)), axis=1)
+sns.distplot(support["support"])
+
+# Remove some regions chrM, chr.*random
 
 # After inspecting phenotypes, consider excluding more regions/chromosomes across all samples
 # e.g. chr11q, chr12
