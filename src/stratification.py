@@ -55,7 +55,7 @@ plotsDir = os.path.join(resultsDir, "plots")
 
 # Start project
 prj = Project("cll-patients")
-prj.addSampleSheet("../metadata/sample_annotation.csv")
+prj.addSampleSheet("../metadata/sequencing_sample_annotation.csv")
 
 
 # Select ATAC-seq samples
@@ -76,7 +76,11 @@ for i, sample in enumerate(samples):
 
 # Merge overlaping peaks across samples
 sites = sites.merge()
-sites.saveas(os.path.join(dataDir, "all_sample_peaks.concatenated.bed"))
+
+# Remove chrM peaks and save
+sites = sites.filter(lambda x: x.chrom != 'chrM').saveas(os.path.join(dataDir, "all_sample_peaks.concatenated.bed"))
+
+sites = pybedtools.BedTool(os.path.join(dataDir, "all_sample_peaks.concatenated.bed"))
 
 # Loop at summary statistics:
 # interval lengths
@@ -87,7 +91,7 @@ plt.savefig(os.path.join(plotsDir, "all_sample_peaks.lengths.pdf"), bbox_inches=
 
 # calculate support (number of samples overlaping each merged peak)
 for i, sample in enumerate(samples):
-    if i ==0:
+    if i == 0:
         support = sites.intersect(sample.peaks, wa=True, c=True)
     else:
         support = support.intersect(sample.peaks, wa=True, c=True)
@@ -102,11 +106,6 @@ support.to_csv(os.path.join(dataDir, "all_sample_peaks.support.csv"), index=Fals
 sns.distplot(support["support"], bins=10)
 plt.ylabel("frequency")
 plt.savefig(os.path.join(plotsDir, "all_sample_peaks.support.pdf"), bbox_inches="tight")
-
-
-# Remove some regions chrM, chr.*random
-# After inspecting known genotypes, consider excluding more regions/chromosomes across all samples
-# e.g. chr11q, chr12
 
 
 # MEASURE CHROMATIN OPENNESS PER SITE PER PATIENT
@@ -125,9 +124,10 @@ rpkm = rpk[[sample.name for sample in samples]].apply(normalizeByLibrarySize, ar
 # Save
 rpkm = pd.concat([rpk[["chrom", "start", "end"]], rpkm], axis=1)
 rpkm.to_csv(os.path.join(dataDir, "all_sample_peaks.concatenated.rpkm.bed"), sep="\t", index=False)
+rpkm = pd.read_csv(os.path.join(dataDir, "all_sample_peaks.concatenated.rpkm.bed"), sep="\t")
 
 # Log2 transform
-rpkm[samples] = np.log2(1 + rpkm[[sample.name for sample in samples]])
+rpkm[[sample.name for sample in samples]] = np.log2(1 + rpkm[[sample.name for sample in samples]])
 
 # Plot
 rpkmMelted = pd.melt(rpkm, id_vars=["chrom", "start", "end"], var_name="sample", value_name="rpkm")
@@ -149,25 +149,46 @@ g.map(hexbin)
 g.fig.subplots_adjust(wspace=.02, hspace=.02);
 plt.savefig(os.path.join(plotsDir, "fpkm_per_sample.pairwise_hexbin.pdf"), bbox_inches="tight")
 
+# Variation:
+# mean rpkm
+rpkm['mean'] = rpkm[[sample.name for sample in samples]].apply(lambda x: np.mean(x), axis=1)
+# dispersion (variance / mean)
+rpkm['dispersion'] = rpkm[[sample.name for sample in samples]].apply(lambda x: np.var(x) / np.mean(x), axis=1)
 # qv2 vs mean rpkm
 rpkm['qv2'] = rpkm[[sample.name for sample in samples]].apply(lambda x: (np.std(x) / np.mean(x)) ** 2, axis=1)
-rpkm['mean'] = rpkm[[sample.name for sample in samples]].apply(lambda x: np.mean(x), axis=1)
+
+sns.jointplot('mean', "dispersion", data=rpkm)
+plt.savefig(os.path.join(plotsDir, "fpkm_per_sample.dispersion.pdf"), bbox_inches="tight")
 
 sns.jointplot('mean', "qv2", data=rpkm)
-plt.xlabel("mean log2(1 + rpkm)")
 plt.savefig(os.path.join(plotsDir, "fpkm_per_sample.qv2_vs_mean.pdf"), bbox_inches="tight")
+
+
+# After inspecting known genotypes, consider excluding more regions/chromosomes across all samples
+# e.g. chr11q, chr12
+
+
+# Filter out regions which the maximum across all samples is below a treshold
+filtered = rpkm[rpkm[[sample.name for sample in samples]].apply(max, axis=1) > 3]
+
+sns.jointplot('mean', "dispersion", data=filtered)
+sns.jointplot('mean', "qv2", data=filtered)
 
 
 # GLOBAL CHARACTERIZATION
 # Overview:
 # Correlation
-sns.clustermap(rpkm[samples].corr(), square=True)
-plt.savefig(os.path.join(dataDir, "all_sample_peaks.concatenated.correlation_clustering.pdf"), bbox_inches="tight")
+sns.clustermap(rpkm[[sample.name for sample in samples]].corr(), square=True, vmin=-1, vmax=1, annot=True)
+plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.correlation_clustering.pdf"), bbox_inches="tight")
 
 # Heatmap sites vs patients
 # hierarchical clustering
 
 # PCA
+#Run a 'random' PCA 1,000 times - scrambling a random 2.5% of the data each time
+#This enables us to identify statistically significant PCs (in this case, 1:3), and genes with significant PC scores
+# zf <- jackStraw(zf, num.replicate=1000, prop.freq=0.025)
+# jackStrawPlot(zf)
 pca = PCA()
 X = pca.fit_transform(rpkm[[sample.name for sample in samples]])
 
