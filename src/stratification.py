@@ -6,11 +6,15 @@ from pipelines import Project, ATACseqSample
 import pybedtools
 import matplotlib.pyplot as plt
 import seaborn as sns
+from matplotlib.pyplot import cm
+from mpl_toolkits.mplot3d import Axes3D
 import pysam
 import pandas as pd
 import numpy as np
-from sklearn.decomposition import PCA
-
+from sklearn.preprocessing import normalize
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.decomposition import PCA, RandomizedPCA
+from sklearn.manifold import MDS
 
 sns.set_style("whitegrid")
 
@@ -27,7 +31,7 @@ def normalizeByIntervalLength(series):
     return series[["chrom", "start", "end"]].append(rpK)
 
 
-def normalizeByLibrarySize(series, samples):
+def normalizeByLibrarySize(series, samples, rmMT=True):
     """
     Divides a pandas.Series with numerical values by the total number of mapped
     reads in a bam file.
@@ -38,7 +42,11 @@ def normalizeByLibrarySize(series, samples):
     # get number of aligned reads for that sample
     size = float(pysam.AlignmentFile(sample.filtered).mapped)
 
-    return (series / size) * 1e6
+    if rmMT:
+        mt = pysam.AlignmentFile(sample.filtered).count(reference="chrM")
+        return (series / (size - mt)) * 1e6
+    else:
+        return (series / size) * 1e6
 
 
 def hexbin(x, y, color, **kwargs):
@@ -54,6 +62,7 @@ resultsDir = os.path.join(config["paths"]["parent"], config["projectname"], "res
 plotsDir = os.path.join(resultsDir, "plots")
 
 # Start project
+# prj = pickle.load(open("prj.pickle", 'rb'))
 prj = Project("cll-patients")
 prj.addSampleSheet("../metadata/sequencing_sample_annotation.csv")
 
@@ -77,8 +86,10 @@ for i, sample in enumerate(samples):
 # Merge overlaping peaks across samples
 sites = sites.merge()
 
+# Remove blacklist regions
+blacklist = pybedtools.BedTool(os.path.join(dataDir, "wgEncodeDacMapabilityConsensusExcludable.bed"))
 # Remove chrM peaks and save
-sites = sites.filter(lambda x: x.chrom != 'chrM').saveas(os.path.join(dataDir, "all_sample_peaks.concatenated.bed"))
+sites = sites.intersect(v=True, b=blacklist).filter(lambda x: x.chrom != 'chrM').saveas(os.path.join(dataDir, "all_sample_peaks.concatenated.bed"))
 
 sites = pybedtools.BedTool(os.path.join(dataDir, "all_sample_peaks.concatenated.bed"))
 
@@ -102,6 +113,7 @@ support.columns = ["chrom", "start", "end"] + [sample.name for sample in samples
 support["support"] = support[range(len(samples))].apply(lambda x: sum([i if i <= 1 else 1 for i in x]) / float(len(samples)), axis=1)
 # save
 support.to_csv(os.path.join(dataDir, "all_sample_peaks.support.csv"), index=False)
+support = pd.read_csv(os.path.join(dataDir, "all_sample_peaks.support.csv"))
 # plot
 sns.distplot(support["support"], bins=10)
 plt.ylabel("frequency")
@@ -110,7 +122,8 @@ plt.savefig(os.path.join(plotsDir, "all_sample_peaks.support.pdf"), bbox_inches=
 
 # MEASURE CHROMATIN OPENNESS PER SITE PER PATIENT
 # Get read counts for each sample in the union of the sites
-coverage = sites.multi_bam_coverage(bams=[sample.filtered for sample in samples], p=True, q=30, D=True)
+# coverage = sites.multi_bam_coverage(bams=[sample.filtered for sample in samples], p=True, q=30, D=True)
+coverage = sites.multi_bam_coverage(bams=[sample.filtered for sample in samples], q=30, D=True)
 # make dataframe
 coverage = coverage.to_dataframe().reset_index()
 coverage.columns = ["chrom", "start", "end"] + [sample.name for sample in samples]
@@ -135,21 +148,25 @@ rpkmMelted = pd.melt(rpkm, id_vars=["chrom", "start", "end"], var_name="sample",
 # rpkm density
 g = sns.FacetGrid(rpkmMelted, col="sample", aspect=2, col_wrap=4)
 g.map(sns.distplot, "rpkm", hist=False);
-plt.savefig(os.path.join(plotsDir, "fpkm_per_sample.distplot.pdf"), bbox_inches="tight")
+plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.distplot.pdf"), bbox_inches="tight")
+plt.close()
 
 # boxplot rpkm per sample
 # Plot the orbital period with horizontal boxes
 sns.boxplot(x="rpkm", y="sample", data=rpkmMelted)
-plt.savefig(os.path.join(plotsDir, "fpkm_per_sample.boxplot.pdf"), bbox_inches="tight")
+plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.boxplot.pdf"), bbox_inches="tight")
+plt.close()
 
 # pairwise rpkm scatter plot between samples
 fig = plt.figure(figsize=(8, 6), dpi=300, facecolor='w', edgecolor='k')
 g = sns.PairGrid(rpkm[[sample.name for sample in samples]])
 g.map(hexbin)
 g.fig.subplots_adjust(wspace=.02, hspace=.02);
-plt.savefig(os.path.join(plotsDir, "fpkm_per_sample.pairwise_hexbin.pdf"), bbox_inches="tight")
+plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.pairwise_hexbin.pdf"), bbox_inches="tight")
+plt.close()
 
 # Variation:
+rpkm = pd.merge(rpkm, support[['chrom', 'start', 'end', 'support']], on=['chrom', 'start', 'end'])
 # mean rpkm
 rpkm['mean'] = rpkm[[sample.name for sample in samples]].apply(lambda x: np.mean(x), axis=1)
 # dispersion (variance / mean)
@@ -158,10 +175,14 @@ rpkm['dispersion'] = rpkm[[sample.name for sample in samples]].apply(lambda x: n
 rpkm['qv2'] = rpkm[[sample.name for sample in samples]].apply(lambda x: (np.std(x) / np.mean(x)) ** 2, axis=1)
 
 sns.jointplot('mean', "dispersion", data=rpkm)
-plt.savefig(os.path.join(plotsDir, "fpkm_per_sample.dispersion.pdf"), bbox_inches="tight")
+plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.dispersion.pdf"), bbox_inches="tight")
 
 sns.jointplot('mean', "qv2", data=rpkm)
-plt.savefig(os.path.join(plotsDir, "fpkm_per_sample.qv2_vs_mean.pdf"), bbox_inches="tight")
+plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.qv2_vs_mean.pdf"), bbox_inches="tight")
+
+sns.jointplot('support', "qv2", data=rpkm)
+plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.support_vs_qv2.pdf"), bbox_inches="tight")
+
 
 
 # After inspecting known genotypes, consider excluding more regions/chromosomes across all samples
@@ -181,27 +202,81 @@ sns.jointplot('mean', "qv2", data=filtered)
 sns.clustermap(rpkm[[sample.name for sample in samples]].corr(), square=True, vmin=-1, vmax=1, annot=True)
 plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.correlation_clustering.pdf"), bbox_inches="tight")
 
-# Heatmap sites vs patients
-# hierarchical clustering
-
 # PCA
-#Run a 'random' PCA 1,000 times - scrambling a random 2.5% of the data each time
-#This enables us to identify statistically significant PCs (in this case, 1:3), and genes with significant PC scores
-# zf <- jackStraw(zf, num.replicate=1000, prop.freq=0.025)
-# jackStrawPlot(zf)
-pca = PCA()
-X = pca.fit_transform(rpkm[[sample.name for sample in samples]])
+# normalize
+X = normalize(rpkm[[sample.name for sample in samples]])
+
+# random PCA
+pca = RandomizedPCA()
+X = pca.fit(X).transform(X)
+
+variance = [np.round(i * 100, 0) for i in pca.explained_variance_ratio_]
 
 # get unique colors
-from matplotlib.pyplot import cm
-color = iter(cm.rainbow(np.linspace(0,1,len(samples))))
+colors = cm.Paired(np.linspace(0, 1, len(samples)))
 
-# plot each point
+# 2 components
+fig = plt.figure()
 for i, sample in enumerate(samples):
-    plt.scatter(X[i, 0], X[X[i, 0] == i, 1], label=sample.name, color=color.next())
-plt.legend()
+    plt.scatter(pca.components_[i, 0], pca.components_[i, 1],
+        label=sample.name,
+        color=colors[i],
+        s=50
+    )
+fig.axes[0].set_xlabel("PC1 - {0}% variance".format(variance[0]))
+fig.axes[0].set_ylabel("PC2 - {0}% variance".format(variance[1]))
+plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.PCA-2comp.pdf"), bbox_inches="tight")
+
+# 3 components
+fig = plt.figure()
+# plot each point
+ax = fig.add_subplot(111, projection='3d')
+for i, sample in enumerate(samples):
+    ax.scatter(pca.components_[i, 0], pca.components_[i, 1], pca.components_[i, 2],
+        label=sample.name,
+        color=colors[i],
+        s=100
+    )
+ax.set_xlabel("PC1 - {0}% variance".format(variance[0]))
+ax.set_ylabel("PC2 - {0}% variance".format(variance[1]))
+ax.set_zlabel("PC3 - {0}% variance".format(variance[2]))
+plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.PCA-3comp.pdf"), bbox_inches="tight")
 
 # MDS
+# on 1000 most variable genes
+n = 1000
+Xvar = normalize(rpkm.ix[rpkm[[sample.name for sample in samples]].apply(np.var, axis=1).order(ascending=False).index].head(n)[[sample.name for sample in samples]])
+
+# convert two components as we're plotting points in a two-dimensional plane
+# "precomputed" because we provide a distance matrix
+# we will also specify `random_state` so the plot is reproducible.
+mds = MDS()# n_components=2, dissimilarity="precomputed", random_state=1)
+
+pos = mds.fit_transform(Xvar)
+
+# plot
+fig = plt.figure()
+for i, sample in enumerate(samples):
+    plt.scatter(pos[i, 0], pos[i, 1],
+        label=sample.name,
+        color=colors[i],
+        s=50
+    )
+plt.title("MDS on %i most variable genes" % n)
+plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.MDS.pdf"))
+
+
+# Heatmap sites vs patients
+# hierarchical clustering
+model = AgglomerativeClustering()
+model.fit(X)
+plt.scatter(X[:, 0], X[:, 1], c=model.labels_,
+                        cmap=plt.cm.spectral)
+
+
 
 
 # INTER-SAMPLE VARIABILITY ANALYSIS
