@@ -1,5 +1,8 @@
 #!/usr/bin/env python
 
+"""
+"""
+
 import yaml
 import os
 from pipelines import Project, ATACseqSample
@@ -13,25 +16,25 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import normalize
 from sklearn.cluster import AgglomerativeClustering
-from sklearn.decomposition import PCA, RandomizedPCA
+from sklearn.decomposition import RandomizedPCA
 from sklearn.manifold import MDS
 
 sns.set_style("whitegrid")
 
 
-def normalizeByIntervalLength(series):
+def normalize_by_interval_length(series):
     """
     Divides a pandas.Series with numerical values by the length of the interval
     (defined in "chr", "start", "end") in a bam file (RPK).
     """
     length = float(series["end"] - series["start"])
 
-    rpK = (series.drop(["chrom", "start", "end"]) / length) * 1e3
+    rpk = (series.drop(["chrom", "start", "end"]) / length) * 1e3
 
-    return series[["chrom", "start", "end"]].append(rpK)
+    return series[["chrom", "start", "end"]].append(rpk)
 
 
-def normalizeByLibrarySize(series, samples, rmMT=True):
+def normalize_by_library_size(series, samples, rm_mt=True):
     """
     Divides a pandas.Series with numerical values by the total number of mapped
     reads in a bam file.
@@ -42,7 +45,7 @@ def normalizeByLibrarySize(series, samples, rmMT=True):
     # get number of aligned reads for that sample
     size = float(pysam.AlignmentFile(sample.filtered).mapped)
 
-    if rmMT:
+    if rm_mt:
         mt = pysam.AlignmentFile(sample.filtered).count(reference="chrM")
         return (series / (size - mt)) * 1e6
     else:
@@ -74,7 +77,7 @@ samples = [s for s in prj.samples if type(s) == ATACseqSample]
 # GET CONSENSUS SITES ACROSS SAMPLES
 for i, sample in enumerate(samples):
     # Get summits of peaks and window around them
-    peaks = pybedtools.BedTool(sample.peaks) # .slop(g=pybedtools.chromsizes('hg19'), b=250)
+    peaks = pybedtools.BedTool(sample.peaks)  # .slop(g=pybedtools.chromsizes('hg19'), b=250)
     # Merge overlaping peaks within a sample
     peaks = peaks.merge()
     if i == 0:
@@ -130,9 +133,9 @@ coverage.columns = ["chrom", "start", "end"] + [sample.name for sample in sample
 coverage.to_csv(os.path.join(dataDir, "all_sample_peaks.concatenated.raw_coverage.bed"), sep="\t", index=False)
 
 # Normalize by feature length (Reads per kilobase)
-rpk = coverage.apply(normalizeByIntervalLength, axis=1)
+rpk = coverage.apply(normalize_by_interval_length, axis=1)
 # Normalize by library size - mapped reads (Reads per kilobase per million)
-rpkm = rpk[[sample.name for sample in samples]].apply(normalizeByLibrarySize, args=(samples, ), axis=0)
+rpkm = rpk[[sample.name for sample in samples]].apply(normalize_by_library_size, args=(samples, ), axis=0)
 
 # Save
 rpkm = pd.concat([rpk[["chrom", "start", "end"]], rpkm], axis=1)
@@ -147,7 +150,7 @@ rpkmMelted = pd.melt(rpkm, id_vars=["chrom", "start", "end"], var_name="sample",
 
 # rpkm density
 g = sns.FacetGrid(rpkmMelted, col="sample", aspect=2, col_wrap=4)
-g.map(sns.distplot, "rpkm", hist=False);
+g.map(sns.distplot, "rpkm", hist=False)
 plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.distplot.pdf"), bbox_inches="tight")
 plt.close()
 
@@ -161,7 +164,7 @@ plt.close()
 fig = plt.figure(figsize=(8, 6), dpi=300, facecolor='w', edgecolor='k')
 g = sns.PairGrid(rpkm[[sample.name for sample in samples]])
 g.map(hexbin)
-g.fig.subplots_adjust(wspace=.02, hspace=.02);
+g.fig.subplots_adjust(wspace=.02, hspace=.02)
 plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.pairwise_hexbin.pdf"), bbox_inches="tight")
 plt.close()
 
@@ -182,7 +185,6 @@ plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.qv2_vs_mean.pdf"), bbox_inch
 
 sns.jointplot('support', "qv2", data=rpkm)
 plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.support_vs_qv2.pdf"), bbox_inches="tight")
-
 
 
 # After inspecting known genotypes, consider excluding more regions/chromosomes across all samples
@@ -218,7 +220,8 @@ colors = cm.Paired(np.linspace(0, 1, len(samples)))
 # 2 components
 fig = plt.figure()
 for i, sample in enumerate(samples):
-    plt.scatter(pca.components_[i, 0], pca.components_[i, 1],
+    plt.scatter(
+        pca.components_[i, 0], pca.components_[i, 1],
         label=sample.name,
         color=colors[i],
         s=50
@@ -233,7 +236,8 @@ fig = plt.figure()
 # plot each point
 ax = fig.add_subplot(111, projection='3d')
 for i, sample in enumerate(samples):
-    ax.scatter(pca.components_[i, 0], pca.components_[i, 1], pca.components_[i, 2],
+    ax.scatter(
+        pca.components_[i, 0], pca.components_[i, 1], pca.components_[i, 2],
         label=sample.name,
         color=colors[i],
         s=100
@@ -252,14 +256,15 @@ Xvar = normalize(rpkm.ix[rpkm[[sample.name for sample in samples]].apply(np.var,
 # convert two components as we're plotting points in a two-dimensional plane
 # "precomputed" because we provide a distance matrix
 # we will also specify `random_state` so the plot is reproducible.
-mds = MDS()# n_components=2, dissimilarity="precomputed", random_state=1)
+mds = MDS()  # n_components=2, dissimilarity="precomputed", random_state=1)
 
 pos = mds.fit_transform(Xvar)
 
 # plot
 fig = plt.figure()
 for i, sample in enumerate(samples):
-    plt.scatter(pos[i, 0], pos[i, 1],
+    plt.scatter(
+        pos[i, 0], pos[i, 1],
         label=sample.name,
         color=colors[i],
         s=50
@@ -273,10 +278,11 @@ plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.MDS.pdf"))
 # hierarchical clustering
 model = AgglomerativeClustering()
 model.fit(X)
-plt.scatter(X[:, 0], X[:, 1], c=model.labels_,
-                        cmap=plt.cm.spectral)
-
-
+plt.scatter(
+    X[:, 0], X[:, 1],
+    c=model.labels_,
+    cmap=plt.cm.spectral
+)
 
 
 # INTER-SAMPLE VARIABILITY ANALYSIS
