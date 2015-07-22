@@ -57,6 +57,31 @@ def hexbin(x, y, color, **kwargs):
     plt.hexbin(x, y, gridsize=15, cmap=cmap, **kwargs)
 
 
+def hierarchical_cluster_matrix(df):
+    # Compute and plot dendrogram
+    fig = plt.figure()
+    axdendro = fig.add_axes([0.09, 0.1, 0.2, 0.8])
+    y = linkage(df, method='centroid')
+    z = dendrogram(y, orientation='right')
+    axdendro.set_xticks([])
+    axdendro.set_yticks([])
+
+    # Plot distance matrix
+    axmatrix = fig.add_axes([0.3, 0.1, 0.6, 0.8])
+    index = z['leaves']
+    d = df[index, :]
+    d = df[:, index]
+    im = axmatrix.matshow(d, aspect='auto', origin='lower')
+    axmatrix.set_xticks([])
+    axmatrix.set_yticks([])
+
+    # Plot colorbar
+    axcolor = fig.add_axes([0.91, 0.1, 0.02, 0.8])
+    plt.colorbar(im, cax=axcolor)
+
+    return fig
+
+
 # Read configuration file
 with open("config.yaml", 'r') as handle:
     config = yaml.load(handle)
@@ -276,13 +301,8 @@ plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.MDS.pdf"))
 
 # Heatmap sites vs patients
 # hierarchical clustering
-model = AgglomerativeClustering()
-model.fit(X)
-plt.scatter(
-    X[:, 0], X[:, 1],
-    c=model.labels_,
-    cmap=plt.cm.spectral
-)
+fig = hierarchical_cluster_matrix(rpkm[[sample.name for sample in samples]])
+fig.savefig("all_sample_peaks.concatenated.hierarchicalClustering.pdf")
 
 
 # INTER-SAMPLE VARIABILITY ANALYSIS
