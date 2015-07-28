@@ -1,5 +1,8 @@
 #!/usr/bin/env python
 
+"""
+"""
+
 import yaml
 import os
 from pipelines import Project, ATACseqSample
@@ -14,25 +17,25 @@ import numpy as np
 from sklearn.preprocessing import normalize
 from sklearn.decomposition import RandomizedPCA
 from sklearn.manifold import MDS
-from scipy.cluster.hierarchy import linkage, dendrogram
+from scipy.cluster import linkage, dendrogram
 
 
 sns.set_style("whitegrid")
 
 
-def normalizeByIntervalLength(series):
+def normalize_by_interval_length(series):
     """
     Divides a pandas.Series with numerical values by the length of the interval
     (defined in "chr", "start", "end") in a bam file (RPK).
     """
     length = float(series["end"] - series["start"])
 
-    rpK = (series.drop(["chrom", "start", "end"]) / length) * 1e3
+    rpk = (series.drop(["chrom", "start", "end"]) / length) * 1e3
 
-    return series[["chrom", "start", "end"]].append(rpK)
+    return series[["chrom", "start", "end"]].append(rpk)
 
 
-def normalizeByLibrarySize(series, samples, rmMT=True):
+def normalize_by_library_size(series, samples, rm_mt=True):
     """
     Divides a pandas.Series with numerical values by the total number of mapped
     reads in a bam file.
@@ -43,7 +46,7 @@ def normalizeByLibrarySize(series, samples, rmMT=True):
     # get number of aligned reads for that sample
     size = float(pysam.AlignmentFile(sample.filtered).mapped)
 
-    if rmMT:
+    if rm_mt:
         mt = pysam.AlignmentFile(sample.filtered).count(reference="chrM")
         return (series / (size - mt)) * 1e6
     else:
@@ -55,21 +58,21 @@ def hexbin(x, y, color, **kwargs):
     plt.hexbin(x, y, gridsize=15, cmap=cmap, **kwargs)
 
 
-def hierarchicalClusterMatrix(df):
+def hierarchical_cluster_matrix(df):
     # Compute and plot dendrogram
     fig = plt.figure()
     axdendro = fig.add_axes([0.09, 0.1, 0.2, 0.8])
-    Y = linkage(df, method='centroid')
-    Z = dendrogram(Y, orientation='right')
+    y = linkage(df, method='centroid')
+    z = dendrogram(y, orientation='right')
     axdendro.set_xticks([])
     axdendro.set_yticks([])
 
     # Plot distance matrix
     axmatrix = fig.add_axes([0.3, 0.1, 0.6, 0.8])
-    index = Z['leaves']
-    D = df[index, :]
-    D = df[:, index]
-    im = axmatrix.matshow(D, aspect='auto', origin='lower')
+    index = z['leaves']
+    d = df[index, :]
+    d = df[:, index]
+    im = axmatrix.matshow(d, aspect='auto', origin='lower')
     axmatrix.set_xticks([])
     axmatrix.set_yticks([])
 
@@ -156,9 +159,9 @@ coverage.columns = ["chrom", "start", "end"] + [sample.name for sample in sample
 coverage.to_csv(os.path.join(dataDir, "all_sample_peaks.concatenated.raw_coverage.bed"), sep="\t", index=False)
 
 # Normalize by feature length (Reads per kilobase)
-rpk = coverage.apply(normalizeByIntervalLength, axis=1)
+rpk = coverage.apply(normalize_by_interval_length, axis=1)
 # Normalize by library size - mapped reads (Reads per kilobase per million)
-rpkm = rpk[[sample.name for sample in samples]].apply(normalizeByLibrarySize, args=(samples, ), axis=0)
+rpkm = rpk[[sample.name for sample in samples]].apply(normalize_by_library_size, args=(samples, ), axis=0)
 
 # Save
 rpkm = pd.concat([rpk[["chrom", "start", "end"]], rpkm], axis=1)
@@ -299,7 +302,7 @@ plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.MDS.pdf"))
 
 # Heatmap sites vs patients
 # hierarchical clustering
-fig = hierarchicalClusterMatrix(rpkm[[sample.name for sample in samples]])
+fig = hierarchical_cluster_matrix(rpkm[[sample.name for sample in samples]])
 fig.savefig("all_sample_peaks.concatenated.hierarchicalClustering.pdf")
 
 
