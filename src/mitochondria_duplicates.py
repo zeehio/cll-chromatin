@@ -7,10 +7,11 @@ Determine what percentage of the total number of duplicate reads is explained by
 
 import yaml
 import os
-from pipelines import Project, ATACseqSample
+from pipelines.models import Project, ATACseqSample
 from pipelines import toolkit as tk
 import textwrap
 import pandas as pd
+import matplotlib.pylab as plt
 import seaborn as sns
 
 sns.set(style="whitegrid")
@@ -20,11 +21,11 @@ sns.set(style="whitegrid")
 with open("config.yaml", 'r') as handle:
     config = yaml.load(handle)
 dataDir = os.path.join(config["paths"]["parent"], config["projectname"], "data")
-resultsDir = os.path.join(config["paths"]["parent"], config["projectname"], "results")
+resultsDir = os.path.join(config["paths"]["parent"], config["projectname"], "results", "plots")
 
 # Start project
 prj = Project("cll-patients")
-prj.addSampleSheet("../metadata/sample_annotation.csv")
+prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
 
 # Select ATAC-seq samples
@@ -36,11 +37,11 @@ samples = [s for s in prj.samples if type(s) == ATACseqSample]
 for sample in samples:
     dupsLog = os.path.join(sample.dirs.sampleRoot, sample.name + ".dupLog.txt")
 
-    cmd = tk.slurmHeader("_".join([sample.name, "mitochondria_duplicates"]), "scratch/mitoLog.txt", cpusPerTask=4)
-    cmd += """sambamba slice {0} chrM | sambamba markdup -t 4 /dev/stdin ~/scratch/{1}.dups.rmMe 2>  {2}\n""".format(sample.mapped, sample.name, dupsLog)
+    cmd = tk.slurmHeader("_".join([sample.name, "mitochondria_duplicates"]), "/home/arendeiro/scratch/mitoLog.txt", cpusPerTask=4)
+    cmd += """sambamba slice {0} chrM | sambamba markdup -t 4 /dev/stdin /home/arendeiro/scratch/{1}.dups.rmMe 2>  {2}\n""".format(sample.mapped, sample.name, dupsLog)
     cmd += tk.slurmFooter()
 
-    jobFile = "scratch/" + sample.name + ".slurm.sh"
+    jobFile = "/home/arendeiro/scratch/" + sample.name + ".slurm.sh"
 
     with open(jobFile, "w") as handle:
         handle.writelines(textwrap.dedent(cmd))
@@ -57,12 +58,17 @@ for sample in samples:
     allDups = tk.parseDuplicateStats(sample.dupsMetrics)
     mtDups = tk.parseDuplicateStats(dupsLog)
 
-    s["name"] = sample.name
-    s["total"] = float(allDups["single-ends"]) + (float(allDups["paired-ends"]) * 2)
-    s["%duplicates"] = (float(allDups["duplicates"]) / s["total"]) * 100
-    s["total MT"] = float(mtDups["single-ends"]) + (float(mtDups["paired-ends"]) * 2)
-    s["%dups MT"] = (float(mtDups["duplicates"]) / float(allDups["duplicates"])) * 100
-    s["%dups nuclear"] = ((float(allDups["duplicates"]) - float(mtDups["duplicates"])) / s["total"]) * 100
+    # is it empty?
+    e = False if len(allDups) != 0 else True
+    mtE = False if len(mtDups) != 0 else True
+
+    s["name"] = sample.name if not e else None
+    s["total"] = float(allDups["single-ends"]) + (float(allDups["paired-ends"]) * 2) if not e else None
+    s["%duplicates"] = (float(allDups["duplicates"]) / s["total"]) * 100 if not e else None
+    s["total MT"] = float(mtDups["single-ends"]) + (float(mtDups["paired-ends"]) * 2) if not mtE else None
+    s["% MT"] = (s["total MT"] / s["total"]) * 100 if not mtE else None
+    s["%dups MT"] = (float(mtDups["duplicates"]) / float(allDups["duplicates"])) * 100 if not mtE else None
+    s["%dups nuclear"] = ((float(allDups["duplicates"]) - float(mtDups["duplicates"])) / s["total"]) * 100 if not mtE else None
 
     df = df.append(s, ignore_index=True)
 
@@ -77,7 +83,7 @@ for i, ax in enumerate(g.axes.flat):
     ax.yaxis.grid(True)
 
     # fix scales
-    if i in [1, 3,4]:
+    if i in [1, 3, 4, 5]:
         ax.set_xlim(0, 100)
     else:
         ax.set_xlim(0, 7e7)
