@@ -5,22 +5,38 @@
 
 import yaml
 import os
-from pipelines import Project, ATACseqSample
+from pipelines.models import Project, ATACseqSample
 import pybedtools
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.pyplot import cm
 from mpl_toolkits.mplot3d import Axes3D
+import multiprocessing
+import parmap
 import pysam
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import normalize
 from sklearn.decomposition import RandomizedPCA
 from sklearn.manifold import MDS
-from scipy.cluster import linkage, dendrogram
+from scipy.cluster.hierarchy import linkage, dendrogram
 
 
 sns.set_style("whitegrid")
+
+
+def count_reads_in_intervals(bam, intervals):
+    """
+    """
+    counts = dict()
+
+    bam = pysam.Samfile(bam, 'rb')
+
+    for interval in intervals:
+        counts[interval] = bam.count(region=interval)
+    bam.close()
+
+    return counts
 
 
 def normalize_by_interval_length(series):
@@ -93,15 +109,15 @@ plotsDir = os.path.join(resultsDir, "plots")
 # Start project
 # prj = pickle.load(open("prj.pickle", 'rb'))
 prj = Project("cll-patients")
-prj.addSampleSheet("../metadata/sequencing_sample_annotation.csv")
-
+prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
 # Select ATAC-seq samples
-samples = [s for s in prj.samples if type(s) == ATACseqSample]
-
+samples = [s for s in prj.samples if type(s) == ATACseqSample if s.cellLine == "CLL"]
 
 # GET CONSENSUS SITES ACROSS SAMPLES
+peak_count = dict()
 for i, sample in enumerate(samples):
+    print(sample.name)
     # Get summits of peaks and window around them
     peaks = pybedtools.BedTool(sample.peaks)  # .slop(g=pybedtools.chromsizes('hg19'), b=250)
     # Merge overlaping peaks within a sample
@@ -111,6 +127,8 @@ for i, sample in enumerate(samples):
     else:
         # Concatenate all peaks
         sites = sites.cat(peaks)
+    # Let's keep track of the number of new peaks found with each new sample
+    peak_count[i] = len(sites)
 
 # Merge overlaping peaks across samples
 sites = sites.merge()
@@ -122,15 +140,26 @@ sites = sites.intersect(v=True, b=blacklist).filter(lambda x: x.chrom != 'chrM')
 
 sites = pybedtools.BedTool(os.path.join(dataDir, "all_sample_peaks.concatenated.bed"))
 
+# Plot cumulative number of peaks
+plt.plot(peak_count.keys(), peak_count.values(), 'o')
+plt.ylim(0, max(peak_count.values()) + 5000)
+plt.title("Cumulative peaks per sample")
+plt.xlabel("Number of samples")
+plt.ylabel("Total number of peaks")
+plt.savefig(os.path.join(plotsDir, "total_peak_count.per_patient.pdf"), bbox_inches="tight")
+plt.close('all')
+
 # Loop at summary statistics:
 # interval lengths
 sns.distplot([interval.length for interval in sites], bins=300, kde=False)
 plt.xlabel("peak width (bp)")
 plt.ylabel("frequency")
 plt.savefig(os.path.join(plotsDir, "all_sample_peaks.lengths.pdf"), bbox_inches="tight")
+plt.close('all')
 
 # calculate support (number of samples overlaping each merged peak)
 for i, sample in enumerate(samples):
+    print(sample.name)
     if i == 0:
         support = sites.intersect(sample.peaks, wa=True, c=True)
     else:
@@ -144,19 +173,40 @@ support["support"] = support[range(len(samples))].apply(lambda x: sum([i if i <=
 support.to_csv(os.path.join(dataDir, "all_sample_peaks.support.csv"), index=False)
 support = pd.read_csv(os.path.join(dataDir, "all_sample_peaks.support.csv"))
 # plot
-sns.distplot(support["support"], bins=10)
+sns.distplot(support["support"], bins=40)
 plt.ylabel("frequency")
 plt.savefig(os.path.join(plotsDir, "all_sample_peaks.support.pdf"), bbox_inches="tight")
+plt.close('all')
 
 
 # MEASURE CHROMATIN OPENNESS PER SITE PER PATIENT
 # Get read counts for each sample in the union of the sites
+
+# Old method with bedtools
 # coverage = sites.multi_bam_coverage(bams=[sample.filtered for sample in samples], p=True, q=30, D=True)
-coverage = sites.multi_bam_coverage(bams=[sample.filtered for sample in samples], q=30, D=True)
+# coverage = sites.multi_bam_coverage(bams=[sample.filtered for sample in samples], q=30, D=True)
 # make dataframe
-coverage = coverage.to_dataframe().reset_index()
-coverage.columns = ["chrom", "start", "end"] + [sample.name for sample in samples]
-coverage.to_csv(os.path.join(dataDir, "all_sample_peaks.concatenated.raw_coverage.bed"), sep="\t", index=False)
+# coverage = coverage.to_dataframe().reset_index()
+
+
+# Count reads with pysam
+# make strings with intervals
+sites_str = [str(i.chrom) + ":" + str(i.start) + "-" + str(i.stop) for i in sites]
+# count, create dataframe
+coverage = pd.DataFrame(
+    map(
+        lambda x:
+            pd.Series(x),
+            parmap.map(
+                count_reads_in_intervals,
+                [sample.filtered for sample in samples],
+                sites_str,
+                parallel=True
+            )
+    ),
+    index=[sample.name for sample in samples]
+).T
+coverage.to_csv(os.path.join(dataDir, "all_sample_peaks.concatenated.raw_coverage.tsv"), sep="\t", index=True)
 
 # Normalize by feature length (Reads per kilobase)
 rpk = coverage.apply(normalize_by_interval_length, axis=1)
@@ -307,6 +357,18 @@ fig.savefig("all_sample_peaks.concatenated.hierarchicalClustering.pdf")
 
 
 # INTER-SAMPLE VARIABILITY ANALYSIS
+# Cluster samples
+# Get statistically different peaks between groups
+#
+#
+from scipy.stats import mannwhitneyu
+# mannwhitneyu()
+
+#
+
+
+# other options:
+
 # Get most variable sites
 # plot CV2 vs mean openness
 

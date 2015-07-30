@@ -5,7 +5,7 @@
 
 import yaml
 import os
-from pipelines import Project, ATACseqSample
+from pipelines.models import Project, ATACseqSample
 from collections import OrderedDict
 import numpy as np
 import HTSeq
@@ -165,7 +165,7 @@ data_dir = os.path.join(config["paths"]["parent"], config["projectname"], "data"
 
 # Start project
 prj = Project("cll-patients")
-prj.addSampleSheet("../metadata/sample_annotation.csv")
+prj.addSampleSheet("../metadata/sequencing_sample_annotation.csv")
 
 # Select ATAC-seq samples
 samples = [s for s in prj.samples if type(s) == ATACseqSample]
