@@ -74,6 +74,10 @@ def normalize_by_library_size(series, samples, rm_mt=True):
         return (series / size) * 1e6
 
 
+def name_to_id(name):
+    return "_".join([name.split("_")[0]] + [name.split("_")[2]] + name.split("_")[3:4])
+
+
 def hexbin(x, y, color, **kwargs):
     cmap = sns.light_palette(color, as_cmap=True)
     plt.hexbin(x, y, gridsize=15, cmap=cmap, **kwargs)
@@ -110,6 +114,11 @@ with open("config.yaml", 'r') as handle:
 dataDir = os.path.join(config["paths"]["parent"], config["projectname"], "data")
 resultsDir = os.path.join(config["paths"]["parent"], config["projectname"], "results")
 plotsDir = os.path.join(resultsDir, "plots")
+
+# Get clinical info
+clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation.csv"))
+clinical = clinical[["PatientID", "SampleID", "timepoint", "IGVH mut/unmut", "gender", "Via (%)", "dob", "Date of Diagnosis"]].drop_duplicates()
+
 
 # Start project
 # prj = pickle.load(open("prj.pickle", 'rb'))
@@ -314,9 +323,37 @@ sns.jointplot('mean', "qv2", data=filtered)
 
 # GLOBAL CHARACTERIZATION
 # Overview:
+
+# get colors depending on IGVH mut
+df = pd.DataFrame([sample.asSeries() for sample in samples])
+
+
+df = pd.merge(df, clinical, left_on="sampleID", right_on="SampleID")
+mut_s = {"1.0": "red", "2.0": "black", "nan": "grey"}
+sex_s = {"F": "red", "M": "blue", "nan": "grey"}
+muts = [clinical.loc[clinical['SampleID'] == sample.sampleID, "IGVH mut/unmut"] for sample in samples]
+sex = [clinical.loc[clinical['SampleID'] == sample.sampleID, "gender"] for sample in samples]
+mut_colors = [mut_s[str(x.get(x.index[0]))] if len(x.tolist()) > 0 else "grey" for x in muts]
+sex_colors = [sex_s[str(x.get(x.index[0]))] if len(x.tolist()) > 0 else "grey" for x in sex]
+
+
 # Correlation
-plt.figure(figsize=(20, 16))
-sns.clustermap(rpkm[[sample.name for sample in samples]].corr(), square=True, vmin=0.5, vmax=1, annot=False)
+fig = plt.figure(figsize=(20, 16))
+
+cmap = sns.diverging_palette(h_neg=210, h_pos=350, s=90, l=30, as_cmap=True)
+
+c = rpkm[[sample.name for sample in samples]].corr()
+c.index = map(name_to_id, c.index)
+c.columns = map(name_to_id, c.columns)
+
+sns.clustermap(
+    c,
+    method="complete",
+    cmap=cmap,
+    row_colors=mut_colors,
+    col_colors=sex_colors,
+    square=True, annot=False
+)
 plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.correlation_clustering.pdf"), bbox_inches="tight")
 
 # PCA
@@ -337,28 +374,70 @@ fig = plt.figure()
 for i, sample in enumerate(samples):
     plt.scatter(
         pca.components_[i, 0], pca.components_[i, 1],
-        label=sample.name,
+        label=name_to_id(sample.name),
         color=colors[i],
         s=50
     )
 fig.axes[0].set_xlabel("PC1 - {0}% variance".format(variance[0]))
 fig.axes[0].set_ylabel("PC2 - {0}% variance".format(variance[1]))
-plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.PCA-2comp.pdf"), bbox_inches="tight")
+plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
+plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.PCA-2comp.1vs2.pdf"), bbox_inches="tight")
+
+# 2vs3 components
+fig = plt.figure()
+for i, sample in enumerate(samples):
+    plt.scatter(
+        pca.components_[i, 1], pca.components_[i, 2],
+        label=name_to_id(sample.name),
+        color=colors[i],
+        s=50
+    )
+fig.axes[0].set_xlabel("PC2 - {0}% variance".format(variance[1]))
+fig.axes[0].set_ylabel("PC3 - {0}% variance".format(variance[2]))
+plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
+plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.PCA-2comp.2vs3.pdf"), bbox_inches="tight")
 
 # 3vs4 components
 fig = plt.figure()
 for i, sample in enumerate(samples):
     plt.scatter(
         pca.components_[i, 2], pca.components_[i, 3],
-        label=sample.name,
+        label=name_to_id(sample.name),
         color=colors[i],
         s=50
     )
-fig.axes[0].set_xlabel("PC1 - {0}% variance".format(variance[2]))
-fig.axes[0].set_ylabel("PC2 - {0}% variance".format(variance[3]))
-plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+fig.axes[0].set_xlabel("PC3 - {0}% variance".format(variance[2]))
+fig.axes[0].set_ylabel("PC4 - {0}% variance".format(variance[3]))
+plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
 plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.PCA-2comp.3vs4.pdf"), bbox_inches="tight")
+
+# 4vs5 components
+fig = plt.figure()
+for i, sample in enumerate(samples):
+    plt.scatter(
+        pca.components_[i, 3], pca.components_[i, 4],
+        label=name_to_id(sample.name),
+        color=colors[i],
+        s=50
+    )
+fig.axes[0].set_xlabel("PC4 - {0}% variance".format(variance[3]))
+fig.axes[0].set_ylabel("PC5 - {0}% variance".format(variance[4]))
+plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
+plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.PCA-2comp.4vs5.pdf"), bbox_inches="tight")
+
+# 1vs3 components
+fig = plt.figure()
+for i, sample in enumerate(samples):
+    plt.scatter(
+        pca.components_[i, 0], pca.components_[i, 2],
+        label=name_to_id(sample.name),
+        color=colors[i],
+        s=50
+    )
+fig.axes[0].set_xlabel("PC1 - {0}% variance".format(variance[0]))
+fig.axes[0].set_ylabel("PC3 - {0}% variance".format(variance[2]))
+plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
+plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.PCA-2comp.1vs3.pdf"), bbox_inches="tight")
 
 # 3 components
 fig = plt.figure()
@@ -367,19 +446,19 @@ ax = fig.add_subplot(111, projection='3d')
 for i, sample in enumerate(samples):
     ax.scatter(
         pca.components_[i, 0], pca.components_[i, 1], pca.components_[i, 2],
-        label=sample.name,
+        label=name_to_id(sample.name),
         color=colors[i],
         s=100
     )
 ax.set_xlabel("PC1 - {0}% variance".format(variance[0]))
 ax.set_ylabel("PC2 - {0}% variance".format(variance[1]))
 ax.set_zlabel("PC3 - {0}% variance".format(variance[2]))
-plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
 plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.PCA-3comp.pdf"), bbox_inches="tight")
 
 # MDS
-# on 1000 most variable genes
-n = 1000
+# on 1000 most variable sites
+n = 2000
 Xvar = normalize(rpkm.ix[rpkm[[sample.name for sample in samples]].apply(np.var, axis=1).order(ascending=False).index].head(n)[[sample.name for sample in samples]])
 
 # convert two components as we're plotting points in a two-dimensional plane
@@ -394,19 +473,19 @@ fig = plt.figure()
 for i, sample in enumerate(samples):
     plt.scatter(
         pos[i, 0], pos[i, 1],
-        label=sample.name,
+        label=name_to_id(sample.name),
         color=colors[i],
         s=50
     )
 plt.title("MDS on %i most variable genes" % n)
-plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.MDS.pdf"))
+plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
+plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.MDS.pdf"), bbox_inches="tight")
 
 
 # Heatmap sites vs patients
 # hierarchical clustering
 fig = hierarchical_cluster_matrix(rpkm[[sample.name for sample in samples]])
-fig.savefig("all_sample_peaks.concatenated.hierarchicalClustering.pdf")
+fig.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.hierarchicalClustering.pdf"), bbox_inches="tight")
 
 #
 
