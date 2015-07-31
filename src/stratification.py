@@ -23,6 +23,7 @@ from scipy.cluster.hierarchy import linkage, dendrogram
 
 
 sns.set_style("whitegrid")
+sns.set_context("paper")
 
 
 def count_reads_in_intervals(bam, intervals):
@@ -32,7 +33,11 @@ def count_reads_in_intervals(bam, intervals):
 
     bam = pysam.Samfile(bam, 'rb')
 
+    chroms = ["chr" + str(x) for x in range(1, 23)] + ["chrX"]
+
     for interval in intervals:
+        if interval.split(":")[0] not in chroms:
+            continue
         counts[interval] = bam.count(region=interval)
     bam.close()
 
@@ -188,6 +193,8 @@ plt.close('all')
 # make dataframe
 # coverage = coverage.to_dataframe().reset_index()
 
+# Select ATAC-seq samples
+samples = [s for s in prj.samples if type(s) == ATACseqSample]
 
 # Count reads with pysam
 # make strings with intervals
@@ -207,16 +214,34 @@ coverage = pd.DataFrame(
     index=[sample.name for sample in samples]
 ).T
 coverage.to_csv(os.path.join(dataDir, "all_sample_peaks.concatenated.raw_coverage.tsv"), sep="\t", index=True)
+coverage = pd.read_csv(os.path.join(dataDir, "all_sample_peaks.concatenated.raw_coverage.tsv"), sep="\t", index_col=0)
+
+# Add interval description to df
+ints = map(
+    lambda x: (
+        x.split(":")[0],
+        x.split(":")[1].split("-")[0],
+        x.split(":")[1].split("-")[1]
+    ),
+    coverage.index
+)
+coverage["chrom"] = [x[0] for x in ints]
+coverage["start"] = [int(x[1]) for x in ints]
+coverage["end"] = [int(x[2]) for x in ints]
 
 # Normalize by feature length (Reads per kilobase)
 rpk = coverage.apply(normalize_by_interval_length, axis=1)
+rpk.to_csv(os.path.join(dataDir, "all_sample_peaks.concatenated.rpk.tsv"), sep="\t", index=True)
+rpk = pd.read_csv(os.path.join(dataDir, "all_sample_peaks.concatenated.rpk.tsv"), sep="\t", index_col=0)
+
+
 # Normalize by library size - mapped reads (Reads per kilobase per million)
 rpkm = rpk[[sample.name for sample in samples]].apply(normalize_by_library_size, args=(samples, ), axis=0)
 
 # Save
 rpkm = pd.concat([rpk[["chrom", "start", "end"]], rpkm], axis=1)
-rpkm.to_csv(os.path.join(dataDir, "all_sample_peaks.concatenated.rpkm.bed"), sep="\t", index=False)
-rpkm = pd.read_csv(os.path.join(dataDir, "all_sample_peaks.concatenated.rpkm.bed"), sep="\t")
+rpkm.to_csv(os.path.join(dataDir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t", index=False)
+rpkm = pd.read_csv(os.path.join(dataDir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t")
 
 # Log2 transform
 rpkm[[sample.name for sample in samples]] = np.log2(1 + rpkm[[sample.name for sample in samples]])
@@ -225,24 +250,34 @@ rpkm[[sample.name for sample in samples]] = np.log2(1 + rpkm[[sample.name for sa
 rpkmMelted = pd.melt(rpkm, id_vars=["chrom", "start", "end"], var_name="sample", value_name="rpkm")
 
 # rpkm density
+# all in one plot
+for sample in samples:
+    sns.distplot(rpkm[[sample.name]], hist=False, label=sample.name)
+# plt.legend()
+plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.distplot.all.pdf"), bbox_inches="tight")
+plt.close()
+
+# separately in one grid
 g = sns.FacetGrid(rpkmMelted, col="sample", aspect=2, col_wrap=4)
 g.map(sns.distplot, "rpkm", hist=False)
+plt.xlim(0, 15)
 plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.distplot.pdf"), bbox_inches="tight")
 plt.close()
 
 # boxplot rpkm per sample
 # Plot the orbital period with horizontal boxes
 sns.boxplot(x="rpkm", y="sample", data=rpkmMelted)
+plt.xlim(0, 15)
 plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.boxplot.pdf"), bbox_inches="tight")
 plt.close()
 
 # pairwise rpkm scatter plot between samples
-fig = plt.figure(figsize=(8, 6), dpi=300, facecolor='w', edgecolor='k')
-g = sns.PairGrid(rpkm[[sample.name for sample in samples]])
-g.map(hexbin)
-g.fig.subplots_adjust(wspace=.02, hspace=.02)
-plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.pairwise_hexbin.pdf"), bbox_inches="tight")
-plt.close()
+# fig = plt.figure(figsize=(8, 6), dpi=300, facecolor='w', edgecolor='k')
+# g = sns.PairGrid(rpkm[[sample.name for sample in samples]])
+# g.map(hexbin)
+# g.fig.subplots_adjust(wspace=.02, hspace=.02)
+# plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.pairwise_hexbin.pdf"), bbox_inches="tight")
+# plt.close()
 
 # Variation:
 rpkm = pd.merge(rpkm, support[['chrom', 'start', 'end', 'support']], on=['chrom', 'start', 'end'])
@@ -255,12 +290,15 @@ rpkm['qv2'] = rpkm[[sample.name for sample in samples]].apply(lambda x: (np.std(
 
 sns.jointplot('mean', "dispersion", data=rpkm)
 plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.dispersion.pdf"), bbox_inches="tight")
+plt.close('all')
 
 sns.jointplot('mean', "qv2", data=rpkm)
 plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.qv2_vs_mean.pdf"), bbox_inches="tight")
+plt.close('all')
 
 sns.jointplot('support', "qv2", data=rpkm)
 plt.savefig(os.path.join(plotsDir, "rpkm_per_sample.support_vs_qv2.pdf"), bbox_inches="tight")
+plt.close('all')
 
 
 # After inspecting known genotypes, consider excluding more regions/chromosomes across all samples
@@ -277,7 +315,8 @@ sns.jointplot('mean', "qv2", data=filtered)
 # GLOBAL CHARACTERIZATION
 # Overview:
 # Correlation
-sns.clustermap(rpkm[[sample.name for sample in samples]].corr(), square=True, vmin=-1, vmax=1, annot=True)
+plt.figure(figsize=(20, 16))
+sns.clustermap(rpkm[[sample.name for sample in samples]].corr(), square=True, vmin=0.5, vmax=1, annot=False)
 plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.correlation_clustering.pdf"), bbox_inches="tight")
 
 # PCA
@@ -306,6 +345,20 @@ fig.axes[0].set_xlabel("PC1 - {0}% variance".format(variance[0]))
 fig.axes[0].set_ylabel("PC2 - {0}% variance".format(variance[1]))
 plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
 plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.PCA-2comp.pdf"), bbox_inches="tight")
+
+# 3vs4 components
+fig = plt.figure()
+for i, sample in enumerate(samples):
+    plt.scatter(
+        pca.components_[i, 2], pca.components_[i, 3],
+        label=sample.name,
+        color=colors[i],
+        s=50
+    )
+fig.axes[0].set_xlabel("PC1 - {0}% variance".format(variance[2]))
+fig.axes[0].set_ylabel("PC2 - {0}% variance".format(variance[3]))
+plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.PCA-2comp.3vs4.pdf"), bbox_inches="tight")
 
 # 3 components
 fig = plt.figure()
@@ -355,9 +408,18 @@ plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.MDS.pdf"))
 fig = hierarchical_cluster_matrix(rpkm[[sample.name for sample in samples]])
 fig.savefig("all_sample_peaks.concatenated.hierarchicalClustering.pdf")
 
+#
+
 
 # INTER-SAMPLE VARIABILITY ANALYSIS
 # Cluster samples
+
+
+# Subsample peaks or reads and see the minimum required to form the clusters previously
+
+# See which regions explain most of variability for each cluster
+
+
 # Get statistically different peaks between groups
 #
 #
