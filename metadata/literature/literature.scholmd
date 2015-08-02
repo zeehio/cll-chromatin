@@ -1,5 +1,5 @@
 ---
-title: CLL-biology basics
+title: CLL literature review
 author:
         - André Rendeiro
 subject: 
@@ -13,7 +13,16 @@ bibliography: Documents/collection.bib
 This is a short overview of fundamental literature on chronic lymphocytic leukaemia (CLL). While this meant both as a review for me and a *get-up-to-speed-quickly* work for others, this should not encourage you not to read the actual papers.
 
 
-# Review on "common knowledge"
+# Basic review
+
+## B-cell biology
+1. In secondary lymphoid organs, mature peripheral B cells (follicular (Fo) B cells) acquire antigen from follicular dendritic cells (FDCs) and in turn presents it to cognate CD4+ TfH cells. During TfH-B cell conjugation, the B cell receives critical signals to undergo class switching and to commence monoclonal expansion.
+2. After several rounds of cellular division, the B cells go through somatic hypermutation, generating a diversity of clones in the germinal center.
+3. Upon receiving an unidentified stimulus, the maturing B cells migrate from the dark zone to the light zone and start to express their antibody on the cell surface. They are in a state of activated apoptosis and compete for survival signals from follicular dendritic cell and TfH cells. This rescue process is dependent on the antibody affinity to the antigen. T cells are also believed to prevent the generation of autoreactive germinal center B cells.
+4. Maturing B cells receive a final differentiation signal to exit the germinal center as plasma cells or memory B cells.
+
+## Why is there CLL?
+Mistargeted somatic hypermutation is a likely mechanism in the development of CLL and other B-cell lymphomas.
 
 ## Clinical staging
 Based primarily on the presence of a low platelet or red cell count.
@@ -34,13 +43,30 @@ Absolute values of lymphocytosis (>15,000/mm3) are considered in all stages.
 - Clinical stage C: anemia and/or thrombocytopenia regardless of the number of areas of lymphoid enlargement (Rai stages III and IV).
 
 
-## "Old" markers
+## Molecular classification
+Compiled from various publications (see )
+
+- CD5+ B-cells
+- IGHV unmutated CLL (u-CLL) more like naïve B-cells
+	+ Likely comes from pre-germinal center B cells
+	+ Enriched in high CD38 and ZAP70 expression
+	+ Enriched in NOTCH1 mutations
+	+ Poor prognosis
+- IGHV mutated CLL (m-CLL) more like memory B-cells
+	+ Likely comes from post-germinal center, mature B cells
+	+ More patients left untreated
+- there are obvoulsly intermediate states as well (i-CLL)
+
+> **personal note** although the intermediate group has obviously features of both, it seems more similar to the memory B cell (m-CLL) group
+
+
+## Classical markers
 - IGHV mutational status (<98% homology is considered mutated)
 - cytogenetics
 - CD38 expression
-- ZAP-70 expression
+- ZAP-70 expression (predictive of IGHV mutation status)
 
-These are nowadays considered **not fundamental** for the initiation or continuation of leukemic process, but are **merely descriptive** of it.
+These are nowadays considered **not fundamental** for the initiation or continuation of leukemic process, but are still **descriptive** of it.
 
 
 # Recent Papers
@@ -48,7 +74,7 @@ These are nowadays considered **not fundamental** for the initiation or continua
 ## [Puente et al, Nature, 2011](http://doi.org/doi:10.1038/nature10113)
 > Puente, X. S., Pinyol, M., Quesada, V., Conde, L., Ordóñez, G. R., Villamor, N., … Campo, E. (2011). **Whole-genome sequencing identifies recurrent mutations in chronic lymphocytic leukaemia**. Nature, 475(7354), 101–105. doi:10.1038/nature10113
 
-### Setup
+### Design
 - WGS of 4 CLLs:
 	- 2 IGVH mutated/ 2 unmutated
 	- no TP53 mutations
@@ -59,8 +85,7 @@ These are nowadays considered **not fundamental** for the initiation or continua
 
 ### Results
 - ~1000 mutations per patient (< 1/Mb)
-- A>C/T>G mutations are more frequent in CLL-M -> likely due to polymerase η (Eta) action in immunoglobulin genes.
-Pol η causes mutations that occur in clusters with bias to certain bases (generally more A>C/T>G).
+- A>C/T>G mutations are more frequent in CLL-M. This is likely due to polymerase η (Eta) action in immunoglobulin genes. Pol η causes mutations that occur in clusters with bias to certain bases (generally more A>C/T>G).
 
 > Side note: somatic hypermutation is not rare and genes such as BCL6, MYC and PIM1, are recurrently mutated by somatic hypermutation in different lymphomas [Pasqualucci et al, 2001, Nature](http://doi.org/doi:10.1038/35085588).
 
@@ -101,9 +126,9 @@ Pol η causes mutations that occur in clusters with bias to certain bases (gener
 ## [Braggio et al, Leukemia, 2012](http://doi.org/doi:10.1038/leu.2012.14)
 > Braggio, E., Kay, N. E., VanWier, S., Tschumper, R. C., Smoley, S., Eckel-Passow, J. E., … Fonseca, R. (2012). **Longitudinal genome-wide analysis of patients with chronic lymphocytic leukemia reveals complex evolution of clonal architecture at disease progression and at the time of relapse**. Leukemia, 26(7), 1698–1701. doi:10.1038/leu.2012.14
 
-This paper is about strutural aberrations during CLL clonal evolution.
+This paper is about structural aberrations during CLL clonal evolution.
 
-### Setup
+### Design
 - 22 patients, at least two timepoints
 - aCGH
 - samples grouped acording to time-points:
@@ -122,10 +147,21 @@ This paper is about strutural aberrations during CLL clonal evolution.
 
 CLL progression can occur in either a linear or a branching manner, with multiple genetic subclones evolving either in succession or in parallel
 
+
+## [Kulis et al, Nature Genetics, 2012](http://doi.org/doi:10.1038/ng.2443)
+> Kulis, M., Heath, S., Bibikova, M., Queirós, A. C., Navarro, A., Clot, G., … Martín-Subero, J. I. (2012). Epigenomic analysis detects widespread gene-body DNA hypomethylation in chronic lymphocytic leukemia. Nature Genetics, 44(11), 1236–1242. doi:10.1038/ng.2443
+
+### Design
+- 
+
+### Results
+- 
+
+
 ## [Queirós et al, Leukemia, 2014](http://doi.org/doi:10.1038/leu.2014.252)
 > Queirós, a C., Villamor, N., Clot, G., Martinez-Trillos, A., Kulis, M., Navarro, A., … Martín-Subero, J. I. (2014). **A B-cell epigenetic signature defines three biological subgroups of chronic lymphocytic leukemia with clinical impact**. Leukemia, (August 2014), 598–605. doi:10.1038/leu.2014.252
 
-### Setup
+### Design
 - 
 
 ### Results
@@ -135,7 +171,7 @@ CLL progression can occur in either a linear or a branching manner, with multipl
 ## [Baliakas et al, Leukemia, 2015](http://doi.org/doi:10.1038/leu.2014.196)
 Baliakas, P., Hadzidimitriou, A., Sutton, L., Rossi, D., Minga, E., Villamor, N., … Rosenquist, R. (2014). **Recurrent mutations refine prognosis in chronic lymphocytic leukemia**. Leukemia, (April), 1–8. doi:10.1038/leu.2014.196
 
-### Setup
+### Design
 - 
 
 ### Results
@@ -145,7 +181,7 @@ Baliakas, P., Hadzidimitriou, A., Sutton, L., Rossi, D., Minga, E., Villamor, N.
 ## [Puente et al, Nature, 2015](http://doi.org/doi:10.1038/nature14666)
 > Puente, X. S., Beà, S., Valdés-Mas, R., Villamor, N., Gutiérrez-Abril, J., Martín-Subero, J. I., … Campo, E. (2015). **Non-coding recurrent mutations in chronic lymphocytic leukaemia**. Nature. doi:10.1038/nature14666
 
-### Setup
+### Design
 - 
 
 ### Results
