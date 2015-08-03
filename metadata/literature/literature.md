@@ -68,6 +68,12 @@ Compiled from various publications (see )
 
 These are nowadays considered **not fundamental** for the initiation or continuation of leukemic process, but are still **descriptive** of it.
 
+## B-cell surface markers
+- All B-cells: CD19+
+- naive B cells (NBCs): CD19+, CD27−, IgD+
+- CD5+ naive B cells: CD19+, CD5+, CD27–, CD38low
+- non-class-switched memory B cells (ncsMBCs): CD19+, CD27+, IgM+ or IgD+ (both to sort)
+- class-switched memory B cells (csMBCs): CD19+, CD27+, IgA+ or IgG+
 
 # Recent Papers
 
@@ -147,6 +153,24 @@ This paper is about structural aberrations during CLL clonal evolution.
 CLL progression can occur in either a linear or a branching manner, with multiple genetic subclones evolving either in succession or in parallel
 
 
+## [Quesada et al, Nature Genetics, 2012](http://doi.org/doi:10.1038/ng.1032)
+> Quesada, V., Conde, L., Villamor, N., Ordóñez, G. R., Jares, P., Bassaganyas, L., … López-Otín, C. (2011). Exome sequencing identifies recurrent mutations of the splicing factor SF3B1 gene in chronic lymphocytic leukemia. Nature Genetics, 44(1), 47–52. doi:10.1038/ng.1032
+
+### Design
+- 105 exomes matched tumour-normal:
+	+ 60 mCLL
+	+ 45 uCLL
+### Results
+
+
+## [Doménech et al, PLoS ONE, 2012](http://doi.org/doi:10.1371/journal.pone.0038158)
+> Doménech, E., Gómez-López, G., Gzlez-Peña, D., López, M., Herreros, B., Menezes, J., … Sánchez-Beato, M. (2012). New mutations in chronic lymphocytic leukemia identified by target enrichment and deep sequencing. PLoS ONE, 7(6), 2–7. doi:10.1371/journal.pone.0038158
+
+### Design
+
+### Results
+
+
 ## [Kulis et al, Nature Genetics, 2012](http://doi.org/doi:10.1038/ng.2443)
 > Kulis, M., Heath, S., Bibikova, M., Queirós, A. C., Navarro, A., Clot, G., … Martín-Subero, J. I. (2012). **Epigenomic analysis detects widespread gene-body DNA hypomethylation in chronic lymphocytic leukemia**. Nature Genetics, 44(11), 1236–1242. doi:10.1038/ng.2443
 
@@ -157,7 +181,7 @@ CLL progression can occur in either a linear or a branching manner, with multipl
 - 450k array on various B cell populations from age matched healty donors
 	+ 19 whole B-cell (CD19)
 	+ three each of CD5+ NBC, NBC, ncsMBCs and csMBCs with > 95% purity
-- exome sequecing of the 139 CLLs
+- exome sequecing of 88 CLLs from previous study
 
 ### Results
 - NBCs vs csMBCs: 1,076,208 DMRs in 19125 genes
