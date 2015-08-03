@@ -1,63 +1,30 @@
 cll-patients
 ============
 
-**Nice paper title**
-
------------
-
-
 # Repository organization
 
-Wetlab and sequenced sample annotations are in `/metadata`.
+A basic review of CLL literature can be found in `/metadata/literature/`.
 
-Code used in the analysis will be in `/src`
+Clinical, wetlab and sequenced sample annotations are in `/metadata`.
+
+Code used in the analysis is in `/src`
 
 ### Data
-See annotation sheet here: [CSV](metadata/cll-patients.sample_annotation.csv)
+See annotation sheet here: [CSV](metadata/sequencing_sample_annotation.csv)
 
-See tracks here: [UCSC](http://genome.ucsc.edu/cgi-bin/hgTracks?org=human&hgt.customText=http://www.biomedical-sequencing.at/bocklab/arendeiro/cll-patients/bigWig/trackHub_hg19.curated.txt)
+See tracks here: [UCSC](http://genome.ucsc.edu/cgi-bin/hgTracks?org=human&hgt.customText=http://www.biomedical-sequencing.at/bocklab/arendeiro/cll-patients/trackHub_hg19.txt)
 
 ### Sample names
-Sample names are a concatenation of the annotation fields: `cellLine, numberCells, technique, ip, patient, treatment, biologicalReplicate, technicalReplicate, genome`. 
-
-Samples where all of the above are the same except for `technicalReplicate` (same sample sequenced twice independently), are merged in a new sample labeled with `technicalReplicate=0`, representing one biological replicate which was sequenced more than once. 
-
-Further, Samples where all of the above are the same except for `technicalReplicate` AND `biologicalReplicate` , are merged in a new sample labeled with `technicalReplicate=0`, `biologicalReplicate=0`, representing a concatenation of all biological replicates of this type.
-
-For downstream analysis I've been using mostly the later case: `technicalReplicate=0`, `biologicalReplicate=0`.
-
-This creates a [***sheet with new samples*** containing these merged ones](https://github.com/ComputationalEpigenetics/cll-patients/blob/master/metadata/cll-patients.replicates.annotation_sheet.csv), and paired control samples, which I use for downstream.
+Sample names are a concatenation of any of the existing annotation fields: `cellLine, numberCells, technique, ip, patientID, treatment, condition, biologicalReplicate, technicalReplicate, genome`.
 
 ### Project structure
-As defined in [`chipseq-pipelines`](https://github.com/afrendeiro/chipseq-pipelines):
+As defined in [`pipelines`](https://github.com/afrendeiro/pipelines):
 
 For all my projects:
 
-`projectsroot`=/fhgfs/groups/lab_bock/shared/projects/
-`htmlroot`=/fhgfs/groups/lab_bock/public_html/arendeiro/
+`projectsroot`: /data/groups/lab_bock/shared/projects/
 
-```
-projectsroot
-|__ cll-patients
-    |__ runs
-    |__ data
-    |   |__ fastq
-    |   |__ fastqc
-    |   |__ raw
-    |   |__ mapped
-    |   |__ coverage
-    |   |__ peaks
-    |   |__ motifs
-    |__ results
-         |__ plots
-
-htmlroot
-|__ cll-patients
-    |__ bigwig
-```
-JSON description [here](https://github.com/ComputationalEpigenetics/cll-patients/blob/master/metadata/projectPaths.json).
-
-I will document the content of these folders in due time.
+`htmlroot`: /data/groups/lab_bock/public_html/arendeiro/
 
 
 # Todo
@@ -70,37 +37,14 @@ See [annotation](metadata/patient_clinical_annotation.csv)
     + ATAC-seq
 + Histone mods (possible):
     + H3K27AC
+    + H3K4ME1
     + H3K4ME3?
-    + ChIP-seq or CM? (probably dependent on CM paper coming out)
-    + IgG or Input?
-
-Could we have ATAC-seq done on lymphoid progenitors, small lymphiocytes and B cells of normal donors as a way of seeing samples in light of development and maybe classifying them according to where in differentiation things went wrong?
-
-Could we have gene expression for (at least some of the samples) to show that chromatin opening does change things, and that they correlate?
++ RNA?
 
 ## Analysis (ideas)
-+ Preprocessing
-+ QC metrics
-+ Stratification:
-    + Clustering
-    + Pareto
-    + Global *vs* only changing regions
-    + Compare with physician stratification/remission/disease outcome (if any available)
-    + GO/OMIM/LOLA enrichment
-    + Interaction networks within clusters
-+ Machine learning on stratified patients
-    1. Test several approaches
-    2. Get metrics (ROC, AUCs, ...)
 + Accounting for genetic variability:
     + http://www.nature.com/nmeth/journal/v12/n5/full/nmeth.3326.html
     + http://biorxiv.org/content/early/2015/04/30/018788
-
-
-#### Decision time:
-+ Decide at this point if we proceed with histone mods profiling
-    + Use imputation with rest of data
-+ Decide on the *spin* of the paper:
-    + focus on GRNs, biomarkers or deeper characterization
 
 ##### Aditional ideas using only ATAC-seq data:
 + Call nucleosomes and dyads using NucleoATAC
@@ -109,13 +53,10 @@ Could we have gene expression for (at least some of the samples) to show that ch
 
 #### Several ideas for downstream:
 + GRNs
-    + Motif-search
     + Enhancer-TF pairing
     + With evolution build GRN
-+ Show chromatin opening in enhancers though normal differentiation and the different states of chromatin opening during disease.
 + De novo enhancers
-    + Comparison with Roadmap + Encode
-+ Super-enhancers
+    + Comparison with other cell lines
 + Variants
     + Call variants
     + check GWAS enrichments
