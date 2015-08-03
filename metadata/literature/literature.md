@@ -49,7 +49,7 @@ Compiled from various publications (see )
 - CD5+ B-cells
 - IGHV unmutated CLL (u-CLL) more like naïve B-cells
 	+ Likely comes from pre-germinal center B cells
-	+ Enriched in high CD38 and ZAP70 expression
+	+ Enriched in high CD38 and ZAP70 (T cell receptor) expression
 	+ Enriched in NOTCH1 mutations
 	+ Poor prognosis
 - IGHV mutated CLL (m-CLL) more like memory B-cells
@@ -96,8 +96,7 @@ These are nowadays considered **not fundamental** for the initiation or continua
 	+ Early stop codon mutations
 	+ activating mutation
 	+ Notch pathway significantly affected (upregulated)
-	+ Clinical advanced, less survival
-
+	+ Clinicaly advanced, less survival
 - MYD88
 	+ frequency: 2.9%
 	+ MYD88 mutations are relevant in other lymphoid neoplasias
@@ -149,13 +148,43 @@ CLL progression can occur in either a linear or a branching manner, with multipl
 
 
 ## [Kulis et al, Nature Genetics, 2012](http://doi.org/doi:10.1038/ng.2443)
-> Kulis, M., Heath, S., Bibikova, M., Queirós, A. C., Navarro, A., Clot, G., … Martín-Subero, J. I. (2012). Epigenomic analysis detects widespread gene-body DNA hypomethylation in chronic lymphocytic leukemia. Nature Genetics, 44(11), 1236–1242. doi:10.1038/ng.2443
+> Kulis, M., Heath, S., Bibikova, M., Queirós, A. C., Navarro, A., Clot, G., … Martín-Subero, J. I. (2012). **Epigenomic analysis detects widespread gene-body DNA hypomethylation in chronic lymphocytic leukemia**. Nature Genetics, 44(11), 1236–1242. doi:10.1038/ng.2443
 
 ### Design
-- 
+- WGBS of two patients (one u-CLL, one m-CLL)
+- naïve B-cells, non-class-switched memory B-cells (ncsMBC) and class-switched memory B-cells (csMBC) + low coverage WGS from a single donor
+- 139 CLLs in 450k arrays + expression arrays
+- 450k array on various B cell populations from age matched healty donors
+	+ 19 whole B-cell (CD19)
+	+ three each of CD5+ NBC, NBC, ncsMBCs and csMBCs with > 95% purity
+- exome sequecing of the 139 CLLs
 
 ### Results
-- 
+- NBCs vs csMBCs: 1,076,208 DMRs in 19125 genes
+- 96% of DMRs were hypomethylated
+- little difference between ncsMBCs and csMBCs
+- most DMRs in gene bodies and intergenic space (outside CGIs)
+- PCA distinguishes u-CLL and m-CLL
+- poor overal correlation between DNAme and expression
+- ~3,265 DMRs between u-CLL and m-CLL detected in the arrays, > 2.5 million in WGBS
+- ~50% of the DMRs were not distinguishable between uCLL and NBCs or mCLL and scMBCs
+- differences between uCLL and mCLL in array data:
+	+ 3,243 hypermethylated and 29,743 hypomethylated CpGs in U-CLL compared with NBCs and CD5+ NBCs
+	+ 246 hypermethylated and 4,606 hypomethylated CpGs in M-CLL compared with MBCs
+- higher differences in the WGBS set:
+	+ 1,838,346 DMRs between U-CLL and NBCs (1,779,168 hypomethylated and 59,178 hypermethylated)
+	+ 1,254,527 DMRs between M-CLL and csMBCs (982,683 hypomethylated and 271,844 hypermethylated)
+- in general hypermethylation was at 5' regions of genes and CGIs, whereas hypomethylation was mainly at gene bodies
+- hypomethylated regions are enriched in signaling processes such as B-cell receptor–, NF-κB– and calcium-activated pathways; T-cell costimulation; and cytokine-cytokine receptor interactions
+- CpGs with significant correlation with expression (4%) were enriched in gene bodies
+- in a fraction, correlation between gene expression and DNA methylation was simultaneously negative in 5′ regions and positive in gene bodies
+- CpGs hypomethylated in U-CLL or M-CLL were enriched for enhancer regions in B cells and IRF and OCT1 binding sites
+- enhancers were also enriched in the uCLL/NBC comparison
+- gene body CpGs with negative correlation with expression were enriched in enhancers, whereas positively correlated ones had only slight enrichment	
+- tried to loook at the relationship between DNAme and splicing aberations - only two genes showed DNA methylation correlated with exon skipping, and lack of methylation correlated with exon inclusion
+- Eight recurrently mutated genes in CLL showed aberrant hypomethylation (ASXL1, BRAF, CDH23, EGR2, FAM117A, PHC2, POT1 and SF3B1) - not more than expected by chance - exome data only used here
+- Further clustering of samples based on NBC- and MBC-CpGs showed three clusters, the third one with a majority of mCLLs enriched in fewer IGHV mutations. These CLLs could come from "antigen- experienced, germinal center–independent B cell with low levels of somatic hypermutation".
+- The three groups showed significant clinical features between them
 
 
 ## [Queirós et al, Leukemia, 2014](http://doi.org/doi:10.1038/leu.2014.252)
