@@ -16,6 +16,10 @@ This is a short overview of fundamental literature on chronic lymphocytic leukae
 # Basic review
 
 ## B-cell biology
+
+[Great and detailed review here](http://www.jacionline.org/article/S0091-6749(13)00256-X/fulltext)
+
+#### Short story
 1. In secondary lymphoid organs, mature peripheral B cells (follicular (Fo) B cells) acquire antigen from follicular dendritic cells (FDCs) and in turn presents it to cognate CD4+ TfH cells. During TfH-B cell conjugation, the B cell receives critical signals to undergo class switching and to commence monoclonal expansion.
 2. After several rounds of cellular division, the B cells go through somatic hypermutation, generating a diversity of clones in the germinal center.
 3. Upon receiving an unidentified stimulus, the maturing B cells migrate from the dark zone to the light zone and start to express their antibody on the cell surface. They are in a state of activated apoptosis and compete for survival signals from follicular dendritic cell and TfH cells. This rescue process is dependent on the antibody affinity to the antigen. T cells are also believed to prevent the generation of autoreactive germinal center B cells.
@@ -46,7 +50,6 @@ Absolute values of lymphocytosis (>15,000/mm3) are considered in all stages.
 ## Molecular classification
 Compiled from various publications (see )
 
-- CD5+ B-cells
 - IGHV unmutated CLL (u-CLL) more like naïve B-cells
 	+ Likely comes from pre-germinal center B cells
 	+ Enriched in high CD38 and ZAP70 (T cell receptor) expression
@@ -55,7 +58,7 @@ Compiled from various publications (see )
 - IGHV mutated CLL (m-CLL) more like memory B-cells
 	+ Likely comes from post-germinal center, mature B cells
 	+ More patients left untreated
-- there are obvoulsly intermediate states as well (i-CLL)
+- there are obvioulsly intermediate states as well (i-CLL)
 
 > **personal note** although the intermediate group has obviously features of both, it seems more similar to the memory B cell (m-CLL) group
 
@@ -66,7 +69,7 @@ Compiled from various publications (see )
 - CD38 expression
 - ZAP-70 expression (predictive of IGHV mutation status)
 
-These are nowadays considered **not fundamental** for the initiation or continuation of leukemic process, but are still **descriptive** of it.
+The last three are nowadays considered **not fundamental** for the initiation or continuation of leukemic process, but are still **descriptive** of it.
 
 ## B-cell surface markers
 - All B-cells: CD19+
@@ -160,7 +163,44 @@ CLL progression can occur in either a linear or a branching manner, with multipl
 - 105 exomes matched tumour-normal:
 	+ 60 mCLL
 	+ 45 uCLL
+- Sanger sequencing of NOTCH1 in 260 cases
+- Sanger sequencing of SF3B1 in 279 cases (for validation)
+- RNA-seq in 15 cases, 4 with SF3B1 mutations, looking for splicing differences
+
+> Note: NOTCH1 is not well covered in exome-seq due to high GC content
+
 ### Results
+- median of 45 somatic mutations per case
+- higher in IGHV-mutated
+- A>C/T>G transversions more frequent than other types in IGHV-mutated CLL
+- 1,100 different genes were affected in the 105 cases
+- 90% of the cases at least one of the 78 recurent mutations
+- enrichment of genes in pathways involved in mRNA splic- ing and transport, Toll-like receptor (TLR) signaling and apoptosis
+- MYD88-associated TLR, NF-κB and JAK-STAT3 signaling, has been discovered in WGS
+- NOTCH1 mutations detected with >12% frequency
+- TLR and pattern recognition pathways were enriched in IGHV-mutated CLL
+
+
+##### Major new recurent genes:
++ SF3B1 - U2 spliceosomal component (9.7% frequency)
++ POT1 - telomere maintenance (4.8% frequency)
++ CDH2 - chromatin remodeler (4.8% frequency)
++ LRP1B - tumour suppressor (4.8% frequency)
+
+- BRAF possibly interesting
+- only one case of TP53 mutation -> authors ascribe this to the population's genetic composition
+
+##### SF3B1
+- SF3B1 mutations seem CLL specific: Non-Hodgkin lymphoma cases had no SF3B1 mutations, although splicing defects seem to be recurent in lymphoid neoplasias
+- enhanced expression of truncated mRNAs from:
+	+ SLC23A2
+	+ TCIRG1
+	+ FOXP1 (truncated form three times higher in SF3B1-mutated CLL)
+- SF3B1 somatic mutations present
+	+ advanced disease at diagnosis
+	+ IGHV loci without mutations
+	+ shorter time to disease progression
+	+ lower 10-year overall survival rates
 
 
 ## [Doménech et al, PLoS ONE, 2012](http://doi.org/doi:10.1371/journal.pone.0038158)
@@ -215,30 +255,30 @@ CLL progression can occur in either a linear or a branching manner, with multipl
 > Queirós, a C., Villamor, N., Clot, G., Martinez-Trillos, A., Kulis, M., Navarro, A., … Martín-Subero, J. I. (2014). **A B-cell epigenetic signature defines three biological subgroups of chronic lymphocytic leukemia with clinical impact**. Leukemia, (August 2014), 598–605. doi:10.1038/leu.2014.252
 
 ### Design
-- 
+
 
 ### Results
-- 
+
 
 
 ## [Baliakas et al, Leukemia, 2015](http://doi.org/doi:10.1038/leu.2014.196)
 Baliakas, P., Hadzidimitriou, A., Sutton, L., Rossi, D., Minga, E., Villamor, N., … Rosenquist, R. (2014). **Recurrent mutations refine prognosis in chronic lymphocytic leukemia**. Leukemia, (April), 1–8. doi:10.1038/leu.2014.196
 
 ### Design
-- 
+
 
 ### Results
-- 
+
 
 
 ## [Puente et al, Nature, 2015](http://doi.org/doi:10.1038/nature14666)
 > Puente, X. S., Beà, S., Valdés-Mas, R., Villamor, N., Gutiérrez-Abril, J., Martín-Subero, J. I., … Campo, E. (2015). **Non-coding recurrent mutations in chronic lymphocytic leukaemia**. Nature. doi:10.1038/nature14666
 
 ### Design
-- 
+
 
 ### Results
-- 
+
 
 
 
