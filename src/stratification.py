@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 """
+This script makes plots to ilustrate the stratification between CLL patients.
 """
 
 import yaml
@@ -19,7 +20,10 @@ import numpy as np
 from sklearn.preprocessing import normalize
 from sklearn.decomposition import RandomizedPCA
 from sklearn.manifold import MDS
-from scipy.cluster.hierarchy import linkage, dendrogram
+from scipy.cluster.hierarchy import dendrogram
+from scipy.stats import mannwhitneyu
+from statsmodels.sandbox.stats.multicomp import multipletests
+import itertools
 
 
 sns.set_style("whitegrid")
@@ -74,8 +78,31 @@ def normalize_by_library_size(series, samples, rm_mt=True):
         return (series / size) * 1e6
 
 
-def name_to_id(name):
+def name_to_repr(name):
     return "_".join([name.split("_")[0]] + [name.split("_")[2]] + name.split("_")[3:4])
+
+
+def name_to_id(name):
+    return "_".join([name.split("_")[2]] + name.split("_")[3:4])
+
+
+def name_to_sample_id(name):
+    return name.split("_")[3:4][0]
+
+
+def annotate_igvh_mutations(samples):
+    new_samples = list()
+
+    for sample in samples:
+        _id = name_to_sample_id(sample.name)
+        if clinical.loc[clinical['SampleID'] == _id, 'IGVH mut/unmut'].tolist()[0] == 1:
+            sample.mutated = True
+        elif clinical.loc[clinical['SampleID'] == _id, 'IGVH mut/unmut'].tolist()[0] == 2:
+            sample.mutated = False
+        else:
+            sample.mutated = None
+        new_samples.append(sample)
+    return new_samples
 
 
 def hexbin(x, y, color, **kwargs):
@@ -83,29 +110,22 @@ def hexbin(x, y, color, **kwargs):
     plt.hexbin(x, y, gridsize=15, cmap=cmap, **kwargs)
 
 
-def hierarchical_cluster_matrix(df):
-    # Compute and plot dendrogram
-    fig = plt.figure()
-    axdendro = fig.add_axes([0.09, 0.1, 0.2, 0.8])
-    y = linkage(df, method='centroid')
-    z = dendrogram(y, orientation='right')
-    axdendro.set_xticks([])
-    axdendro.set_yticks([])
+def get_cluster_classes(den, label='ivl'):
+    from collections import defaultdict
 
-    # Plot distance matrix
-    axmatrix = fig.add_axes([0.3, 0.1, 0.6, 0.8])
-    index = z['leaves']
-    d = df[index, :]
-    d = df[:, index]
-    im = axmatrix.matshow(d, aspect='auto', origin='lower')
-    axmatrix.set_xticks([])
-    axmatrix.set_yticks([])
+    cluster_idxs = defaultdict(list)
+    for c, pi in zip(den['color_list'], den['icoord']):
+        for leg in pi[1:3]:
+            i = (leg - 5.0) / 10.0
+            if abs(i - int(i)) < 1e-5:
+                cluster_idxs[c].append(int(i))
 
-    # Plot colorbar
-    axcolor = fig.add_axes([0.91, 0.1, 0.02, 0.8])
-    plt.colorbar(im, cax=axcolor)
+    cluster_classes = {}
+    for c, l in cluster_idxs.items():
+        i_l = [den[label][j] for j in l]
+        cluster_classes[c] = i_l
 
-    return fig
+    return cluster_classes
 
 
 # Read configuration file
@@ -127,6 +147,11 @@ prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
 # Select ATAC-seq samples
 samples = [s for s in prj.samples if type(s) == ATACseqSample if s.cellLine == "CLL"]
+
+# Annotate with igvh mutated status
+# add "mutated" attribute to sample depending on IGVH mutation status
+samples = annotate_igvh_mutations(samples)
+
 
 # GET CONSENSUS SITES ACROSS SAMPLES
 peak_count = dict()
@@ -338,13 +363,11 @@ sex_colors = [sex_s[str(x.get(x.index[0]))] if len(x.tolist()) > 0 else "grey" f
 
 
 # Correlation
-fig = plt.figure(figsize=(20, 16))
-
 cmap = sns.diverging_palette(h_neg=210, h_pos=350, s=90, l=30, as_cmap=True)
 
 c = rpkm[[sample.name for sample in samples]].corr()
-c.index = map(name_to_id, c.index)
-c.columns = map(name_to_id, c.columns)
+c.index = map(name_to_repr, c.index)
+c.columns = map(name_to_repr, c.columns)
 
 sns.clustermap(
     c,
@@ -352,7 +375,8 @@ sns.clustermap(
     cmap=cmap,
     row_colors=mut_colors,
     col_colors=sex_colors,
-    square=True, annot=False
+    square=True, annot=False,
+    figsize=(20, 16)
 )
 plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.correlation_clustering.pdf"), bbox_inches="tight")
 
@@ -374,7 +398,7 @@ fig = plt.figure()
 for i, sample in enumerate(samples):
     plt.scatter(
         pca.components_[i, 0], pca.components_[i, 1],
-        label=name_to_id(sample.name),
+        label=name_to_repr(sample.name),
         color=colors[i],
         s=50
     )
@@ -388,7 +412,7 @@ fig = plt.figure()
 for i, sample in enumerate(samples):
     plt.scatter(
         pca.components_[i, 1], pca.components_[i, 2],
-        label=name_to_id(sample.name),
+        label=name_to_repr(sample.name),
         color=colors[i],
         s=50
     )
@@ -402,7 +426,7 @@ fig = plt.figure()
 for i, sample in enumerate(samples):
     plt.scatter(
         pca.components_[i, 2], pca.components_[i, 3],
-        label=name_to_id(sample.name),
+        label=name_to_repr(sample.name),
         color=colors[i],
         s=50
     )
@@ -416,7 +440,7 @@ fig = plt.figure()
 for i, sample in enumerate(samples):
     plt.scatter(
         pca.components_[i, 3], pca.components_[i, 4],
-        label=name_to_id(sample.name),
+        label=name_to_repr(sample.name),
         color=colors[i],
         s=50
     )
@@ -430,7 +454,7 @@ fig = plt.figure()
 for i, sample in enumerate(samples):
     plt.scatter(
         pca.components_[i, 0], pca.components_[i, 2],
-        label=name_to_id(sample.name),
+        label=name_to_repr(sample.name),
         color=colors[i],
         s=50
     )
@@ -446,7 +470,7 @@ ax = fig.add_subplot(111, projection='3d')
 for i, sample in enumerate(samples):
     ax.scatter(
         pca.components_[i, 0], pca.components_[i, 1], pca.components_[i, 2],
-        label=name_to_id(sample.name),
+        label=name_to_repr(sample.name),
         color=colors[i],
         s=100
     )
@@ -473,7 +497,7 @@ fig = plt.figure()
 for i, sample in enumerate(samples):
     plt.scatter(
         pos[i, 0], pos[i, 1],
-        label=name_to_id(sample.name),
+        label=name_to_repr(sample.name),
         color=colors[i],
         s=50
     )
@@ -482,17 +506,104 @@ plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
 plt.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.MDS.pdf"), bbox_inches="tight")
 
 
-# Heatmap sites vs patients
-# hierarchical clustering
-fig = hierarchical_cluster_matrix(rpkm[[sample.name for sample in samples]])
-fig.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.hierarchicalClustering.pdf"), bbox_inches="tight")
+# COMPARISON mCLL - uCLL
+# test if sites come from same population
+pvalues = rpkm.apply(
+    lambda x: mannwhitneyu(
+        x.loc[[sample.name for sample in samples if sample.mutated]],
+        x.loc[[sample.name for sample in samples if not sample.mutated]])[1],
+    axis=1
+)
 
-#
+# correct for multiple testing
+qvalues = multipletests(pvalues)[1]
+
+# get differential sites
+sigs = rpkm.ix[pvalues[pvalues < 0.0001].index][[sample.name for sample in samples]]
+sigs.to_csv("clust.tsc", sep="\t", index=False)
+
+# correlate samples on significantly different sites
+sns.clustermap(
+    sigs.corr(),
+    method="complete",
+    cmap=cmap,
+    row_colors=mut_colors,
+    col_colors=sex_colors,
+    square=True, annot=False,
+    figsize=(20, 16)
+)
+plt.savefig(os.path.join(plotsDir, "dors.correlation_clustering.pdf"), bbox_inches="tight")
+
+clustermap = sns.clustermap(
+    sigs,
+    cmap=plt.get_cmap('YlGn'),
+    square=True, annot=False,
+)
+plt.savefig(os.path.join(plotsDir, "dors.clustering.pdf"), bbox_inches="tight")
+
+# get cluster assignments from linkage matrix
+lm = clustermap.dendrogram_col.linkage
+
+# plot dendrogram
+# determine height to separate clusters
+dendr = dendrogram(lm, labels=sigs.columns, color_threshold=65)
+# plt.show()
+
+# assign each sample to one cluster
+clusters = get_cluster_classes(dendr)
+
+# concatenate clusters on the unmutated side
+unmutated_cluster = ['b', 'c', 'm', 'y']
+
+# annotate samples with cluster
+new_samples = list()
+for cluster, sample_names in clusters.items():
+    for sample_name in sample_names:
+        s = [sample for sample in samples if sample.name == sample_name][0]
+        s.cluster = cluster if cluster not in unmutated_cluster else 'b'
+        new_samples.append(s)
+samples = new_samples
+
+
+# Repeat again independence test and
+# get all differential sites (from 3 comparisons)
+all_sig = pd.DataFrame()
+for g1, g2 in itertools.combinations(['r', 'g', 'b']):
+    pvalues = rpkm.apply(
+        lambda x: mannwhitneyu(
+            x.loc[[sample.name for sample in samples if sample.cluster == "r"]],
+            x.loc[[sample.name for sample in samples if sample.cluster == "g"]]),
+        axis=1
+    )
+    sig = rpkm.ix[pvalues[pvalues < 0.0001].index][[sample.name for sample in samples]]
+    sig['comparison'] = "-".join(g1, g2)
+    all_sig = pd.concat([all_sig, sig])
+
+all_sig = all_sig.drop_duplicates()
+
+all_sig.to_csv(os.path.join("data", "dors.3_populations.tsv"), sep="\t", index=False)
+
+
+# correlate samples on significantly different sites
+sns.clustermap(
+    all_sig.corr(),
+    method="complete",
+    cmap=cmap,
+    square=True, annot=False,
+    figsize=(20, 16)
+)
+plt.savefig(os.path.join(plotsDir, "dors.3_populations.correlation_clustering.pdf"), bbox_inches="tight")
+
+# heatmap all significat sites
+clustermap = sns.clustermap(
+    all_sig,
+    cmap=plt.get_cmap('YlGn'),
+    square=True, annot=False
+)
+plt.savefig(os.path.join(plotsDir, "dors.3_populations.clustering.pdf"), bbox_inches="tight")
 
 
 # INTER-SAMPLE VARIABILITY ANALYSIS
-# Cluster samples
-
 
 # Subsample peaks or reads and see the minimum required to form the clusters previously
 
@@ -502,8 +613,6 @@ fig.savefig(os.path.join(plotsDir, "all_sample_peaks.concatenated.hierarchicalCl
 # Get statistically different peaks between groups
 #
 #
-from scipy.stats import mannwhitneyu
-# mannwhitneyu()
 
 #
 
@@ -518,8 +627,9 @@ from scipy.stats import mannwhitneyu
 # get closest gene: GO, KEGG, OMIM, mSigDB
 # de novo motif finding - enrichment
 
-# Try calling differentially open sites (DOS)
-# with DESeq2
+
+# See relationship betgween openness at enhancers and promoters
+# across samples, get co-ocurrence frequency
 
 
 # CLASSIFICATION

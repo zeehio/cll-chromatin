@@ -32,16 +32,16 @@ mut_counts = clinical['mutations'].apply(lambda x: x.replace("?", "") if type(x)
 clinical['mutations'] = mut_counts.apply(lambda x: x.replace("TP53loss", "TP53") if type(x) is str else np.nan)
 
 # Make categorical numeric
-binars = ['patient_gender', 'diagnosis_disease', 'treated', 'sample_shippment_batch']
+cats = ['patient_gender', 'diagnosis_disease', 'treated', 'sample_shippment_batch']
 mapping = {'F': 0, 'M': 1, 'CLL': 0, 'MBL': 1, 'SLL': 2, 'Y': 0, 'N': 1, 'A': 0, 'B': 1, 'C': 2}
-for bina in binars:
+for cat in cats:
     g = list()
-    for x in clinical[bina]:
+    for x in clinical[cat]:
         if x in mapping.keys():
             g.append(mapping[x])
         else:
             g.append(np.nan)
-    clinical[bina] = g
+    clinical[cat] = g
 
 clinical['mutations_notch1'] = [1 if i else np.nan for i in clinical['mutations'].str.contains('NOTCH1')]
 clinical['mutations_sf3b1'] = [1 if i else np.nan for i in clinical['mutations'].str.contains('SF3B1')]
@@ -71,9 +71,11 @@ clinical['patient_alive'] = [1 if type(x) is pd.tslib.Timestamp else 0 for x in 
 
 # HEATSTRIP PLOT
 attrs = [
-    'igvh_homoology', 'igvh_mutation_status', 'diagnosis_disease', 'patient_gender', 'patient_alive', 'treated', 'lymp_count',
+    'igvh_homoology', 'igvh_mutation_status', 'diagnosis_disease',
+    'patient_gender', 'patient_alive', 'treated', 'lymp_count',
     'patient_age_at_diagnosis', 'patient_age_at_collection',
-    'mutations_count', 'mutations_notch1', 'mutations_sf3b1', 'mutations_del13', 'mutations_del11q', 'mutations_tp53', 'mutations_tri12',
+    'mutations_count', 'mutations_notch1', 'mutations_sf3b1',
+    'mutations_del13', 'mutations_del11q', 'mutations_tp53', 'mutations_tri12',
     'sample_viability', 'sample_shippment_batch',
 ]
 
