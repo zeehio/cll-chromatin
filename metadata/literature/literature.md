@@ -78,6 +78,49 @@ The last three are nowadays considered **not fundamental** for the initiation or
 - non-class-switched memory B cells (ncsMBCs): CD19+, CD27+, IgM+ or IgD+ (both to sort)
 - class-switched memory B cells (csMBCs): CD19+, CD27+, IgA+ or IgG+
 
+## [Treatments](http://www.lymphoma.org/site/pp.asp?c=bkLTKaOQLmK8E&b=6300147)
+
+#### First-line treatments
+
++ B - Bendamustine
++ BR - Bendamustine, Rituximab
++ 2CDA - Cladribine
++ C - Cyclophosphamide
++ Chl - Chlorambucil
++ CyPred-R - Cyclophosphamide, Prednisone, Rituximab
++ F - Fludarabine
++ FR - Fludarabine, Rituximab
++ FCR - Fludarabine, Cyclophosphamide, Rituximab
++ HDMP-R - High-dose methylprednisolone, Rituximab
++ Ibrutinib
++ Idelalisib, Rituximab
++ Obinutuzumab, Chlorambucil
++ OFAR - Oxaliplatin, Fludarabine, Cytarabine, Rituximab
++ Ofatumumab 
++ Ofatumumab, Chlorambucil
++ PCR - Pentostatin, Cyclophosphamide, Rituximab
++ RCHl - Rituximab, Chlorambucil
++ RCHOP - Rituximab, Cyclophosphamid, Doxorubicin/hydroxydaunorubicin, Vincristine, Prednisone
+
+#### Secondary therapies - single-agent therapies:
++ Alemtuzumab
++ Bendamustine
++ Idelalisib
++ Chlorambucil
++ Ofatumumab
++ Fludarabine
++ Rituximab
++ Ibrutinib
+
+#### Secondary therapies - combination therapies:
++ BR (bendamustine and rituximab)
++ FCR (fludarabine, cyclophosphamide, and rituximab)
++ FR (fludarabine and rituximab)
++ Idelalisib plus rituximab
++ Lenalidomide with or without rituximab
++ R-CHOP (rituximab, cyclophosphamide, doxorubicin, vincristine, and prednisone)
+
+
 # Recent Papers
 
 ## [Puente et al, Nature, 2011](http://doi.org/doi:10.1038/nature10113)
