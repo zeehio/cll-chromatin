@@ -157,7 +157,7 @@ for status in [1, 2]:
 
     # make df
     d = pd.DataFrame([points.keys(), points.values()], index=['years', 'survival']).T
-    d['igvh_mutation_status'] = "mCLL" if status == 1 else "uCLL"
+    d['igvh_mutation_status'] = "mutated" if status == 1 else "unmutated"
     df3 = pd.concat([df3, d])
 
 # plot
@@ -166,7 +166,7 @@ fig.ax.set_xlabel("time after diagnosis (years)")
 fig.ax.set_ylabel("% survival")
 fig.ax.set_xlim(0, 40)
 fig.ax.set_ylim(0, 100)
-fig.fig.set_title("Kapplar-Mayer curve of cohort dependent on IGVH mutation status")
+fig.ax.set_title("Kapplar-Mayer curve of cohort dependent on IGVH mutation status")
 fig.fig.savefig(os.path.join(plotsDir, 'cohort_kapplar-mayer.pdf'), bbox_inches='tight')
 
 
