@@ -125,3 +125,55 @@ plt.savefig(os.path.join(plotsDir, 'cohort_mutations.pdf'), bbox_inches='tight')
 
 # save plot data
 df.to_csv(os.path.join("data", "cohort_mutations.csv"), index=False)
+
+
+# Kapplar-Mayer plot
+# drop patients without dob
+df = clinical[clinical['patient_birth_date'].notnull()]
+
+df3 = pd.DataFrame(columns=['years', 'survival', 'igvh_mutation_status'])
+
+for status in [1, 2]:
+    df2 = df[df['igvh_mutation_status'] == status]
+
+    # get death time after diagnosis
+    death_diagnosis = df2['patient_death_date'] - df2['diagnosis_date']
+    death_diagnosis = death_diagnosis.drop_duplicates().dropna()
+    death_diagnosis = np.array([x.days for x in death_diagnosis]) / 365.0
+
+    # add start point
+    death_diagnosis = np.append(0, death_diagnosis)
+
+    # for each time of death reduce survival by 1
+    points = dict()
+    for i, time in enumerate(sorted(death_diagnosis)):
+        if time == 0:
+            points[time] = len(df2)
+        else:
+            points[time] = points[sorted(death_diagnosis)[i - 1]] - 1
+
+    # transform to percentage
+    points = {time: (float(count) / len(df2)) * 100 for time, count in points.items()}
+
+    # make df
+    d = pd.DataFrame([points.keys(), points.values()], index=['years', 'survival']).T
+    d['igvh_mutation_status'] = "mCLL" if status == 1 else "uCLL"
+    df3 = pd.concat([df3, d])
+
+# plot
+fig = sns.lmplot(x='years', y='survival', data=df3, hue="igvh_mutation_status", fit_reg=False, scatter_kws={"s": 50})
+fig.ax.set_xlabel("time after diagnosis (years)")
+fig.ax.set_ylabel("% survival")
+fig.ax.set_xlim(0, 40)
+fig.ax.set_ylim(0, 100)
+fig.fig.set_title("Kapplar-Mayer curve of cohort dependent on IGVH mutation status")
+fig.fig.savefig(os.path.join(plotsDir, 'cohort_kapplar-mayer.pdf'), bbox_inches='tight')
+
+
+# other option
+# df3 = df3.sort("years")
+# grid = sns.FacetGrid(df3, hue="igvh_mutation_status")
+# grid.map(plt.plot, "years", "survival", marker="o")
+
+# save plot data
+df.to_csv(os.path.join("data", "cohort_kapplar-mayer.csv"), index=False)
