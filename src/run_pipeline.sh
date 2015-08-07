@@ -4,4 +4,4 @@ cd pipelines
 python setup.py install --user
 
 # run pipelines
-pipelines cll-patients ../metadata/sample_annotation.csv
+pipelines cll-patients ../metadata/sequencing_sample_annotation.csv
