@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 
 """
+This script aims to build patient- or patient group-specific
+gene regulatory networks infered from transcription-factor footprints
+in ATAC-seq data.
 """
 
 import yaml
@@ -16,17 +19,22 @@ import cPickle as pickle
 import pandas as pd
 
 
-def truncate_interval(interval, n=1):
+def truncate_interval(interval, center=True, n=1):
     """
-    Truncate genomic interval to a number of basepairs from its start.
+    Truncate genomic interval to a number of basepairs from its center (if center is True) or its start.
 
     :param interval: a pybedtools.Interval object.
     :type interval: pybedtools.Interval
+    :param center: If interval should be truncated to its center position
+    :type center: bool
     :param n: Number of basepairs to truncate interval to.
     :type n: int
     :returns: Truncated pybedtools.Interval object.
     :rtype: pybedtools.Interval
     """
+    if center:
+        center = interval.end - interval.start
+        interval.start = center
     interval.end = interval.start + n
     return interval
 
@@ -48,7 +56,7 @@ def bedtools_interval_to_genomic_interval(interval):
         return HTSeq.GenomicInterval(interval.chrom, interval.start, interval.end)
 
 
-def coverage(bam, intervals, fragmentsize, orientation=True, duplicates=True, strand_specific=False):
+def coverage(bam, intervals, fragmentsize, orientation=True, duplicates=True, strand_specific=True):
     """
     Gets read coverage in genomic intervals.
     Returns dict of regionName:numpy.array if strand_specific=False, A dict of "+" and "-" keys with regionName:numpy.array.
@@ -125,7 +133,7 @@ def coverage(bam, intervals, fragmentsize, orientation=True, duplicates=True, st
     return cov
 
 
-def call_footprints(cuts, annot):
+def call_footprints(cuts, annot, plot, mLen):
     """
     Call footprints.
     Requires dataframe with cuts and dataframe with annotation (2> cols).
@@ -137,13 +145,14 @@ def call_footprints(cuts, annot):
     footprint = robj.r("""
     library(CENTIPEDE)
 
-    function(cuts, annot) {
+    function(cuts, annot, plotFile, mLen) {
         centFit <- fitCentipede(
             Xlist = list(as.matrix(cuts)),
             Y = as.matrix(annot)
         )
-        # imageCutSites(cuts[order(centFit$PostPr),][c(1:100, (dim(cuts)[1]-100):(dim(cuts)[1])),])
-        # plotProfile(centFit$LambdaParList[[1]],Mlen=2)
+        pdf(plotFile)
+            plotProfile(centFit$LambdaParList[[1]],Mlen=mLen)
+        dev.off()
         return(centFit$PostPr)
     }
 
@@ -155,7 +164,7 @@ def call_footprints(cuts, annot):
     annot_R = robj.conversion.py2ri(annot)
 
     # run the plot function on the dataframe
-    return np.ndarray.flatten(robj.conversion.ri2py(footprint(cuts_R, annot_R)))
+    return np.ndarray.flatten(robj.conversion.ri2py(footprint(cuts_R, annot_R, plot, mLen)))
 
 
 # Read configuration file
@@ -176,6 +185,13 @@ samples = [s for s in prj.samples if type(s) == ATACseqSample]
 # - get window around (e.g. +/- 100bp), footprint with CENTIPEDE or PIQ
 # - save posterior probabilities for every site
 
+# Separate sites by TF, get TF motif length
+
+# Build matrix of TF-site
+
+# Polulate with footprint score
+
+
 # Preprocess motifs data objects
 # load motifs
 motifs = pybedtools.BedTool(
@@ -184,7 +200,7 @@ motifs = pybedtools.BedTool(
         "matches.merged.bed"
     )
 )
-# truncate to start base-pair
+# truncate to center base-pair
 motifs = map(truncate_interval, motifs)
 # add window around
 motifs = motifs.slop(b=100)
@@ -253,3 +269,15 @@ for sample in samples:
 # - build networks specific to groups
 
 # Compare Networks
+
+
+#
+
+
+# CIS-REGULATORY MODULE USAGE BETWEEN CLL TYPES
+# Get CLL groups
+# Select genome region of relevance
+# Get reads for regions at e.g. 1kb resolution
+# Correlate genome positions in each group
+
+# Get differential between groups
