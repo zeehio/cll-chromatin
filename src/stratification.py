@@ -22,7 +22,7 @@ from sklearn.decomposition import RandomizedPCA
 from sklearn.manifold import MDS
 from scipy.cluster.hierarchy import dendrogram
 from scipy.stats import mannwhitneyu
-from statsmodels.sandbox.stats.multicomp import multipletests
+# from statsmodels.sandbox.stats.multicomp import multipletests
 import itertools
 
 
@@ -95,7 +95,7 @@ class Analysis(object):
 
         # Count reads with pysam
         # make strings with intervals
-        sites_str = [str(i.chrom) + ":" + str(i.start) + "-" + str(i.stop) for i in sites]
+        sites_str = [str(i.chrom) + ":" + str(i.start) + "-" + str(i.stop) for i in self.sites]
         # count, create dataframe
         coverage = pd.DataFrame(
             map(
@@ -159,28 +159,22 @@ class Analysis(object):
     def pca(self):
         # PCA
         # normalize
-        X = normalize(self.rpkm_log[[sample.name for sample in self.samples]])
+        x = normalize(self.rpkm_log[[sample.name for sample in self.samples]])
 
         # random PCA
         pca = RandomizedPCA()
-        X = pca.fit(X).transform(X)
+        self.pca_fit = pca.fit(x).transform(x)
 
-        self.pca_fit = X
-
-    def mds(self):
-        # MDS
-        # on 1000 most variable sites
-        n = 2000
-
-        # normalize, get most variable sites
-        X = normalize(self.rpkm_log.ix[self.rpkm_log[[sample.name for sample in self.samples]].apply(np.var, axis=1).order(ascending=False).index].head(n)[[sample.name for sample in self.samples]])
+    def mds(self, n=1000):
+        # normalize, get *n* most variable sites
+        x = normalize(self.rpkm_log.ix[self.rpkm_log[[sample.name for sample in self.samples]].apply(np.var, axis=1).order(ascending=False).index].head(n)[[sample.name for sample in self.samples]])
 
         # convert two components as we're plotting points in a two-dimensional plane
         # "precomputed" because we provide a distance matrix
         # we will also specify `random_state` so the plot is reproducible.
         mds = MDS()  # n_components=2, dissimilarity="precomputed", random_state=1)
 
-        self.mds_fir = mds.fit_transform(X)
+        self.mds_fir = mds.fit_transform(x)
 
     def plot_peak_characteristics(self):
         # Plot cumulative number of peaks
@@ -384,7 +378,7 @@ class Analysis(object):
         colors = cm.Paired(np.linspace(0, 1, len(self.samples)))
 
         # plot
-        fig = plt.figure()
+        plt.figure()
         for i, sample in enumerate(self.samples):
             plt.scatter(
                 self.mds_fit[i, 0], self.mds_fit[i, 1],
@@ -395,6 +389,7 @@ class Analysis(object):
         plt.title("MDS on %i most variable genes" % n)
         plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
         plt.savefig(os.path.join(self.plots_dir, "all_sample_peaks.concatenated.MDS.pdf"), bbox_inches="tight")
+        plt.close('all')
 
 
 def count_reads_in_intervals(bam, intervals):
@@ -496,7 +491,7 @@ def get_cluster_classes(den, label='ivl'):
 
 
 def run_lola(bed_files, universe_file, output_folder):
-    import rpy2.robjects as robj  # for ggplot in R
+    import rpy2.robjects as robj
 
     lola = robj.r("""
         function(bedFiles, universeFile, outputFolder) {
@@ -506,14 +501,16 @@ def run_lola(bed_files, universe_file, output_folder):
             userUniverse  <- bedr::bed_to_granges(universeFile)
 
             dbPath = "/data/groups/lab_bock/shared/resources/regions/LOLACore/hg19/"
+
+            dbPath = "/data/groups/lab_bock/shared/resources/regions/customRegionDB/hg19/"
             regionDB = loadRegionDB(dbPath)
 
             if (typeof(bedFiles) == "character") {
-                userSet <- bedr::bed_to_granges(bedFile)
+                userSet <- bedr::bed_to_granges(bedFiles)
                 lolaResults = runLOLA(userSet, userUniverse, regionDB, cores=12)
                 lolaResults[order(support, decreasing=TRUE), ]
                 writeCombinedEnrichment(lolaResults, outFolder=outputFolder)
-            } elseif (typeof(bedFiles) == "double") {
+            } else if (typeof(bedFiles) == "double") {
                 for (bedFile in bedFiles) {
                     userSet <- bedr::bed_to_granges(bedFile)
                     lolaResults = runLOLA(userSet, userUniverse, regionDB, cores=12)
@@ -554,6 +551,7 @@ def main():
 
     # Start analysis object
     analysis = Analysis(data_dir, plots_dir, samples)
+    analysis.prj = prj
     analysis.clinical = clinical
 
     # Get consensus peak set from all samples
@@ -576,7 +574,7 @@ def main():
     )
 
     # correct for multiple testing
-    qvalues = pd.Series(multipletests(pvalues)[1])
+    # qvalues = pd.Series(multipletests(pvalues)[1])
 
     # get differential sites
     significant = rpkm.ix[pvalues[pvalues < 0.0001].index][[sample.name for sample in samples]]
@@ -686,8 +684,6 @@ def main():
             os.makedirs(output_folder)
         # run
         run_lola(bed_file, universe_file, output_folder)
-
-    #
 
     # get closest gene: GO, KEGG, OMIM, mSigDB
     # de novo motif finding - enrichment

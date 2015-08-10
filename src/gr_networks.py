@@ -9,7 +9,6 @@ in ATAC-seq data.
 import yaml
 import os
 from pipelines.models import Project, ATACseqSample
-from collections import OrderedDict
 import numpy as np
 import HTSeq
 import pybedtools
@@ -17,6 +16,35 @@ import multiprocessing
 import parmap
 import cPickle as pickle
 import pandas as pd
+
+
+def prepare_motifs():
+    """
+    Prepare motifs for footprinting.
+    """
+    motifs_dir = "/data/groups/lab_bock/shared/resources/genomes/hg19/motifs"
+    cmds = list()
+
+    # Get ENCODE motif matches
+    cmds.append("wget http://compbio.mit.edu/encode-motifs/matches.txt.gz")  # get motifs
+    cmds.append("gzip -d matches.txt.gz")  # extract
+    cmds.append("tr ' ' \\t < matches.txt > matches.tsv")  # replace spaces with tabs
+    cmds.append("""perl -ane 'print "$F[1]\t$F[2]\t$F[3]\t$F[4]\t$F[0]\n"' matches.tsv > matches.bed""")  # make bed file
+
+    # Run file preparation
+    for cmd in cmds:
+        os.system(cmd)
+
+    # make output dir
+    if not os.path.exists(os.path.join(motifs_dir, "TFs")):
+        os.mkdir(os.path.join(motifs_dir, "TFs"))
+
+    # read master file, split per TF
+    with open("matches.bed", "r") as handle:
+        for line in handle:
+            tf = line.split("\t")[4].split("_")[0]
+            with open(os.path.join("TFs", tf + ".bed"), 'a') as handle2:
+                handle2.write(line)
 
 
 def truncate_interval(interval, center=True, n=1):
@@ -33,7 +61,7 @@ def truncate_interval(interval, center=True, n=1):
     :rtype: pybedtools.Interval
     """
     if center:
-        center = interval.end - interval.start
+        center = ((interval.end - interval.start) / 2) + interval.start
         interval.start = center
     interval.end = interval.start + n
     return interval
@@ -56,39 +84,50 @@ def bedtools_interval_to_genomic_interval(interval):
         return HTSeq.GenomicInterval(interval.chrom, interval.start, interval.end)
 
 
-def coverage(bam, intervals, fragmentsize, orientation=True, duplicates=True, strand_specific=True):
+def coverage(bed_file, bam_file, fragmentsize=1, orientation=True, duplicates=True, strand_specific=True):
     """
     Gets read coverage in genomic intervals.
     Returns dict of regionName:numpy.array if strand_specific=False, A dict of "+" and "-" keys with regionName:numpy.array.
 
+    :param bed_file: Bed file.
+    :type bed_file: str
     :param bam: HTSeq.BAM_Reader object, must be sorted and indexed with .bai file.
     :type bam: HTSeq.BAM_Reader
-    :param intervals: dict with HTSeq.GenomicInterval objects as values.
-    :type intervals: dict
     :type fragmentsize: int
     :type stranded: bool
     :type duplicates: bool
     :returns: OrderedDict with regionName:numpy.array(coverage)
     :rtype: collections.OrderedDict
     """
+    motifs = pybedtools.BedTool(bed_file)
+
+    # truncate to center base-pair
+    motifs = map(truncate_interval, motifs)
+    # add window around
+    intervals = motifs.slop(b=100)
+    # convert to HTSeq.GenomicInterval
+    intervals = map(bedtools_interval_to_genomic_interval, intervals)
+
+    # Bam file
+    bam = HTSeq.BAM_Reader(bam_file)
+
     chroms_avoid = ['chrM', 'chrX', 'chrY']
-    cov = OrderedDict()
     n = len(intervals)
-    i = 0
+    m = intervals[0].length
+
+    # create empty array
+    if not strand_specific:
+        coverage = np.zeros((n, m), dtype=np.float64)
+    else:
+        coverage = np.zeros((n, m * 2), dtype=np.float64)
 
     # Loop through intervals, get coverage, append to dict
-    for name, feature in intervals.iteritems():
+    for i, feature in enumerate(intervals):
         if i % 1000 == 0:
             print(n - i)
-        # Initialize empty array for this feature
-        if not strand_specific:
-            profile = np.zeros(feature.length, dtype=np.float64)
-        else:
-            profile = np.zeros((2, feature.length), dtype=np.float64)
 
         # Check if feature is in bam index
         if feature.chrom in chroms_avoid:
-            i += 1
             continue
 
         # Fetch alignments in feature window
@@ -120,17 +159,13 @@ def coverage(bam, intervals, fragmentsize, orientation=True, duplicates=True, st
 
             # add +1 to all positions overlapped by read within window
             if not strand_specific:
-                profile[start_in_window: end_in_window] += 1
+                coverage[i, start_in_window: end_in_window] += 1
             else:
                 if aln.iv.strand == "+":
-                    profile[0][start_in_window: end_in_window] += 1
+                    coverage[i, start_in_window: end_in_window] += 1
                 else:
-                    profile[1][start_in_window: end_in_window] += 1
-
-        # append feature profile to dict
-        cov[name] = profile
-        i += 1
-    return cov
+                    coverage[i, m + start_in_window: m + end_in_window] += 1
+    return coverage
 
 
 def call_footprints(cuts, annot, plot, mLen):
@@ -181,35 +216,18 @@ samples = [s for s in prj.samples if type(s) == ATACseqSample]
 
 
 # FOOTPRINTING
-# - Go to each TF motif site annotated: http://compbio.mit.edu/encode-motifs/
-# - get window around (e.g. +/- 100bp), footprint with CENTIPEDE or PIQ
-# - save posterior probabilities for every site
+# Use motifs from here: http://compbio.mit.edu/encode-motifs/
+# Split motifs by TF
+motifs_dir = "/data/groups/lab_bock/shared/resources/genomes/hg19/motifs"
+prepare_motifs()
 
-# Separate sites by TF, get TF motif length
-
-# Build matrix of TF-site
-
-# Polulate with footprint score
-
-
-# Preprocess motifs data objects
-# load motifs
-motifs = pybedtools.BedTool(
-    os.path.join(
-        "/data/groups/lab_bock/shared/resources/genomes/hg19/motifs",
-        "matches.merged.bed"
-    )
-)
-# truncate to center base-pair
-motifs = map(truncate_interval, motifs)
-# add window around
-motifs = motifs.slop(b=100)
-# convert to HTSeq.GenomicInterval
-motifs = map(bedtools_interval_to_genomic_interval, motifs)
-
-# Generate some dummy motif scores
-# this should be replaced with the actual scores later
-motif_scores = pd.DataFrame(np.ones([10, 2]))
+# Get all TF motifs
+motifs = os.listdir(os.path.join("/data/groups/lab_bock/shared/resources/genomes/hg19/motifs/TFs"))
+motifs = [os.path.abspath(os.path.join("/data/groups/lab_bock/shared/resources/genomes/hg19/motifs/TFs", motif)) for motif in motifs]
+# Get window around (e.g. +/- 100bp) each motif
+# Get coverage there
+# Footprint with centipede
+# Save posterior probabilities for every site
 
 # Loop through samples, get coverage, save, footprint
 covs = dict()
@@ -222,9 +240,10 @@ for sample in samples:
     # this needs to be reduced
     # perhaps a pd.DataFrame().append() od pd.concat() will do the trick
     covs[sample.name] = parmap.map(
-        coverage, {motif.name: motif for motif in motifs},
-        HTSeq.BAM_Reader(sample.mapped),  # be more stringent here, ask for sample.filtered
-        fragmentsize=1
+        coverage,
+        motifs,
+        bam  # be more stringent here, ask for sample.filtered
+        
     )
     # serialize
     pickle.dump(covs, open(os.path.join(data_dir, "all_samples.motif_coverage.pickle"), "wb"), protocol=pickle.HIGHEST_PROTOCOL)
