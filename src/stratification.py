@@ -32,7 +32,7 @@ sns.set_context("paper")
 
 class Analysis(object):
     """
-    Class to hold functions for analysis.
+    Class to hold functions and data from analysis.
     """
 
     def __init__(self, data_dir, plots_dir, samples):
@@ -379,7 +379,7 @@ class Analysis(object):
         plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
         plt.savefig(os.path.join(self.plots_dir, "all_sample_peaks.concatenated.PCA-3comp.pdf"), bbox_inches="tight")
 
-    def plot_mds(self):
+    def plot_mds(self, n=1000):
         # get unique colors
         colors = cm.Paired(np.linspace(0, 1, len(self.samples)))
 
@@ -493,6 +493,39 @@ def get_cluster_classes(den, label='ivl'):
         cluster_classes[c] = i_l
 
     return cluster_classes
+
+
+def run_lola(bed_files, universe_file, output_folder):
+    import rpy2.robjects as robj  # for ggplot in R
+
+    lola = robj.r("""
+        function(bedFiles, universeFile, outputFolder) {
+            library("bedr")
+            library("LOLA")
+
+            userUniverse  <- bedr::bed_to_granges(universeFile)
+
+            dbPath = "/data/groups/lab_bock/shared/resources/regions/LOLACore/hg19/"
+            regionDB = loadRegionDB(dbPath)
+
+            if (typeof(bedFiles) == "character") {
+                userSet <- bedr::bed_to_granges(bedFile)
+                lolaResults = runLOLA(userSet, userUniverse, regionDB, cores=12)
+                lolaResults[order(support, decreasing=TRUE), ]
+                writeCombinedEnrichment(lolaResults, outFolder=outputFolder)
+            } elseif (typeof(bedFiles) == "double") {
+                for (bedFile in bedFiles) {
+                    userSet <- bedr::bed_to_granges(bedFile)
+                    lolaResults = runLOLA(userSet, userUniverse, regionDB, cores=12)
+                    lolaResults[order(support, decreasing=TRUE), ]
+                    writeCombinedEnrichment(lolaResults, outFolder=outputFolder)
+                }
+            }
+        }
+    """)
+
+    # convert the pandas dataframe to an R dataframe
+    lola(bed_files, universe_file, output_folder)
 
 
 def main():
@@ -629,8 +662,33 @@ def main():
     )
     plt.savefig(os.path.join(plots_dir, "dors.3_populations.clustering.pdf"), bbox_inches="tight")
 
-    # export regions
-    # run lola/gsea
+    # export dors regions
+    for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
+        comparison = "-".join([g1, g2])
+        specific = rpkm.loc[
+            all_pvalues[
+                (all_pvalues['p'] < 0.000001) &
+                (all_pvalues['comparison'] == comparison)
+            ].index,
+            ['chrom', 'start', 'end']
+        ].drop_duplicates()
+        specific.to_csv(os.path.join(data_dir, "dors.{0}.bed".format(comparison)), sep="\t", index=False, header=None)
+
+    # run lola
+    # use all cll sites as universe
+    universe_file = os.path.join(data_dir, "all_sample_peaks.concatenated.bed")
+
+    for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
+        comparison = "-".join([g1, g2])
+        bed_file = os.path.join(data_dir, "dors.{0}.bed".format(comparison))
+        output_folder = os.path.join(data_dir, "lola", "dors_{0}".format(comparison))
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+        # run
+        run_lola(bed_file, universe_file, output_folder)
+
+    #
+
     # get closest gene: GO, KEGG, OMIM, mSigDB
     # de novo motif finding - enrichment
 
