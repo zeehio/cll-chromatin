@@ -84,10 +84,9 @@ def bedtools_interval_to_genomic_interval(interval):
         return HTSeq.GenomicInterval(interval.chrom, interval.start, interval.end)
 
 
-def coverage(bed_file, bam_file, sites, fragmentsize=1, orientation=True, duplicates=True, strand_specific=True):
+def footprint(bed_file, bam_file, sites, sample_name, fragmentsize=1, orientation=True, duplicates=True, strand_specific=True):
     """
-    Gets read coverage in genomic intervals.
-    Returns dict of regionName:numpy.array if strand_specific=False, A dict of "+" and "-" keys with regionName:numpy.array.
+    Gets read coverage in genomic intervals. Passes coverage to call_footprints and returns posterior probabilities.
 
     :param bed_file: Bed file.
     :type bed_file: str
@@ -99,49 +98,60 @@ def coverage(bed_file, bam_file, sites, fragmentsize=1, orientation=True, duplic
     :returns: OrderedDict with regionName:numpy.array(coverage)
     :rtype: collections.OrderedDict
     """
+    # read in bedfile
     motifs = pybedtools.BedTool(bed_file)
+    # get motif length (length of first interval)
+    motif_length = motifs[0].length
+
     # add window around
     intervals = motifs.slop(b=100, genome="hg19")
 
+    # keep only motifs overlaping the consensus set of sites
     intervals = intervals.intersect(b=sites, u=True)
 
-    # convert to HTSeq.GenomicInterval
+    # convert intervals to HTSeq.GenomicInterval
     intervals = map(bedtools_interval_to_genomic_interval, intervals)
 
-    # Bam file
+    # Handle bam file
     bam = HTSeq.BAM_Reader(bam_file)
 
+    # exclude bad chroms
     chroms_avoid = ['chrM', 'chrX', 'chrY']
+
+    # get dimensions of matrix to store profiles of Tn5 transposition
     n = len(intervals)
     m = intervals[0].length
 
-    # create empty array
+    # create empty matrix
     if not strand_specific:
         coverage = np.zeros((n, m), dtype=np.float64)
     else:
+        # if "strand_specific", get signal for both strands independently, but concatenated
         coverage = np.zeros((n, m * 2), dtype=np.float64)
 
-    # Loop through intervals, get coverage, append to dict
+    # Loop through intervals, get coverage, increment matrix count
     for i, feature in enumerate(intervals):
+        # counter just to track
         if i % 1000 == 0:
             print(n - i)
 
-        # Check if feature is in bam index
+        # Check if feature is not in bad chromosomes
         if feature.chrom in chroms_avoid:
             continue
 
-        # Fetch alignments in feature window
+        # Fetch alignments in interval
         for aln in bam[feature]:
-            # check if duplicate
-            if not duplicates and aln.pcr_or_optical_duplicate:
-                continue
             # check it's aligned
             if not aln.aligned:
                 continue
 
-            aln.iv.length = fragmentsize  # adjust to size
+            # check if duplicate
+            if not duplicates and aln.pcr_or_optical_duplicate:
+                continue
 
-            # get position in relative to window
+            aln.iv.length = fragmentsize  # adjust reads to specified size
+
+            # get position relative to window if required (motif-oriented)
             if orientation:
                 if feature.strand == "+" or feature.strand == ".":
                     start_in_window = aln.iv.start - feature.start - 1
@@ -165,10 +175,17 @@ def coverage(bed_file, bam_file, sites, fragmentsize=1, orientation=True, duplic
                     coverage[i, start_in_window: end_in_window] += 1
                 else:
                     coverage[i, m + start_in_window: m + end_in_window] += 1
-    return coverage
+
+    # Call footprints, get posterior probabilities
+    try:
+        probs = call_footprints(coverage, np.ones([len(coverage), 1]), motif_length, os.path.join(plots_dir, "footprints", sample_name + "." + motif_names[i] + ".pdf"))
+    except:
+        # if error, return zeros
+        probs = np.zeros(len(coverage))
+    return probs
 
 
-def call_footprints(cuts, annot, plot, motif_length):
+def call_footprints(cuts, annot, motif_length, plot):
     """
     Call footprints.
     Requires dataframe with cuts and dataframe with annotation (2> cols).
@@ -194,11 +211,10 @@ def call_footprints(cuts, annot, plot, motif_length):
         dev.off()
         return(centFit$PostPr)
     }
-
     """)
 
     # run the plot function on the dataframe
-    return footprint(cuts, annot, plot, motif_length)
+    return footprint(cuts, annot, plot, motif_length).flatten()
 
 
 # Read configuration file
@@ -243,37 +259,40 @@ for motif_file in motif_files:
 # Get window around (e.g. +/- 100bp) each motif
 # Get coverage there
 # Footprint with centipede
-# Save posterior probabilities for every site
+# Get posterior probabilities for every site in an array
+# Reduce by concatenation all arrays for various TFs into one long array
+# Create matrix sites vs samples with probabilities as values
 
-# Loop through samples, get coverage, save, footprint
+# Loop through samples, get coverage, footprint, reduce
 covs = dict()
 foots = dict()
 for sample in samples:
-    # calculate coverage in parallel for several TFs
-    covs[sample.name] = parmap.map(
-        coverage,
-        motif_files,
-        sample.filtered,  # be more stringent here, ask for sample.filtered
-        sites
+    # calculate posterior probabilities in parallel for several TFs
+    probs = reduce(
+        lambda x, y: np.concatenate([x, y]),
+        parmap.map(
+            footprint,
+            motif_files,
+            sample.filtered,  # be more stringent here, ask for sample.filtered
+            sites,
+            sample.name
+        )
     )
     # serialize
-    pickle.dump(covs, open(os.path.join(data_dir, "all_samples.motif_coverage.pickle"), "wb"), protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump(covs, open(os.path.join(data_dir, "all_samples.footprint_probabilities.pickle"), "wb"), protocol=pickle.HIGHEST_PROTOCOL)
 
-    # Call footprints
-    foots[sample.name] = dict()
-    for i, cov in enumerate(covs[sample.name]):
-        try:
-            foots[sample.name][motif_names[i]] = call_footprints(
-                cov,
-                np.ones([len(cov), 1]),
-                os.path.join(plots_dir, "footprints", sample.name + "." + motif_names[i] + ".pdf"),
-                motif_sizes[i]
-            )
-        except:
-            continue
+# Make dataframe
+probs = pd.DataFrame(
+    probs,
+    columns=[sample.name for sample in samples]
+)
 
-    # serialize
-    pickle.dump(foots, open(os.path.join(data_dir, "all_samples.motif_coverage.pickle"), "wb"), protocol=pickle.HIGHEST_PROTOCOL)
+# this can futher be seen as a multiindex dataframe with indice levels of:
+#   TF
+#   position (chrom, start, end)
+
+
+#
 
 
 # more:
