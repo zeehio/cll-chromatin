@@ -264,11 +264,12 @@ for motif_file in motif_files:
 # Create matrix sites vs samples with probabilities as values
 
 # Loop through samples, get coverage, footprint, reduce
-covs = dict()
-foots = dict()
+# Make dataframe
+all_probs = pd.DataFrame(columns=[sample.name for sample in samples])
+
 for sample in samples:
     # calculate posterior probabilities in parallel for several TFs
-    probs = reduce(
+    all_probs[sample.name] = reduce(
         lambda x, y: np.concatenate([x, y]),
         parmap.map(
             footprint,
@@ -279,20 +280,11 @@ for sample in samples:
         )
     )
     # serialize
-    pickle.dump(covs, open(os.path.join(data_dir, "all_samples.footprint_probabilities.pickle"), "wb"), protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump(all_probs, open(os.path.join(data_dir, "all_samples.footprint_probabilities.pickle"), "wb"), protocol=pickle.HIGHEST_PROTOCOL)
 
-# Make dataframe
-probs = pd.DataFrame(
-    probs,
-    columns=[sample.name for sample in samples]
-)
-
-# this can futher be seen as a multiindex dataframe with indice levels of:
+# "all_probs" can futher be seen as a multiindex dataframe with indice levels of:
 #   TF
 #   position (chrom, start, end)
-
-
-#
 
 
 # more:
