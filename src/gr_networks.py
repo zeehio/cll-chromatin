@@ -84,7 +84,7 @@ def bedtools_interval_to_genomic_interval(interval):
         return HTSeq.GenomicInterval(interval.chrom, interval.start, interval.end)
 
 
-def coverage(bed_file, bam_file, fragmentsize=1, orientation=True, duplicates=True, strand_specific=True):
+def coverage(bed_file, bam_file, sites, fragmentsize=1, orientation=True, duplicates=True, strand_specific=True):
     """
     Gets read coverage in genomic intervals.
     Returns dict of regionName:numpy.array if strand_specific=False, A dict of "+" and "-" keys with regionName:numpy.array.
@@ -100,11 +100,11 @@ def coverage(bed_file, bam_file, fragmentsize=1, orientation=True, duplicates=Tr
     :rtype: collections.OrderedDict
     """
     motifs = pybedtools.BedTool(bed_file)
-
-    # truncate to center base-pair
-    motifs = map(truncate_interval, motifs)
     # add window around
-    intervals = motifs.slop(b=100)
+    intervals = motifs.slop(b=100, genome="hg19")
+
+    intervals = intervals.intersect(b=sites, u=True)
+
     # convert to HTSeq.GenomicInterval
     intervals = map(bedtools_interval_to_genomic_interval, intervals)
 
@@ -168,22 +168,26 @@ def coverage(bed_file, bam_file, fragmentsize=1, orientation=True, duplicates=Tr
     return coverage
 
 
-def call_footprints(cuts, annot, plot, mLen):
+def call_footprints(cuts, annot, plot, motif_length):
     """
     Call footprints.
     Requires dataframe with cuts and dataframe with annotation (2> cols).
     """
     import rpy2.robjects as robj  # for ggplot in R
     import rpy2.robjects.pandas2ri  # for R dataframe conversion
+    import rpy2.robjects.numpy2ri  # for R numpy objects conversion
+
+    robj.pandas2ri.activate()
 
     # Plot with R
     footprint = robj.r("""
-    library(CENTIPEDE)
+    library("CENTIPEDE")
 
     function(cuts, annot, plotFile, mLen) {
         centFit <- fitCentipede(
             Xlist = list(as.matrix(cuts)),
-            Y = as.matrix(annot)
+            Y = as.matrix(annot),
+            sweeps = 1000
         )
         pdf(plotFile)
             plotProfile(centFit$LambdaParList[[1]],Mlen=mLen)
@@ -193,29 +197,34 @@ def call_footprints(cuts, annot, plot, mLen):
 
     """)
 
-    # convert the pandas dataframe to an R dataframe
-    robj.pandas2ri.activate()
-    cuts_R = robj.conversion.py2ri(cuts)
-    annot_R = robj.conversion.py2ri(annot)
-
     # run the plot function on the dataframe
-    return np.ndarray.flatten(robj.conversion.ri2py(footprint(cuts_R, annot_R, plot, mLen)))
+    return footprint(cuts, annot, plot, motif_length)
 
 
 # Read configuration file
 with open("config.yaml", 'r') as handle:
     config = yaml.load(handle)
+
+# Project dirs
 data_dir = os.path.join(config["paths"]["parent"], config["projectname"], "data")
+results_dir = os.path.join(config["paths"]["parent"], config["projectname"], "results")
+plots_dir = os.path.join(results_dir, "plots")
+
+# Directory for footprint plots
+if not os.path.exists(os.path.join(plots_dir, "footprints")):
+    os.mkdir(os.path.exists(os.path.join(plots_dir, "footprints")))
 
 # Start project
 prj = Project("cll-patients")
-prj.addSampleSheet("../metadata/sequencing_sample_annotation.csv")
+prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
 # Select ATAC-seq samples
 samples = [s for s in prj.samples if type(s) == ATACseqSample]
 
 
 # FOOTPRINTING
+# Get all cll sites
+sites = pybedtools.BedTool(os.path.join(data_dir, "all_sample_peaks.concatenated.bed"))
 # Use motifs from here: http://compbio.mit.edu/encode-motifs/
 # Split motifs by TF
 motifs_dir = "/data/groups/lab_bock/shared/resources/genomes/hg19/motifs"
@@ -223,7 +232,14 @@ prepare_motifs()
 
 # Get all TF motifs
 motifs = os.listdir(os.path.join("/data/groups/lab_bock/shared/resources/genomes/hg19/motifs/TFs"))
-motifs = [os.path.abspath(os.path.join("/data/groups/lab_bock/shared/resources/genomes/hg19/motifs/TFs", motif)) for motif in motifs]
+motif_names = [motif.split(".")[0] for motif in motifs]
+motif_files = [os.path.abspath(os.path.join("/data/groups/lab_bock/shared/resources/genomes/hg19/motifs/TFs", motif)) for motif in motifs]
+motif_sizes = list()
+for motif_file in motif_files:
+    fields = open(motif_file, 'r').readline().split("\t")
+    motif_sizes.append(int(fields[2]) - int(fields[1]))
+
+
 # Get window around (e.g. +/- 100bp) each motif
 # Get coverage there
 # Footprint with centipede
@@ -233,23 +249,28 @@ motifs = [os.path.abspath(os.path.join("/data/groups/lab_bock/shared/resources/g
 covs = dict()
 foots = dict()
 for sample in samples:
-    # Divide intervals by chromossome, do each in parallel
-    # I need to find a way to split the intervals according to chromosome and create an iterator with
-    # a further list of intervals of the same chromosome as elements
-
-    # this needs to be reduced
-    # perhaps a pd.DataFrame().append() od pd.concat() will do the trick
+    # calculate coverage in parallel for several TFs
     covs[sample.name] = parmap.map(
         coverage,
-        motifs,
-        bam  # be more stringent here, ask for sample.filtered
-        
+        motif_files,
+        sample.filtered,  # be more stringent here, ask for sample.filtered
+        sites
     )
     # serialize
     pickle.dump(covs, open(os.path.join(data_dir, "all_samples.motif_coverage.pickle"), "wb"), protocol=pickle.HIGHEST_PROTOCOL)
 
     # Call footprints
-    foots[sample.name] = call_footprints(pd.DataFrame(covs[sample.name]), motif_scores)
+    for i, coverage in enumerate(covs[sample.name]):
+        try:
+            foots[sample.name] = call_footprints(
+                coverage[:, 1:-1],
+                np.ones([len(coverage), 1]),
+                os.path.join(plots_dir, "footprints", sample.name + "." + motif_names[i] + ".pdf"),
+                motif_sizes[i]
+            )
+        except:
+            continue
+
     # serialize
     pickle.dump(foots, open(os.path.join(data_dir, "all_samples.motif_coverage.pickle"), "wb"), protocol=pickle.HIGHEST_PROTOCOL)
 
