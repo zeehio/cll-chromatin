@@ -154,7 +154,7 @@ def coverage(bed_file, bam_file, sites, fragmentsize=1, orientation=True, duplic
                 end_in_window = aln.iv.end - feature.start - 1
 
             # check fragment is within window; this is because of fragmentsize adjustment
-            if start_in_window <= 0 or end_in_window > feature.length:
+            if start_in_window < 0 or end_in_window > feature.length:
                 continue
 
             # add +1 to all positions overlapped by read within window
@@ -260,11 +260,12 @@ for sample in samples:
     pickle.dump(covs, open(os.path.join(data_dir, "all_samples.motif_coverage.pickle"), "wb"), protocol=pickle.HIGHEST_PROTOCOL)
 
     # Call footprints
-    for i, coverage in enumerate(covs[sample.name]):
+    foots[sample.name] = dict()
+    for i, cov in enumerate(covs[sample.name]):
         try:
-            foots[sample.name] = call_footprints(
-                coverage[:, 1:-1],
-                np.ones([len(coverage), 1]),
+            foots[sample.name][motif_names[i]] = call_footprints(
+                cov,
+                np.ones([len(cov), 1]),
                 os.path.join(plots_dir, "footprints", sample.name + "." + motif_names[i] + ".pdf"),
                 motif_sizes[i]
             )
