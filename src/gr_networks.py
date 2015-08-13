@@ -18,6 +18,49 @@ import cPickle as pickle
 import pandas as pd
 
 
+def save_pandas(data, fname):
+    '''Save DataFrame or Series
+    Parameters
+    ----------
+    fname : str
+        filename to use
+    data: Pandas DataFrame or Series
+    '''
+    np.save(open(fname, 'w'), data)
+    if len(data.shape) == 2:
+        meta = data.index, data.columns
+    elif len(data.shape) == 1:
+        meta = (data.index,)
+    else:
+        raise ValueError('save_pandas: Cannot save this type')
+    s = pickle.dumps(meta)
+    s = s.encode('string_escape')
+    with open(fname, 'a') as f:
+        f.seek(0, 2)
+        f.write(s)
+
+
+def load_pandas(fname, mmap_mode='r'):
+    '''Load DataFrame or Series
+    Parameters
+    ----------
+    fname : str
+        filename
+    mmap_mode : str, optional
+        Same as numpy.load option
+    '''
+    values = np.load(fname, mmap_mode=mmap_mode)
+    with open(fname) as f:
+        np.lib.format.read_magic(f)
+        np.lib.format.read_array_header_1_0(f)
+        f.seek(values.dtype.alignment * values.size, 1)
+        meta = pickle.loads(f.readline().decode('string_escape'))
+    if len(meta) == 2:
+        return pd.DataFrame(values, index=meta[0], columns=meta[1])
+    elif len(meta) == 1:
+        return pd.Series(values, index=meta[0])
+
+
 def prepare_motifs():
     """
     Prepare motifs for footprinting.
@@ -45,6 +88,28 @@ def prepare_motifs():
             tf = line.split("\t")[4].split("_")[0]
             with open(os.path.join("TFs", tf + ".bed"), 'a') as handle2:
                 handle2.write(line)
+
+
+def prepare_intervals(sites):
+    # Get all TF motifs
+    motifs_files = os.listdir(os.path.join("/data/groups/lab_bock/shared/resources/genomes/hg19/motifs/TFs"))
+    motif_files = [os.path.abspath(os.path.join("/data/groups/lab_bock/shared/resources/genomes/hg19/motifs/TFs", motif)) for motif in motifs_files]
+
+    # intersect motifs with all cll sites
+    for motif_file in motif_files:
+        # read in bedfile
+        motifs = pybedtools.BedTool(motif_file)
+        # get motif name
+        motif_name = os.path.basename(motif_file.split(".")[0])
+
+        # keep only motifs overlaping the consensus set of sites
+        motifs = motifs.intersect(b=sites, u=True)
+
+        # add window around
+        intervals = motifs.slop(b=100, genome="hg19")
+
+        # save new files
+        intervals.saveas(os.path.join(data_dir, 'motifs', motif_name + ".bed"))
 
 
 def truncate_interval(interval, center=True, n=1):
@@ -100,23 +165,19 @@ def footprint(bed_file, bam_file, sites, sample_name, fragmentsize=1, orientatio
     """
     # read in bedfile
     motifs = pybedtools.BedTool(bed_file)
+    # get motif name
+    motif_name = os.path.basename(bed_file.split(".")[0])
     # get motif length (length of first interval)
     motif_length = motifs[0].length
 
-    # add window around
-    intervals = motifs.slop(b=100, genome="hg19")
-
-    # keep only motifs overlaping the consensus set of sites
-    intervals = intervals.intersect(b=sites, u=True)
-
     # convert intervals to HTSeq.GenomicInterval
-    intervals = map(bedtools_interval_to_genomic_interval, intervals)
+    intervals = map(bedtools_interval_to_genomic_interval, motifs)
 
     # Handle bam file
     bam = HTSeq.BAM_Reader(bam_file)
 
     # exclude bad chroms
-    chroms_avoid = ['chrM', 'chrX', 'chrY']
+    chroms_exclude = ['chrM', 'chrX', 'chrY']
 
     # get dimensions of matrix to store profiles of Tn5 transposition
     n = len(intervals)
@@ -136,7 +197,7 @@ def footprint(bed_file, bam_file, sites, sample_name, fragmentsize=1, orientatio
             print(n - i)
 
         # Check if feature is not in bad chromosomes
-        if feature.chrom in chroms_avoid:
+        if feature.chrom in chroms_exclude:
             continue
 
         # Fetch alignments in interval
@@ -175,10 +236,11 @@ def footprint(bed_file, bam_file, sites, sample_name, fragmentsize=1, orientatio
                     coverage[i, start_in_window: end_in_window] += 1
                 else:
                     coverage[i, m + start_in_window: m + end_in_window] += 1
-
     # Call footprints, get posterior probabilities
     try:
-        probs = call_footprints(coverage, np.ones([len(coverage), 1]), motif_length, os.path.join(plots_dir, "footprints", sample_name + "." + motif_names[i] + ".pdf"))
+        probs = call_footprints(coverage, np.ones([len(coverage), 1]), motif_length, os.path.join(plots_dir, "footprints", sample_name + "." + motif_name + ".pdf"))
+        if len(probs) != len(coverage):
+            probs = np.zeros(len(coverage))
     except:
         # if error, return zeros
         probs = np.zeros(len(coverage))
@@ -244,20 +306,17 @@ sites = pybedtools.BedTool(os.path.join(data_dir, "all_sample_peaks.concatenated
 # Use motifs from here: http://compbio.mit.edu/encode-motifs/
 # Split motifs by TF
 motifs_dir = "/data/groups/lab_bock/shared/resources/genomes/hg19/motifs"
+
+# make motif bed files for each TF from bulk file
 prepare_motifs()
 
-# Get all TF motifs
-motifs = os.listdir(os.path.join("/data/groups/lab_bock/shared/resources/genomes/hg19/motifs/TFs"))
-motif_names = [motif.split(".")[0] for motif in motifs]
-motif_files = [os.path.abspath(os.path.join("/data/groups/lab_bock/shared/resources/genomes/hg19/motifs/TFs", motif)) for motif in motifs]
-motif_sizes = list()
-for motif_file in motif_files:
-    fields = open(motif_file, 'r').readline().split("\t")
-    motif_sizes.append(int(fields[2]) - int(fields[1]))
+# make intervals out of motifs
+prepare_intervals(sites)
 
+# get filtered motif files
+motifs_files = [os.path.join(data_dir, "motifs", x) for x in os.listdir(os.path.join(data_dir, 'motifs'))]
 
-# Get window around (e.g. +/- 100bp) each motif
-# Get coverage there
+# Get coverage around motifs there
 # Footprint with centipede
 # Get posterior probabilities for every site in an array
 # Reduce by concatenation all arrays for various TFs into one long array
@@ -267,24 +326,34 @@ for motif_file in motif_files:
 # Make dataframe
 all_probs = pd.DataFrame(columns=[sample.name for sample in samples])
 
-for sample in samples:
-    # calculate posterior probabilities in parallel for several TFs
-    all_probs[sample.name] = reduce(
-        lambda x, y: np.concatenate([x, y]),
-        parmap.map(
-            footprint,
-            motif_files,
-            sample.filtered,  # be more stringent here, ask for sample.filtered
-            sites,
-            sample.name
+try:
+    for sample in samples[1:]:
+        # calculate posterior probabilities in parallel for several TFs
+        probs = reduce(
+            lambda x, y: np.concatenate([x, y]),
+            parmap.map(
+                footprint,
+                motifs_files,
+                sample.filteredshifted,  # be stringent here, ask for sample.filtered
+                sites,
+                sample.name
+            )
         )
-    )
-    # serialize
-    pickle.dump(all_probs, open(os.path.join(data_dir, "all_samples.footprint_probabilities.pickle"), "wb"), protocol=pickle.HIGHEST_PROTOCOL)
+        all_probs[sample.name] = probs
+        # serialize
+        save_pandas(all_probs, os.path.join(data_dir, "all_samples.footprint_probabilities.pdy"))
+except KeyboardInterrupt:
+    pass
 
-# "all_probs" can futher be seen as a multiindex dataframe with indice levels of:
+
+# "all_probs" can further be seen as a multiindex dataframe with indice levels of:
 #   TF
 #   position (chrom, start, end)
+
+# connect each motif to a gene:
+# get TSS annotation
+# get nearest TSS from motif
+# for each motif with posterior probability > 0.99, create relation TF -> gene
 
 
 # more:
@@ -333,3 +402,12 @@ for sample in samples:
 # Correlate genome positions in each group
 
 # Get differential between groups
+
+
+# Examples:
+# Open chromatin defined by DNaseI and FAIREidentifies regulatory elements that shape cell-type identity
+# Lingyun Song et al.
+# Figure 6A
+
+# Patterns of regulatory activity across diverse human cell types predict tissue identity, transcription factor binding, and long-range interactions
+# Nathan C. Sheffield et al.

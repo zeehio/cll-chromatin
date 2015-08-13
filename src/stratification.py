@@ -559,10 +559,29 @@ def main():
 
     # Calculate peak support
     analysis.calculate_peak_support()
+    # plot general peak set features
+    analysis.plot_peak_characteristics()
 
     # Get RPKM values for each peak in each sample
-    analysis.measure_chromatin_openness()
-    rpkm = analysis.rpkm
+    rpkm_file = os.path.join(data_dir, "all_sample_peaks.concatenated.rpkm.tsv")
+    if not os.path.exists(rpkm_file):
+        analysis.measure_chromatin_openness()
+    else:
+        rpkm = pd.read_csv(rpkm_file, sep="\t")
+        analysis.rpkm = rpkm
+    # Compute log2
+    analysis.log_rpkm()
+
+    # Plot rpkm features across peaks/samples
+    analysis.plot_rpkm()
+    analysis.plot_variance()
+    analysis.plot_sample_correlations()
+
+    # Try to separate samples in 2D space
+    analysis.pca()
+    analysis.plot_pca()
+    analysis.mds()
+    analysis.plot_mds()
 
     # COMPARISON mCLL - uCLL
     # test if sites come from same population based on rpkm values
