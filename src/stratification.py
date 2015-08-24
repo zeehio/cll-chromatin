@@ -161,6 +161,7 @@ class Analysis(object):
 
     def filter_rpkm(self, x):
         self.rpkm_filtered = self.rpkm[self.rpkm['mean'] > x]
+        self.rpkm_filtered_log = self.rpkm_log[self.rpkm_log['mean'] > x]
 
     def pca(self):
         # PCA
@@ -339,11 +340,22 @@ class Analysis(object):
         plt.close('all')
 
     def plot_pca(self):
+        from collections import Counter
         # get variance explained by each component
         variance = [np.round(i * 100, 0) for i in self.pca_fit.explained_variance_ratio_]
 
-        # get unique colors
+        # get colors
+        # rainbow (unique color per sample)
         colors = cm.Paired(np.linspace(0, 1, len(self.samples)))
+
+        # per patient
+        patients = Counter([sample.patientID for sample in analysis.samples]).keys()
+        color_dict = cm.Paired(np.linspace(0, 1, len(patients)))
+        color_dict = dict(zip(patients, colors))
+        colors = [color_dict[sample.patientID] for sample in self.samples]
+
+        # dependent on igvh status
+        colors = ['yellow' if sample.mutated else 'green' for sample in self.samples]
 
         # 2 components
         fig = plt.figure()
@@ -662,7 +674,7 @@ if generate:
 
 # Decide on low-end cut-off based on the elbow method
 if generate:
-    analysis.filter_rpkm()
+    analysis.filter_rpkm(1)
 
 # Try to separate samples in 2D space
 if generate:
