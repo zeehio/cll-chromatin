@@ -146,14 +146,22 @@ class Analysis(object):
         self.rpkm_log[[sample.name for sample in self.samples]] = np.log2(1 + self.rpkm[[sample.name for sample in self.samples]])
 
     def rpkm_variance(self):
-        # Variation:
+        # add support to rpkm
         self.rpkm = pd.merge(self.rpkm, self.support[['chrom', 'start', 'end', 'support']], on=['chrom', 'start', 'end'])
+        self.rpkm_log = pd.merge(self.rpkm_log, self.support[['chrom', 'start', 'end', 'support']], on=['chrom', 'start', 'end'])
         # mean rpkm
         self.rpkm['mean'] = self.rpkm[[sample.name for sample in self.samples]].apply(lambda x: np.mean(x), axis=1)
+        self.rpkm_log['mean'] = self.rpkm_log[[sample.name for sample in self.samples]].apply(lambda x: np.mean(x), axis=1)
         # dispersion (variance / mean)
         self.rpkm['dispersion'] = self.rpkm[[sample.name for sample in self.samples]].apply(lambda x: np.var(x) / np.mean(x), axis=1)
+        self.rpkm_log['dispersion'] = self.rpkm_log[[sample.name for sample in self.samples]].apply(lambda x: np.var(x) / np.mean(x), axis=1)
         # qv2 vs mean rpkm
         self.rpkm['qv2'] = self.rpkm[[sample.name for sample in self.samples]].apply(lambda x: (np.std(x) / np.mean(x)) ** 2, axis=1)
+        self.rpkm_log['qv2'] = self.rpkm_log[[sample.name for sample in self.samples]].apply(lambda x: (np.std(x) / np.mean(x)) ** 2, axis=1)
+
+    def filter_rpkm(self):
+        # Filter
+        pass
 
     def pca(self):
         # PCA
@@ -226,20 +234,20 @@ class Analysis(object):
         plt.close()
 
     def plot_variance(self):
-        sns.jointplot('mean', "dispersion", data=self.rpkm)
+        sns.jointplot('mean', "dispersion", data=self.rpkm_log)
         plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.dispersion.pdf"), bbox_inches="tight")
         plt.close('all')
 
-        sns.jointplot('mean', "qv2", data=self.rpkm)
+        sns.jointplot('mean', "qv2", data=self.rpkm_log)
         plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.qv2_vs_mean.pdf"), bbox_inches="tight")
         plt.close('all')
 
-        sns.jointplot('support', "qv2", data=self.rpkm)
+        sns.jointplot('support', "qv2", data=self.rpkm_log)
         plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.support_vs_qv2.pdf"), bbox_inches="tight")
         plt.close('all')
 
         # Filter out regions which the maximum across all samples is below a treshold
-        filtered = self.rpkm[self.rpkm[[sample.name for sample in self.samples]].apply(max, axis=1) > 3]
+        filtered = self.rpkm_log[self.rpkm_log[[sample.name for sample in self.samples]].apply(max, axis=1) > 3]
 
         sns.jointplot('mean', "dispersion", data=filtered)
         plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.dispersion.filtered.pdf"), bbox_inches="tight")
@@ -585,6 +593,10 @@ else:
 # Compute log2
 if generate:
     analysis.log_rpkm()
+
+# Get variance measurements across samples
+if generate:
+    analysis.rpkm_variance()
 
 # Plot rpkm features across peaks/samples
 if generate:
