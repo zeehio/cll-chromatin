@@ -4,7 +4,6 @@
 This script makes plots to ilustrate the stratification between CLL patients.
 """
 
-import yaml
 import os
 from pipelines.models import Project, ATACseqSample
 import pybedtools
@@ -252,11 +251,11 @@ class Analysis(object):
         # get colors depending on IGVH mut
         df = pd.DataFrame([sample.asSeries() for sample in self.samples])
 
-        df = pd.merge(df, self.clinical, left_on="sampleID", right_on="SampleID")
+        df = pd.merge(df, self.clinical, left_on="sample_id", right_on="sample_id")
         mut_s = {"1.0": "red", "2.0": "black", "nan": "grey"}
         sex_s = {"F": "red", "M": "blue", "nan": "grey"}
-        muts = [self.clinical.loc[self.clinical['SampleID'] == sample.sampleID, "IGVH mut/unmut"] for sample in self.samples]
-        sex = [self.clinical.loc[self.clinical['SampleID'] == sample.sampleID, "gender"] for sample in self.samples]
+        muts = [self.clinical.loc[self.clinical['sample_id'] == sample.sample_id, "igvh_mutation_status"] for sample in self.samples]
+        sex = [self.clinical.loc[self.clinical['sample_id'] == sample.sample_id, "patient_gender"] for sample in self.samples]
         mut_colors = [mut_s[str(x.get(x.index[0]))] if len(x.tolist()) > 0 else "grey" for x in muts]
         sex_colors = [sex_s[str(x.get(x.index[0]))] if len(x.tolist()) > 0 else "grey" for x in sex]
 
@@ -394,6 +393,8 @@ class Analysis(object):
 
 def count_reads_in_intervals(bam, intervals):
     """
+    Counts reads in a iterable holding strings
+    representing genomic intervals of the type chrom:start-end.
     """
     counts = dict()
 
@@ -457,9 +458,9 @@ def annotate_igvh_mutations(samples, clinical):
 
     for sample in samples:
         _id = name_to_sample_id(sample.name)
-        if clinical.loc[clinical['SampleID'] == _id, 'IGVH mut/unmut'].tolist()[0] == 1:
+        if clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 1:
             sample.mutated = True
-        elif clinical.loc[clinical['SampleID'] == _id, 'IGVH mut/unmut'].tolist()[0] == 2:
+        elif clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 2:
             sample.mutated = False
         else:
             sample.mutated = None
@@ -525,207 +526,214 @@ def run_lola(bed_files, universe_file, output_folder):
     lola(bed_files, universe_file, output_folder)
 
 
-def main():
-    # Read configuration file
-    with open("config.yaml", 'r') as handle:
-        config = yaml.load(handle)
-    data_dir = os.path.join(config["paths"]["parent"], config["projectname"], "data")
-    results_dir = os.path.join(config["paths"]["parent"], config["projectname"], "results")
-    plots_dir = os.path.join(results_dir, "plots")
+# Should we regenerate the data?
+generate = False
 
-    # Get clinical info
-    clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation.csv"))
-    clinical = clinical[["PatientID", "SampleID", "timepoint", "IGVH mut/unmut", "gender", "Via (%)", "dob", "Date of Diagnosis"]].drop_duplicates()
+# Get path configuration
+data_dir = os.path.join('.', "data")
+results_dir = os.path.join('.', "results")
+plots_dir = os.path.join(results_dir, "plots")
 
-    # Start project
-    # prj = pickle.load(open("prj.pickle", 'rb'))
-    prj = Project("cll-patients")
-    prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
+# Get clinical info
+clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation.csv"))
+attributes = [
+    "patient_id", "sample_id", "timepoint",
+    "igvh_mutation_status", "patient_gender", "sample_viability",
+    "patient_birth_date", "diagnosis_date"
+]
+clinical = clinical[attributes].drop_duplicates()
 
-    # Select ATAC-seq samples
-    samples = [s for s in prj.samples if type(s) == ATACseqSample if s.cellLine == "CLL"]
+# Start project
+# prj = pickle.load(open("prj.pickle", 'rb'))
+prj = Project("cll-patients")
+prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
-    # Annotate with igvh mutated status
-    # add "mutated" attribute to sample depending on IGVH mutation status
-    samples = annotate_igvh_mutations(samples, clinical)
+# Select ATAC-seq samples
+samples = [s for s in prj.samples if type(s) == ATACseqSample if s.cellLine == "CLL"]
 
-    # Start analysis object
-    analysis = Analysis(data_dir, plots_dir, samples)
-    analysis.prj = prj
-    analysis.clinical = clinical
+# Annotate with igvh mutated status
+# add "mutated" attribute to sample depending on IGVH mutation status
+samples = annotate_igvh_mutations(samples, clinical)
 
-    # Get consensus peak set from all samples
+# Start analysis object
+analysis = Analysis(data_dir, plots_dir, samples)
+analysis.prj = prj
+analysis.clinical = clinical
+
+# Get consensus peak set from all samples
+if generate and not os.path.exists(os.path.join(data_dir, "all_sample_peaks.concatenated.bed")):
     analysis.get_consensus_sites()
+else:
+    analysis.sites = pybedtools.BedTool(os.path.join(data_dir, "all_sample_peaks.concatenated.bed"))
 
-    # Calculate peak support
+# Calculate peak support
+if generate and not os.path.exists(os.path.join(data_dir, "all_sample_peaks.support.csv")):
     analysis.calculate_peak_support()
-    # plot general peak set features
+else:
+    analysis.support = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.support.csv"))
+
+# plot general peak set features
+if generate:
     analysis.plot_peak_characteristics()
 
-    # Get RPKM values for each peak in each sample
-    rpkm_file = os.path.join(data_dir, "all_sample_peaks.concatenated.rpkm.tsv")
-    if not os.path.exists(rpkm_file):
-        analysis.measure_chromatin_openness()
-    else:
-        rpkm = pd.read_csv(rpkm_file, sep="\t")
-        analysis.rpkm = rpkm
-    # Compute log2
+# Get RPKM values for each peak in each sample
+if generate and not os.path.exists(os.path.join(data_dir, "all_sample_peaks.concatenated.rpkm.tsv")):
+    analysis.measure_chromatin_openness()
+else:
+    analysis.rpkm = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t")
+
+# Compute log2
+if generate:
     analysis.log_rpkm()
 
-    # Plot rpkm features across peaks/samples
+# Plot rpkm features across peaks/samples
+if generate:
     analysis.plot_rpkm()
     analysis.plot_variance()
     analysis.plot_sample_correlations()
 
-    # Try to separate samples in 2D space
+# Try to separate samples in 2D space
+if generate:
     analysis.pca()
     analysis.plot_pca()
     analysis.mds()
     analysis.plot_mds()
 
-    # COMPARISON mCLL - uCLL
-    # test if sites come from same population based on rpkm values
-    pvalues = rpkm.apply(
+# COMPARISON mCLL - uCLL
+# test if sites come from same population based on rpkm values
+pvalues = analysis.rpkm.apply(
+    lambda x: mannwhitneyu(
+        x.loc[[sample.name for sample in samples if sample.mutated]],
+        x.loc[[sample.name for sample in samples if not sample.mutated]])[1],
+    axis=1
+)
+
+# correct for multiple testing
+# qvalues = pd.Series(multipletests(pvalues)[1])
+
+# get differential sites
+significant = analysis.rpkm.ix[pvalues[pvalues < 0.0001].index][[sample.name for sample in samples]]
+significant.to_csv(os.path.join(data_dir, "dors.mutated_vs_unmutated.tsv"), sep="\t", index=False)
+
+# correlate samples on significantly different sites
+sns.clustermap(
+    significant.corr(),
+    method="complete",
+    square=True, annot=False,
+    figsize=(20, 16)
+)
+plt.savefig(os.path.join(plots_dir, "dors.correlation_clustering.pdf"), bbox_inches="tight")
+
+# cluster samples and sites
+# plot heatmap of differentialy open sites
+clustermap = sns.clustermap(
+    significant,
+    cmap=plt.get_cmap('YlGn'),
+    square=False, annot=False,
+)
+plt.savefig(os.path.join(plots_dir, "dors.clustering.pdf"), bbox_inches="tight")
+
+# get cluster assignments from linkage matrix
+lm = clustermap.dendrogram_col.linkage
+
+# plot dendrogram
+# determine height to separate clusters
+dendr = dendrogram(lm, labels=significant.columns, color_threshold=65)
+plt.savefig(os.path.join(plots_dir, "dors.dendrogram.pdf"), bbox_inches="tight")
+
+# plt.show()
+
+# assign each sample to one cluster
+clusters = get_cluster_classes(dendr)
+
+# concatenate clusters on the unmutated side
+unmutated_cluster = ['b', 'c', 'm', 'y']
+
+# annotate samples with cluster
+new_samples = list()
+for cluster, sample_names in clusters.items():
+    for sample_name in sample_names:
+        s = [sample for sample in samples if sample.name == sample_name][0]
+        s.cluster = cluster if cluster not in unmutated_cluster else 'b'
+        new_samples.append(s)
+samples = new_samples
+
+# Repeat again independence test and
+# get all differential sites (from 3 comparisons)
+all_pvalues = pd.DataFrame()
+for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
+    pvalues = pd.DataFrame(analysis.rpkm.apply(
         lambda x: mannwhitneyu(
-            x.loc[[sample.name for sample in samples if sample.mutated]],
-            x.loc[[sample.name for sample in samples if not sample.mutated]])[1],
+            x.loc[[sample.name for sample in samples if sample.cluster == "r"]],
+            x.loc[[sample.name for sample in samples if sample.cluster == "g"]])[1],
         axis=1
-    )
+    ))
+    pvalues['comparison'] = "-".join([g1, g2])
+    all_pvalues = pd.concat([all_pvalues, pvalues])
 
-    # correct for multiple testing
-    # qvalues = pd.Series(multipletests(pvalues)[1])
+all_pvalues.columns = ['p', 'comparison']
+all_pvalues.to_csv(os.path.join("data", "dors.3_populations.pvalues.tsv"), sep="\t", index=False)
 
-    # get differential sites
-    significant = rpkm.ix[pvalues[pvalues < 0.0001].index][[sample.name for sample in samples]]
-    significant.to_csv(os.path.join(data_dir, "dors.mutated_vs_unmutated.tsv"), sep="\t", index=False)
+all_significant = analysis.rpkm.ix[all_pvalues[all_pvalues['p'] < 0.000001].index].drop_duplicates()
 
-    # correlate samples on significantly different sites
-    sns.clustermap(
-        significant.corr(),
-        method="complete",
-        square=True, annot=False,
-        figsize=(20, 16)
-    )
-    plt.savefig(os.path.join(plots_dir, "dors.correlation_clustering.pdf"), bbox_inches="tight")
+all_significant.to_csv(os.path.join("data", "dors.3_populations.significant.tsv"), sep="\t", index=False)
 
-    # cluster samples and sites
-    # plot heatmap of differentialy open sites
-    clustermap = sns.clustermap(
-        significant,
-        cmap=plt.get_cmap('YlGn'),
-        square=False, annot=False,
-    )
-    plt.savefig(os.path.join(plots_dir, "dors.clustering.pdf"), bbox_inches="tight")
+# correlate samples on significantly different sites
+sns.clustermap(
+    all_significant.corr(),
+    method="complete",
+    square=True, annot=False,
+    figsize=(20, 16)
+)
+plt.savefig(os.path.join(plots_dir, "dors.3_populations.correlation_clustering.pdf"), bbox_inches="tight")
 
-    # get cluster assignments from linkage matrix
-    lm = clustermap.dendrogram_col.linkage
+# heatmap all significat sites
+clustermap = sns.clustermap(
+    all_significant[[sample.name for sample in samples]],
+    cmap=plt.get_cmap('YlGn'),
+    square=False, annot=False
+)
+plt.savefig(os.path.join(plots_dir, "dors.3_populations.clustering.pdf"), bbox_inches="tight")
 
-    # plot dendrogram
-    # determine height to separate clusters
-    dendr = dendrogram(lm, labels=significant.columns, color_threshold=65)
-    plt.savefig(os.path.join(plots_dir, "dors.dendrogram.pdf"), bbox_inches="tight")
+# export dors regions
+for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
+    comparison = "-".join([g1, g2])
+    specific = analysis.rpkm.loc[
+        all_pvalues[
+            (all_pvalues['p'] < 0.000001) &
+            (all_pvalues['comparison'] == comparison)
+        ].index,
+        ['chrom', 'start', 'end']
+    ].drop_duplicates()
+    specific.to_csv(os.path.join(data_dir, "dors.{0}.bed".format(comparison)), sep="\t", index=False, header=None)
 
-    # plt.show()
+# run lola
+# use all cll sites as universe
+universe_file = os.path.join(data_dir, "all_sample_peaks.concatenated.bed")
 
-    # assign each sample to one cluster
-    clusters = get_cluster_classes(dendr)
+for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
+    comparison = "-".join([g1, g2])
+    bed_file = os.path.join(data_dir, "dors.{0}.bed".format(comparison))
+    output_folder = os.path.join(data_dir, "lola", "dors_{0}".format(comparison))
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    # run
+    run_lola(bed_file, universe_file, output_folder)
 
-    # concatenate clusters on the unmutated side
-    unmutated_cluster = ['b', 'c', 'm', 'y']
+# get closest gene: GO, KEGG, OMIM, mSigDB
+# de novo motif finding - enrichment
 
-    # annotate samples with cluster
-    new_samples = list()
-    for cluster, sample_names in clusters.items():
-        for sample_name in sample_names:
-            s = [sample for sample in samples if sample.name == sample_name][0]
-            s.cluster = cluster if cluster not in unmutated_cluster else 'b'
-            new_samples.append(s)
-    samples = new_samples
+# Subset data in Enhancers/Promoters
+# stratify again
 
-    # Repeat again independence test and
-    # get all differential sites (from 3 comparisons)
-    all_pvalues = pd.DataFrame()
-    for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
-        pvalues = pd.DataFrame(rpkm.apply(
-            lambda x: mannwhitneyu(
-                x.loc[[sample.name for sample in samples if sample.cluster == "r"]],
-                x.loc[[sample.name for sample in samples if sample.cluster == "g"]])[1],
-            axis=1
-        ))
-        pvalues['comparison'] = "-".join([g1, g2])
-        all_pvalues = pd.concat([all_pvalues, pvalues])
+# INTER-SAMPLE VARIABILITY ANALYSIS
+# Subsample peaks or reads and see the minimum required to form the clusters previously
+# See which regions explain most of variability for each cluster
 
-    all_pvalues.columns = ['p', 'comparison']
-    all_pvalues.to_csv(os.path.join("data", "dors.3_populations.pvalues.tsv"), sep="\t", index=False)
-
-    all_significant = rpkm.ix[all_pvalues[all_pvalues['p'] < 0.000001].index].drop_duplicates()
-
-    all_significant.to_csv(os.path.join("data", "dors.3_populations.significant.tsv"), sep="\t", index=False)
-
-    # correlate samples on significantly different sites
-    sns.clustermap(
-        all_significant.corr(),
-        method="complete",
-        square=True, annot=False,
-        figsize=(20, 16)
-    )
-    plt.savefig(os.path.join(plots_dir, "dors.3_populations.correlation_clustering.pdf"), bbox_inches="tight")
-
-    # heatmap all significat sites
-    clustermap = sns.clustermap(
-        all_significant[[sample.name for sample in samples]],
-        cmap=plt.get_cmap('YlGn'),
-        square=False, annot=False
-    )
-    plt.savefig(os.path.join(plots_dir, "dors.3_populations.clustering.pdf"), bbox_inches="tight")
-
-    # export dors regions
-    for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
-        comparison = "-".join([g1, g2])
-        specific = rpkm.loc[
-            all_pvalues[
-                (all_pvalues['p'] < 0.000001) &
-                (all_pvalues['comparison'] == comparison)
-            ].index,
-            ['chrom', 'start', 'end']
-        ].drop_duplicates()
-        specific.to_csv(os.path.join(data_dir, "dors.{0}.bed".format(comparison)), sep="\t", index=False, header=None)
-
-    # run lola
-    # use all cll sites as universe
-    universe_file = os.path.join(data_dir, "all_sample_peaks.concatenated.bed")
-
-    for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
-        comparison = "-".join([g1, g2])
-        bed_file = os.path.join(data_dir, "dors.{0}.bed".format(comparison))
-        output_folder = os.path.join(data_dir, "lola", "dors_{0}".format(comparison))
-        if not os.path.exists(output_folder):
-            os.makedirs(output_folder)
-        # run
-        run_lola(bed_file, universe_file, output_folder)
-
-    # get closest gene: GO, KEGG, OMIM, mSigDB
-    # de novo motif finding - enrichment
-
-    # Subset data in Enhancers/Promoters
-    # stratify again
-
-    # INTER-SAMPLE VARIABILITY ANALYSIS
-    # Subsample peaks or reads and see the minimum required to form the clusters previously
-    # See which regions explain most of variability for each cluster
-
-    # CLASSIFICATION
-    # Stratify patients on:
-    # - treated vs untreated
-    # - ...
-    # Train classifiers on groups
-    # Predict for all samples
-    # Assess: ROC, AUC
-
-
-if __name__ == '__main__':
-    try:
-        main()
-    except KeyboardInterrupt:
-        import sys
-        sys.exit(1)
+# CLASSIFICATION
+# Stratify patients on:
+# - treated vs untreated
+# - ...
+# Train classifiers on groups
+# Predict for all samples
+# Assess: ROC, AUC
