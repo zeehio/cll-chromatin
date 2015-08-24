@@ -159,9 +159,8 @@ class Analysis(object):
         self.rpkm['qv2'] = self.rpkm[[sample.name for sample in self.samples]].apply(lambda x: (np.std(x) / np.mean(x)) ** 2, axis=1)
         self.rpkm_log['qv2'] = self.rpkm_log[[sample.name for sample in self.samples]].apply(lambda x: (np.std(x) / np.mean(x)) ** 2, axis=1)
 
-    def filter_rpkm(self):
-        # Filter
-        pass
+    def filter_rpkm(self, x):
+        self.rpkm_filtered = self.rpkm[self.rpkm['mean'] > x]
 
     def pca(self):
         # PCA
@@ -254,6 +253,59 @@ class Analysis(object):
         plt.close('all')
         sns.jointplot('mean', "qv2", data=filtered)
         plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.support_vs_qv2.filtered.pdf"), bbox_inches="tight")
+
+    def plot_qv2_fit(self):
+        from scipy.optimize import curve_fit
+        from scipy import stats
+
+        def neg_exponential(x, a, b, c):
+            """
+            Negative exponential function with 3 parameters.
+            """
+            return a * np.exp(-b * x) + c
+
+        X = np.array(self.rpkm_log['mean'])
+        Y = np.array(self.rpkm_log['qv2'])
+
+        ci = 0.99
+        # Convert to percentile point of the normal distribution.
+        # See: https://en.wikipedia.org/wiki/Standard_score
+        pp = (1. + ci) / 2.
+
+        nstd = stats.norm.ppf(pp)
+
+        # Find best fit.
+        parameters, covariance_matrix = curve_fit(neg_exponential, X, Y)
+        # Standard deviation errors on the parameters.
+        perr = np.sqrt(np.diag(covariance_matrix))
+        # Add nstd standard deviations to parameters to obtain the upper confidence
+        # interval.
+        popt_up = parameters + (nstd * perr)
+        popt_dw = parameters - (nstd * perr)
+
+        fig, axis = plt.subplots(2, sharex=True)
+        # Plot data and best fit curve.
+        axis[0].scatter(X, Y)
+        x = np.linspace(0, 6.5, 100)
+        axis[0].plot(x, neg_exponential(x, *parameters), c='g', lw=2.)
+        axis[0].plot(x, neg_exponential(x, *popt_up), c='r', lw=2.)
+        axis[0].plot(x, neg_exponential(x, *popt_dw), c='r', lw=2.)
+        axis[0].set_title("fit")
+
+        # get residuals
+        residuals = Y - neg_exponential(X, *parameters)
+        # get squared sum of residuals
+        # fres = sum(residuals ** 2)
+
+        axis[1].scatter(X, residuals)
+        axis[1].set_title("residuals")
+
+        axis[0].set_xlabel("mean")
+        axis[0].set_ylabel("qv2")
+        axis[1].set_xlabel("mean")
+        axis[1].set_ylabel("residuals")
+
+        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.qv2_vs_mean.fit_residuals.pdf"), bbox_inches="tight")
 
     def plot_sample_correlations(self):
         # get colors depending on IGVH mut
@@ -603,6 +655,14 @@ if generate:
     analysis.plot_rpkm()
     analysis.plot_variance()
     analysis.plot_sample_correlations()
+
+# Observe exponential fit to the coeficient of variation
+if generate:
+    analysis.plot_qv2_fit()
+
+# Decide on low-end cut-off based on the elbow method
+if generate:
+    analysis.filter_rpkm()
 
 # Try to separate samples in 2D space
 if generate:
