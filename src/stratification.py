@@ -24,6 +24,7 @@ from scipy.stats import mannwhitneyu
 # from statsmodels.sandbox.stats.multicomp import multipletests
 import itertools
 import pickle
+from collections import Counter
 
 
 sns.set_style("whitegrid")
@@ -32,8 +33,8 @@ sns.set_context("paper")
 
 # decorator for some methods of Analysis class
 def pickle_me(function):
-    def wrapper(obj):
-        function(obj)
+    def wrapper(*obj):
+        function(*obj)
         pickle.dump(obj, open(obj.pickle_file, 'wb'))
     return wrapper
 
@@ -188,52 +189,51 @@ class Analysis(object):
         rpkm = rpk[[sample.name for sample in samples]].apply(normalize_by_library_size, args=(samples, ), axis=0)
 
         # Save
-        rpkm = pd.concat([rpk[["chrom", "start", "end"]], rpkm], axis=1)
-        rpkm.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t", index=False)
-        rpkm = pd.read_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t")
+        self.rpkm = pd.concat([rpk[["chrom", "start", "end"]], rpkm], axis=1)
 
-        self.rpkm = rpkm
+        # calculate log
+        self.log_rpkm()
+
+        self.rpkm.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t", index=False)
 
     @pickle_me
     def log_rpkm(self):
         # Log2 transform
-        self.rpkm_log = self.rpkm
-        self.rpkm_log[[sample.name for sample in self.samples]] = np.log2(1 + self.rpkm[[sample.name for sample in self.samples]])
+        self.rpkm[[sample.name for sample in self.samples]] = np.log2(1 + self.rpkm[[sample.name for sample in self.samples]])
 
     @pickle_me
     def rpkm_variance(self):
-        # add support to rpkm
+        atacseq_samples = [sample for sample in self.samples if sample.technique == "ATAC-seq"]
+
+        # add support to rpkm - this is added here because support was calculated prior to rpkms
         self.rpkm = pd.merge(self.rpkm, self.support[['chrom', 'start', 'end', 'support']], on=['chrom', 'start', 'end'])
-        self.rpkm_log = pd.merge(self.rpkm_log, self.support[['chrom', 'start', 'end', 'support']], on=['chrom', 'start', 'end'])
         # mean rpkm
-        self.rpkm['mean'] = self.rpkm[[sample.name for sample in self.samples]].apply(lambda x: np.mean(x), axis=1)
-        self.rpkm_log['mean'] = self.rpkm_log[[sample.name for sample in self.samples]].apply(lambda x: np.mean(x), axis=1)
+        self.rpkm['mean'] = self.rpkm[[sample.name for sample in atacseq_samples]].apply(lambda x: np.mean(x), axis=1)
         # dispersion (variance / mean)
-        self.rpkm['dispersion'] = self.rpkm[[sample.name for sample in self.samples]].apply(lambda x: np.var(x) / np.mean(x), axis=1)
-        self.rpkm_log['dispersion'] = self.rpkm_log[[sample.name for sample in self.samples]].apply(lambda x: np.var(x) / np.mean(x), axis=1)
+        self.rpkm['dispersion'] = self.rpkm[[sample.name for sample in atacseq_samples]].apply(lambda x: np.var(x) / np.mean(x), axis=1)
         # qv2 vs mean rpkm
-        self.rpkm['qv2'] = self.rpkm[[sample.name for sample in self.samples]].apply(lambda x: (np.std(x) / np.mean(x)) ** 2, axis=1)
-        self.rpkm_log['qv2'] = self.rpkm_log[[sample.name for sample in self.samples]].apply(lambda x: (np.std(x) / np.mean(x)) ** 2, axis=1)
+        self.rpkm['qv2'] = self.rpkm[[sample.name for sample in atacseq_samples]].apply(lambda x: (np.std(x) / np.mean(x)) ** 2, axis=1)
+
+        self.rpkm.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t", index=False)
 
     @pickle_me
     def filter_rpkm(self, x):
         self.rpkm_filtered = self.rpkm[self.rpkm['mean'] > x]
-        self.rpkm_filtered_log = self.rpkm_log[self.rpkm_log['mean'] > x]
 
     @pickle_me
-    def pca(self):
+    def pca(self, data):
         # PCA
         # normalize
-        x = normalize(self.rpkm_log[[sample.name for sample in self.samples]])
+        x = normalize(data)
 
         # random PCA
         pca = RandomizedPCA()
         self.pca_fit = pca.fit(x).transform(x)
 
     @pickle_me
-    def mds(self, n=1000):
+    def mds(self, data):
         # normalize, get *n* most variable sites
-        x = normalize(self.rpkm_log.ix[self.rpkm_log[[sample.name for sample in self.samples]].apply(np.var, axis=1).order(ascending=False).index].head(n)[[sample.name for sample in self.samples]])
+        x = normalize(data)
 
         # convert two components as we're plotting points in a two-dimensional plane
         # "precomputed" because we provide a distance matrix
@@ -312,20 +312,20 @@ class Analysis(object):
         plt.close()
 
     def plot_variance(self):
-        sns.jointplot('mean', "dispersion", data=self.rpkm_log)
+        sns.jointplot('mean', "dispersion", data=self.rpkm)
         plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.dispersion.pdf"), bbox_inches="tight")
         plt.close('all')
 
-        sns.jointplot('mean', "qv2", data=self.rpkm_log)
+        sns.jointplot('mean', "qv2", data=self.rpkm)
         plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.qv2_vs_mean.pdf"), bbox_inches="tight")
         plt.close('all')
 
-        sns.jointplot('support', "qv2", data=self.rpkm_log)
+        sns.jointplot('support', "qv2", data=self.rpkm)
         plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.support_vs_qv2.pdf"), bbox_inches="tight")
         plt.close('all')
 
         # Filter out regions which the maximum across all samples is below a treshold
-        filtered = self.rpkm_log[self.rpkm_log[[sample.name for sample in self.samples]].apply(max, axis=1) > 3]
+        filtered = self.rpkm[self.rpkm[[sample.name for sample in self.samples]].apply(max, axis=1) > 3]
 
         sns.jointplot('mean', "dispersion", data=filtered)
         plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.dispersion.filtered.pdf"), bbox_inches="tight")
@@ -343,8 +343,8 @@ class Analysis(object):
             """
             return a * np.exp(-b * x) + c
 
-        X = np.array(self.rpkm_log['mean'])
-        Y = np.array(self.rpkm_log['qv2'])
+        X = np.array(self.rpkm['mean'])
+        Y = np.array(self.rpkm['qv2'])
 
         ci = 0.99
         # Convert to percentile point of the normal distribution.
@@ -401,7 +401,7 @@ class Analysis(object):
         # Correlation
         cmap = sns.diverging_palette(h_neg=210, h_pos=350, s=90, l=30, as_cmap=True)
 
-        correlations = self.rpkm_log[[sample.name for sample in self.samples]].corr()
+        correlations = self.rpkm[[sample.name for sample in self.samples]].corr()
         correlations.index = map(name_to_repr, correlations.index)
         correlations.columns = map(name_to_repr, correlations.columns)
 
@@ -417,7 +417,7 @@ class Analysis(object):
         plt.savefig(os.path.join(self.plots_dir, "all_sample_peaks.concatenated.correlation_clustering.pdf"), bbox_inches="tight")
         plt.close('all')
 
-    def plot_pca(self):
+    def plot_pca(self, suffix=""):
         from collections import Counter
         # get variance explained by each component
         variance = [np.round(i * 100, 0) for i in self.pca_fit.explained_variance_ratio_]
@@ -435,36 +435,32 @@ class Analysis(object):
         # dependent on igvh status
         colors = ['yellow' if sample.mutated else 'green' for sample in self.samples]
 
-        # 2 components
-        fig = plt.figure()
+        # plot
+        fig, axis = plt.subplots(4)
+
+        # 1vs2 components
         for i, sample in enumerate(self.samples):
-            plt.scatter(
+            axis[0].scatter(
                 self.pca_fit.components_[i, 0], self.pca_fit.components_[i, 1],
                 label=name_to_repr(sample.name),
                 color=colors[i],
                 s=50
             )
-        fig.axes[0].set_xlabel("PC1 - {0}% variance".format(variance[0]))
-        fig.axes[0].set_ylabel("PC2 - {0}% variance".format(variance[1]))
-        plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-        plt.savefig(os.path.join(self.plots_dir, "all_sample_peaks.concatenated.PCA-2comp.1vs2.pdf"), bbox_inches="tight")
+        axis[0].set_xlabel("PC1 - {0}% variance".format(variance[0]))
+        axis[0].set_ylabel("PC2 - {0}% variance".format(variance[1]))
 
         # 2vs3 components
-        fig = plt.figure()
         for i, sample in enumerate(self.samples):
-            plt.scatter(
+            axis[1].scatter(
                 self.pca_fit.components_[i, 1], self.pca_fit.components_[i, 2],
                 label=name_to_repr(sample.name),
                 color=colors[i],
                 s=50
             )
-        fig.axes[0].set_xlabel("PC2 - {0}% variance".format(variance[1]))
-        fig.axes[0].set_ylabel("PC3 - {0}% variance".format(variance[2]))
-        plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-        plt.savefig(os.path.join(self.plots_dir, "all_sample_peaks.concatenated.PCA-2comp.2vs3.pdf"), bbox_inches="tight")
+        axis[1].set_xlabel("PC2 - {0}% variance".format(variance[1]))
+        axis[1].set_ylabel("PC3 - {0}% variance".format(variance[2]))
 
         # 3vs4 components
-        fig = plt.figure()
         for i, sample in enumerate(self.samples):
             plt.scatter(
                 self.pca_fit.components_[i, 2], self.pca_fit.components_[i, 3],
@@ -472,13 +468,10 @@ class Analysis(object):
                 color=colors[i],
                 s=50
             )
-        fig.axes[0].set_xlabel("PC3 - {0}% variance".format(variance[2]))
-        fig.axes[0].set_ylabel("PC4 - {0}% variance".format(variance[3]))
-        plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-        plt.savefig(os.path.join(self.plots_dir, "all_sample_peaks.concatenated.PCA-2comp.3vs4.pdf"), bbox_inches="tight")
+        axis[2].set_xlabel("PC3 - {0}% variance".format(variance[2]))
+        axis[2].set_ylabel("PC4 - {0}% variance".format(variance[3]))
 
         # 4vs5 components
-        fig = plt.figure()
         for i, sample in enumerate(self.samples):
             plt.scatter(
                 self.pca_fit.components_[i, 3], self.pca_fit.components_[i, 4],
@@ -486,24 +479,12 @@ class Analysis(object):
                 color=colors[i],
                 s=50
             )
-        fig.axes[0].set_xlabel("PC4 - {0}% variance".format(variance[3]))
-        fig.axes[0].set_ylabel("PC5 - {0}% variance".format(variance[4]))
-        plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-        plt.savefig(os.path.join(self.plots_dir, "all_sample_peaks.concatenated.PCA-2comp.4vs5.pdf"), bbox_inches="tight")
+        axis[3].set_xlabel("PC4 - {0}% variance".format(variance[3]))
+        axis[3].set_ylabel("PC5 - {0}% variance".format(variance[4]))
 
-        # 1vs3 components
-        fig = plt.figure()
-        for i, sample in enumerate(self.samples):
-            plt.scatter(
-                self.pca_fit.components_[i, 0], self.pca_fit.components_[i, 2],
-                label=name_to_repr(sample.name),
-                color=colors[i],
-                s=50
-            )
-        fig.axes[0].set_xlabel("PC1 - {0}% variance".format(variance[0]))
-        fig.axes[0].set_ylabel("PC3 - {0}% variance".format(variance[2]))
         plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-        plt.savefig(os.path.join(self.plots_dir, "all_sample_peaks.concatenated.PCA-2comp.1vs3.pdf"), bbox_inches="tight")
+        plot_path = os.path.join(self.plots_dir, "all_sample_peaks.concatenated.PCA{0}.pdf".format(suffix))
+        plt.savefig(plot_path, bbox_inches="tight")
 
         # 3 components
         fig = plt.figure()
@@ -520,7 +501,8 @@ class Analysis(object):
         ax.set_ylabel("PC2 - {0}% variance".format(variance[1]))
         ax.set_zlabel("PC3 - {0}% variance".format(variance[2]))
         plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-        plt.savefig(os.path.join(self.plots_dir, "all_sample_peaks.concatenated.PCA-3comp.pdf"), bbox_inches="tight")
+        plot_path = os.path.join(self.plots_dir, "all_sample_peaks.concatenated.PCA-3comp{0}.pdf".format(suffix))
+        plt.savefig(plot_path, bbox_inches="tight")
 
     def plot_mds(self, n=1000):
         # get unique colors
@@ -751,10 +733,6 @@ if generate:
 else:
     analysis.rpkm = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t")
 
-# Compute log2
-if generate:
-    analysis.log_rpkm()
-
 # Get variance measurements across samples
 if generate:
     analysis.rpkm_variance()
@@ -769,15 +747,32 @@ if generate:
 if generate:
     analysis.plot_qv2_fit()
 
-# Decide on low-end cut-off based on the elbow method
-if generate:
-    analysis.filter_rpkm(1)
 
 # Try to separate samples in 2D space
 if generate:
-    analysis.pca()
-    analysis.plot_pca()
-    analysis.mds()
+    # PCA
+    # Decide on low-end cut-off based on the elbow method
+    analysis.filter_rpkm(1)
+
+    data = pd.merge(analysis.rpkm_filtered, analysis.chrom_states, on=['chrom', 'start', 'end'])
+
+    analysis.pca(data[[sample.name for sample in analysis.samples]])
+    analysis.plot_pca(suffix="-mean>1")
+
+    # Filter peaks based on sd
+    analysis.plot_pca(suffix="-mostvariable")
+    # Use only Promoters
+    analysis.plot_pca(suffix="-promoters")
+    # Use only Enhancers
+    analysis.plot_pca(suffix="-enhancers")
+
+    # MDS
+    atacseq_samples = [sample for sample in analysis.samples if sample.technique == "ATAC-seq"]
+    # X most variable sites
+    n = 1000
+    mds_data = analysis.rpkm.ix[analysis.rpkm[atacseq_samples].apply(np.var, axis=1).order(ascending=False).index].head(n)[[sample.name for sample in analysis.samples]]
+
+    analysis.mds(mds_data)
     analysis.plot_mds()
 
 # COMPARISON mCLL - uCLL
