@@ -125,6 +125,7 @@ class Analysis(object):
     def annotate_peak_chromstate(self):
         # create bedtool with CD19 chromatin states
         states_cd19 = pybedtools.BedTool(os.path.join(self.data_dir, "E032_15_coreMarks_mnemonics.bed"))
+
         # intersect with cll peaks, to create annotation, get original peaks
         annotation = self.sites.intersect(states_cd19, wa=True, wb=True).to_dataframe()[['chrom', 'start', 'end', 'thickStart']]
 
@@ -259,22 +260,34 @@ class Analysis(object):
         axis.ylabel("frequency")
         fig.savefig(os.path.join(self.plots_dir, "all_sample_peaks.support.pdf"), bbox_inches="tight")
 
-        # plot distance to nearest TSS
+        # Plot distance to nearest TSS
         fig, axis = plt.subplots()
         sns.distplot(self.closest_tss_distances, bins=200, ax=axis)
         axis.set_xlabel("distance to nearest TSS (bp)")
         axis.set_ylabel("frequency")
         fig.savefig(os.path.join(self.plots_dir, "all_sample_peaks.tss_distance.pdf"), bbox_inches="tight")
 
-        # plot chromatin classes
+        # Plot chromatin classes
+        # count state frequency
         count = Counter(self.chrom_states_all)
-        df = pd.DataFrame([count.keys(), count.values()]).T
-        df = df.sort([1], ascending=False)
+        data = pd.DataFrame([count.keys(), count.values()]).T
+        data = data.sort([1], ascending=False)
 
-        fig, axis = plt.subplots()
-        sns.barplot(x=0, y=1, data=df, ax=axis)
+        # create background
+        # shuffle regions in genome to create background (keep them in the same chromossome)
+        background = self.sites.shuffle(genome='hg19', chrom=True)
+        # count state frequency
+        states_cd19 = pybedtools.BedTool(os.path.join(self.data_dir, "E032_15_coreMarks_mnemonics.bed"))
+        background = background.intersect(states_cd19, wa=True, wb=True).to_dataframe()[['chrom', 'start', 'end', 'thickStart']]
+        background = Counter(background['thickStart'])
+        backround = pd.DataFrame([background.keys(), background.values()]).T
+
+        fig, axis = plt.subplots(2, sharex=True)
+        sns.barplot(x=0, y=1, data=data, ax=axis[0])
+        sns.barplot(x=0, y=1, data=background, ax=axis[1])
         axis.set_xlabel("chromatin states")
         axis.set_ylabel("frequency")
+
         fig.autofmt_xdate()
         fig.savefig(os.path.join(self.plots_dir, "all_sample_peaks.chromatin_states.pdf"), bbox_inches="tight")
 
