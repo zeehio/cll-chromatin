@@ -59,13 +59,14 @@ class Analysis(object):
         # Merge overlaping peaks across samples
         sites = sites.merge()
 
-        # Remove blacklist regions
+        # Filter
+        # remove blacklist regions
         blacklist = pybedtools.BedTool(os.path.join(self.data_dir, "wgEncodeDacMapabilityConsensusExcludable.bed"))
-        # Remove chrM peaks and save
+        # remove chrM peaks and save
         sites = sites.intersect(v=True, b=blacklist).filter(lambda x: x.chrom != 'chrM').saveas(os.path.join(self.data_dir, "all_sample_peaks.concatenated.bed"))
-
         sites = pybedtools.BedTool(os.path.join(self.data_dir, "all_sample_peaks.concatenated.bed"))
 
+        # Store
         self.sites = sites
         self.peak_count = peak_count
 
@@ -87,6 +88,32 @@ class Analysis(object):
         support = pd.read_csv(os.path.join(self.data_dir, "all_sample_peaks.support.csv"))
 
         self.support = support
+
+    def annotate_peak_gene(self):
+        # create bedtool with hg19 TSS positions
+        hg19_ensembl_tss = pybedtools.BedTool(os.path.join(self.data_dir, "GRCh37_hg19_ensembl_genes.tss.bed"))
+        # get closest TSS of each cll peak
+        closest = self.sites.closest(hg19_ensembl_tss).to_dataframe()[['chrom', 'start', 'end', 'thickStart', 'blockCount']]
+        # aggregate annotation per peak, concatenate various genes (comma-separated)
+        closest = closest.groupby(['chrom', 'start', 'end']).aggregate(lambda x: ",".join(set(x))).reset_index()
+        closest.columns = ['chrom', 'start', 'end', 'ensembl_gene_id', 'gene_name']
+        # save to disk
+        closest.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.closest_gene.csv"), index=False)
+
+        self.closest_gene = closest
+
+    def annotate_peak_class(self):
+        # create bedtool with CD19 chromatin states
+        states_cd19 = pybedtools.BedTool(os.path.join(self.data_dir, "E032_15_coreMarks_mnemonics.bed"))
+        # intersect with cll peaks, to create annotation, get original peaks
+        annotation = self.sites.intersect(states_cd19, wa=True, wb=True).to_dataframe()[['chrom', 'start', 'end', 'thickStart']]
+        # aggregate annotation per peak, concatenate various annotations (comma-separated)
+        chrom_states = annotation.groupby(['chrom', 'start', 'end']).aggregate(lambda x: ",".join(x)).reset_index()
+        chrom_states.columns = ['chrom', 'start', 'end', 'chromatin_state']
+        # save to disk
+        chrom_states.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.chromatin_state.csv"), index=False)
+
+        self.chrom_states = chrom_states
 
     def measure_chromatin_openness(self):
         # Select ATAC-seq samples
@@ -632,24 +659,40 @@ analysis = Analysis(data_dir, plots_dir, samples)
 analysis.prj = prj
 analysis.clinical = clinical
 
+
+# GET CONSENSUS PEAK SET, ANNOTATE IT, PLOT FEATURES
 # Get consensus peak set from all samples
-if generate and not os.path.exists(os.path.join(data_dir, "all_sample_peaks.concatenated.bed")):
+if generate:
     analysis.get_consensus_sites()
 else:
     analysis.sites = pybedtools.BedTool(os.path.join(data_dir, "all_sample_peaks.concatenated.bed"))
 
 # Calculate peak support
-if generate and not os.path.exists(os.path.join(data_dir, "all_sample_peaks.support.csv")):
+if generate:
     analysis.calculate_peak_support()
 else:
     analysis.support = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.support.csv"))
+
+# Annotate peaks with closest gene
+if generate:
+    analysis.annotate_peak_gene()
+else:
+    analysis.closest_gene = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.closest_gene.csv"))
+
+# Annotate peaks with ChromHMM state from CD19 cells
+if generate:
+    analysis.annotate_peak_class()
+else:
+    analysis.closest_gene = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.chromatin_state.csv"))
 
 # plot general peak set features
 if generate:
     analysis.plot_peak_characteristics()
 
+
+# WORK WITH "OPENNESS"
 # Get RPKM values for each peak in each sample
-if generate and not os.path.exists(os.path.join(data_dir, "all_sample_peaks.concatenated.rpkm.tsv")):
+if generate:
     analysis.measure_chromatin_openness()
 else:
     analysis.rpkm = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t")
