@@ -86,7 +86,6 @@ class Analysis(object):
         self.sites = sites
         self.peak_count = peak_count
 
-    @pickle_me
     def calculate_peak_support(self):
         # calculate support (number of samples overlaping each merged peak)
         for i, sample in enumerate(self.samples):
@@ -106,7 +105,6 @@ class Analysis(object):
 
         self.support = support
 
-    @pickle_me
     def annotate_peak_gene(self):
         # create bedtool with hg19 TSS positions
         hg19_ensembl_tss = pybedtools.BedTool(os.path.join(self.data_dir, "GRCh37_hg19_ensembl_genes.tss.bed"))
@@ -124,7 +122,6 @@ class Analysis(object):
 
         self.closest_gene = closest
 
-    @pickle_me
     def annotate_peak_chromstate(self):
         # create bedtool with CD19 chromatin states
         states_cd19 = pybedtools.BedTool(os.path.join(self.data_dir, "E032_15_coreMarks_mnemonics.bed"))
@@ -196,7 +193,6 @@ class Analysis(object):
 
         self.rpkm.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t", index=False)
 
-    @pickle_me
     def log_rpkm(self):
         # Log2 transform
         self.rpkm[[sample.name for sample in self.samples]] = np.log2(1 + self.rpkm[[sample.name for sample in self.samples]])
@@ -216,31 +212,28 @@ class Analysis(object):
 
         self.rpkm.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t", index=False)
 
-    @pickle_me
     def filter_rpkm(self, x):
         self.rpkm_filtered = self.rpkm[self.rpkm['mean'] > x]
 
-    @pickle_me
-    def pca(self, data):
+    def pca_analysis(self, data):
         # PCA
         # normalize
         x = normalize(data)
 
         # random PCA
-        pca = RandomizedPCA()
-        self.pca_fit = pca.fit(x).transform(x)
+        self.pca = RandomizedPCA()
+        self.pca_fit = self.pca.fit(x).transform(x)
 
-    @pickle_me
-    def mds(self, data):
+    def mds_analysis(self, data):
         # normalize, get *n* most variable sites
         x = normalize(data)
 
         # convert two components as we're plotting points in a two-dimensional plane
         # "precomputed" because we provide a distance matrix
         # we will also specify `random_state` so the plot is reproducible.
-        mds = MDS()  # n_components=2, dissimilarity="precomputed", random_state=1)
+        self.mds = MDS()  # n_components=2, dissimilarity="precomputed", random_state=1)
 
-        self.mds_fir = mds.fit_transform(x)
+        self.mds_fit = self.mds.fit_transform(x)
 
     def plot_peak_characteristics(self):
         # Plot cumulative number of peaks
@@ -418,30 +411,22 @@ class Analysis(object):
         plt.close('all')
 
     def plot_pca(self, suffix=""):
-        from collections import Counter
         # get variance explained by each component
-        variance = [np.round(i * 100, 0) for i in self.pca_fit.explained_variance_ratio_]
-
-        # get colors
-        # rainbow (unique color per sample)
-        colors = cm.Paired(np.linspace(0, 1, len(self.samples)))
-
-        # per patient
-        patients = Counter([sample.patientID for sample in analysis.samples]).keys()
-        color_dict = cm.Paired(np.linspace(0, 1, len(patients)))
-        color_dict = dict(zip(patients, colors))
-        colors = [color_dict[sample.patientID] for sample in self.samples]
+        variance = [np.round(i * 100, 0) for i in self.pca.explained_variance_ratio_]
 
         # dependent on igvh status
-        colors = ['yellow' if sample.mutated else 'green' for sample in self.samples]
+        colors = samples_to_color(samples)
 
         # plot
-        fig, axis = plt.subplots(4)
+        fig, axis = plt.subplots(nrows=2, ncols=2)
+        fig.set_figheight(10)
+        fig.set_figwidth(10)
+        axis = axis.flatten()
 
         # 1vs2 components
         for i, sample in enumerate(self.samples):
             axis[0].scatter(
-                self.pca_fit.components_[i, 0], self.pca_fit.components_[i, 1],
+                self.pca.components_[i, 0], self.pca.components_[i, 1],
                 label=name_to_repr(sample.name),
                 color=colors[i],
                 s=50
@@ -452,7 +437,7 @@ class Analysis(object):
         # 2vs3 components
         for i, sample in enumerate(self.samples):
             axis[1].scatter(
-                self.pca_fit.components_[i, 1], self.pca_fit.components_[i, 2],
+                self.pca.components_[i, 1], self.pca.components_[i, 2],
                 label=name_to_repr(sample.name),
                 color=colors[i],
                 s=50
@@ -462,8 +447,8 @@ class Analysis(object):
 
         # 3vs4 components
         for i, sample in enumerate(self.samples):
-            plt.scatter(
-                self.pca_fit.components_[i, 2], self.pca_fit.components_[i, 3],
+            axis[2].scatter(
+                self.pca.components_[i, 2], self.pca.components_[i, 3],
                 label=name_to_repr(sample.name),
                 color=colors[i],
                 s=50
@@ -473,8 +458,8 @@ class Analysis(object):
 
         # 4vs5 components
         for i, sample in enumerate(self.samples):
-            plt.scatter(
-                self.pca_fit.components_[i, 3], self.pca_fit.components_[i, 4],
+            axis[3].scatter(
+                self.pca.components_[i, 3], self.pca.components_[i, 4],
                 label=name_to_repr(sample.name),
                 color=colors[i],
                 s=50
@@ -483,8 +468,8 @@ class Analysis(object):
         axis[3].set_ylabel("PC5 - {0}% variance".format(variance[4]))
 
         plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-        plot_path = os.path.join(self.plots_dir, "all_sample_peaks.concatenated.PCA{0}.pdf".format(suffix))
-        plt.savefig(plot_path, bbox_inches="tight")
+        plot_path = os.path.join(self.plots_dir, "all_sample_peaks.concatenated.PCA_{0}.pdf".format(suffix))
+        fig.savefig(plot_path, bbox_inches="tight")
 
         # 3 components
         fig = plt.figure()
@@ -492,35 +477,35 @@ class Analysis(object):
         ax = fig.add_subplot(111, projection='3d')
         for i, sample in enumerate(self.samples):
             ax.scatter(
-                self.pca_fit.components_[i, 0], self.pca_fit.components_[i, 1], self.pca_fit.components_[i, 2],
+                self.pca.components_[i, 0], self.pca.components_[i, 1], self.pca.components_[i, 2],
                 label=name_to_repr(sample.name),
                 color=colors[i],
-                s=100
+                s=50
             )
         ax.set_xlabel("PC1 - {0}% variance".format(variance[0]))
         ax.set_ylabel("PC2 - {0}% variance".format(variance[1]))
         ax.set_zlabel("PC3 - {0}% variance".format(variance[2]))
         plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-        plot_path = os.path.join(self.plots_dir, "all_sample_peaks.concatenated.PCA-3comp{0}.pdf".format(suffix))
-        plt.savefig(plot_path, bbox_inches="tight")
+        plot_path = os.path.join(self.plots_dir, "all_sample_peaks.concatenated.PCA_{0}_3comp.pdf".format(suffix))
+        fig.savefig(plot_path, bbox_inches="tight")
 
-    def plot_mds(self, n=1000):
+    def plot_mds(self, n, suffix=""):
         # get unique colors
-        colors = cm.Paired(np.linspace(0, 1, len(self.samples)))
+        colors = samples_to_color(samples)
 
         # plot
-        plt.figure()
+        fig, axis = plt.subplots(1)
         for i, sample in enumerate(self.samples):
-            plt.scatter(
+            axis.scatter(
                 self.mds_fit[i, 0], self.mds_fit[i, 1],
                 label=name_to_repr(sample.name),
                 color=colors[i],
                 s=50
             )
-        plt.title("MDS on %i most variable genes" % n)
+        axis.set_title("MDS on %i most variable regions" % n)
         plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-        plt.savefig(os.path.join(self.plots_dir, "all_sample_peaks.concatenated.MDS.pdf"), bbox_inches="tight")
-        plt.close('all')
+        plot_path = os.path.join(self.plots_dir, "all_sample_peaks.concatenated.MDS_{0}.pdf".format(suffix))
+        fig.savefig(plot_path, bbox_inches="tight")
 
 
 def count_reads_in_intervals(bam, intervals):
@@ -585,15 +570,47 @@ def name_to_sample_id(name):
     return name.split("_")[3:4][0]
 
 
+def samples_to_color(samples, method="mutation"):
+    # dependent on igvh status
+    if method == "mutation":
+        colors = list()
+        for sample in samples:
+            if sample.mutated is True:
+                colors.append('yellow')
+            elif sample.mutated is False:
+                colors.append('green')
+            elif sample.mutated is None:
+                if sample.cellLine == "CLL":
+                    colors.append('gray')
+                else:
+                    colors.append('black')
+        return colors
+    # unique color per patient
+    elif method == "unique":
+        # per patient
+        patients = set([sample.patientID for sample in samples])
+        color_dict = cm.Paired(np.linspace(0, 1, len(patients)))
+        color_dict = dict(zip(patients, colors))
+        return [color_dict[sample.patientID] for sample in samples]
+    # rainbow (unique color per sample)
+    elif method == "unique":
+        return cm.Paired(np.linspace(0, 1, len(samples)))
+    else:
+        raise ValueError("Method %s is not valid" % method)
+
+
 def annotate_igvh_mutations(samples, clinical):
     new_samples = list()
 
     for sample in samples:
-        _id = name_to_sample_id(sample.name)
-        if clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 1:
-            sample.mutated = True
-        elif clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 2:
-            sample.mutated = False
+        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
+            _id = name_to_sample_id(sample.name)
+            if clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 1:
+                sample.mutated = True
+            elif clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 2:
+                sample.mutated = False
+            else:
+                sample.mutated = None
         else:
             sample.mutated = None
         new_samples.append(sample)
@@ -680,16 +697,15 @@ clinical = clinical[attributes].drop_duplicates()
 prj = Project("cll-patients")
 prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
-# Select ATAC-seq samples
-samples = [s for s in prj.samples if type(s) == ATACseqSample if s.cellLine == "CLL"]
-
 # Annotate with igvh mutated status
 # add "mutated" attribute to sample depending on IGVH mutation status
-samples = annotate_igvh_mutations(samples, clinical)
+# Select ATAC-seq samples
+prj.samples = annotate_igvh_mutations(prj.samples, clinical)
 
 # Start analysis object
+# only with ATAC-seq samples
 analysis = Analysis(
-    data_dir, plots_dir, samples,
+    data_dir, plots_dir, [sample for sample in prj.samples if sample.technique == "ATAC-seq"],
     pickle_file=os.path.join(data_dir, "analysis.pickle")
 )
 analysis.prj = prj
@@ -751,29 +767,40 @@ if generate:
 # Try to separate samples in 2D space
 if generate:
     # PCA
-    # Decide on low-end cut-off based on the elbow method
-    analysis.filter_rpkm(1)
+    # Decide on low-end threshold based on the elbow method
+    t = 2
+    analysis.filter_rpkm(t)
 
     data = pd.merge(analysis.rpkm_filtered, analysis.chrom_states, on=['chrom', 'start', 'end'])
 
-    analysis.pca(data[[sample.name for sample in analysis.samples]])
-    analysis.plot_pca(suffix="-mean>1")
+    analysis.pca_analysis(data[[sample.name for sample in analysis.samples]])
+    analysis.plot_pca(suffix="mean>%i" % t)
 
     # Filter peaks based on sd
-    analysis.plot_pca(suffix="-mostvariable")
+    n = 100
+    atacseq_samples = [sample for sample in analysis.samples if sample.technique == "ATAC-seq"]
+    most_variable_data = data.sort(["dispersion"], ascending=False).head(n)
+    analysis.pca_analysis(most_variable_data[[sample.name for sample in analysis.samples]])
+    analysis.plot_pca(suffix="mostdispersion")
+
+    most_variable_data = data.sort(["qv2"], ascending=False).head(n)
+    analysis.pca_analysis(most_variable_data[[sample.name for sample in analysis.samples]])
+    analysis.plot_pca(suffix="mostqv2")
+
     # Use only Promoters
-    analysis.plot_pca(suffix="-promoters")
+    promoter_data = data.ix[data['chromatin_state'].str.contains("Tss")]
+    analysis.pca_analysis(promoter_data[[sample.name for sample in analysis.samples]])
+    analysis.plot_pca(suffix="promoters")
+
     # Use only Enhancers
-    analysis.plot_pca(suffix="-enhancers")
+    enhancer_data = data.ix[data['chromatin_state'].str.contains("Enh")]
+    analysis.pca_analysis(enhancer_data[[sample.name for sample in analysis.samples]])
+    analysis.plot_pca(suffix="enhancers")
 
     # MDS
-    atacseq_samples = [sample for sample in analysis.samples if sample.technique == "ATAC-seq"]
     # X most variable sites
-    n = 1000
-    mds_data = analysis.rpkm.ix[analysis.rpkm[atacseq_samples].apply(np.var, axis=1).order(ascending=False).index].head(n)[[sample.name for sample in analysis.samples]]
-
-    analysis.mds(mds_data)
-    analysis.plot_mds()
+    analysis.mds_analysis(most_variable_data[[sample.name for sample in analysis.samples]])
+    analysis.plot_mds(n)
 
 # COMPARISON mCLL - uCLL
 # test if sites come from same population based on rpkm values
@@ -788,7 +815,7 @@ pvalues = analysis.rpkm.apply(
 # qvalues = pd.Series(multipletests(pvalues)[1])
 
 # get differential sites
-significant = analysis.rpkm.ix[pvalues[pvalues < 0.0001].index][[sample.name for sample in samples]]
+significant = analysis.rpkm.ix[pvalues[pvalues < 0.0001].index][[sample.name for sample in analysis.samples]]
 significant.to_csv(os.path.join(data_dir, "dors.mutated_vs_unmutated.tsv"), sep="\t", index=False)
 
 # correlate samples on significantly different sites
@@ -829,7 +856,7 @@ unmutated_cluster = ['b', 'c', 'm', 'y']
 new_samples = list()
 for cluster, sample_names in clusters.items():
     for sample_name in sample_names:
-        s = [sample for sample in samples if sample.name == sample_name][0]
+        s = [sample for sample in analysis.samples if sample.name == sample_name][0]
         s.cluster = cluster if cluster not in unmutated_cluster else 'b'
         new_samples.append(s)
 samples = new_samples
