@@ -23,10 +23,19 @@ from scipy.cluster.hierarchy import dendrogram
 from scipy.stats import mannwhitneyu
 # from statsmodels.sandbox.stats.multicomp import multipletests
 import itertools
+import pickle
 
 
 sns.set_style("whitegrid")
 sns.set_context("paper")
+
+
+# decorator for some methods of Analysis class
+def pickle_me(function):
+    def wrapper(obj):
+        function(obj)
+        pickle.dump(obj, open(obj.pickle_file, 'wb'))
+    return wrapper
 
 
 class Analysis(object):
@@ -34,11 +43,17 @@ class Analysis(object):
     Class to hold functions and data from analysis.
     """
 
-    def __init__(self, data_dir, plots_dir, samples):
+    def __init__(self, data_dir, plots_dir, samples, pickle_file):
         self.data_dir = data_dir
         self.plots_dir = plots_dir
         self.samples = samples
+        self.pickle_file = pickle_file
 
+    @pickle_me
+    def to_pickle(self):
+        pass
+
+    @pickle_me
     def get_consensus_sites(self):
         # GET CONSENSUS SITES ACROSS SAMPLES
         peak_count = dict()
@@ -70,6 +85,7 @@ class Analysis(object):
         self.sites = sites
         self.peak_count = peak_count
 
+    @pickle_me
     def calculate_peak_support(self):
         # calculate support (number of samples overlaping each merged peak)
         for i, sample in enumerate(self.samples):
@@ -89,6 +105,7 @@ class Analysis(object):
 
         self.support = support
 
+    @pickle_me
     def annotate_peak_gene(self):
         # create bedtool with hg19 TSS positions
         hg19_ensembl_tss = pybedtools.BedTool(os.path.join(self.data_dir, "GRCh37_hg19_ensembl_genes.tss.bed"))
@@ -102,6 +119,7 @@ class Analysis(object):
 
         self.closest_gene = closest
 
+    @pickle_me
     def annotate_peak_class(self):
         # create bedtool with CD19 chromatin states
         states_cd19 = pybedtools.BedTool(os.path.join(self.data_dir, "E032_15_coreMarks_mnemonics.bed"))
@@ -115,6 +133,7 @@ class Analysis(object):
 
         self.chrom_states = chrom_states
 
+    @pickle_me
     def measure_chromatin_openness(self):
         # Select ATAC-seq samples
         samples = [s for s in self.prj.samples if type(s) == ATACseqSample]
@@ -167,11 +186,13 @@ class Analysis(object):
 
         self.rpkm = rpkm
 
+    @pickle_me
     def log_rpkm(self):
         # Log2 transform
         self.rpkm_log = self.rpkm
         self.rpkm_log[[sample.name for sample in self.samples]] = np.log2(1 + self.rpkm[[sample.name for sample in self.samples]])
 
+    @pickle_me
     def rpkm_variance(self):
         # add support to rpkm
         self.rpkm = pd.merge(self.rpkm, self.support[['chrom', 'start', 'end', 'support']], on=['chrom', 'start', 'end'])
@@ -186,10 +207,12 @@ class Analysis(object):
         self.rpkm['qv2'] = self.rpkm[[sample.name for sample in self.samples]].apply(lambda x: (np.std(x) / np.mean(x)) ** 2, axis=1)
         self.rpkm_log['qv2'] = self.rpkm_log[[sample.name for sample in self.samples]].apply(lambda x: (np.std(x) / np.mean(x)) ** 2, axis=1)
 
+    @pickle_me
     def filter_rpkm(self, x):
         self.rpkm_filtered = self.rpkm[self.rpkm['mean'] > x]
         self.rpkm_filtered_log = self.rpkm_log[self.rpkm_log['mean'] > x]
 
+    @pickle_me
     def pca(self):
         # PCA
         # normalize
@@ -199,6 +222,7 @@ class Analysis(object):
         pca = RandomizedPCA()
         self.pca_fit = pca.fit(x).transform(x)
 
+    @pickle_me
     def mds(self, n=1000):
         # normalize, get *n* most variable sites
         x = normalize(self.rpkm_log.ix[self.rpkm_log[[sample.name for sample in self.samples]].apply(np.var, axis=1).order(ascending=False).index].head(n)[[sample.name for sample in self.samples]])
@@ -655,7 +679,10 @@ samples = [s for s in prj.samples if type(s) == ATACseqSample if s.cellLine == "
 samples = annotate_igvh_mutations(samples, clinical)
 
 # Start analysis object
-analysis = Analysis(data_dir, plots_dir, samples)
+analysis = Analysis(
+    data_dir, plots_dir, samples,
+    pickle_file=os.path.join(data_dir, "analysis.pickle")
+)
 analysis.prj = prj
 analysis.clinical = clinical
 
