@@ -33,8 +33,8 @@ sns.set_context("paper")
 
 # decorator for some methods of Analysis class
 def pickle_me(function):
-    def wrapper(*obj):
-        function(*obj)
+    def wrapper(obj, *args):
+        function(obj, *args)
         pickle.dump(obj, open(obj.pickle_file, 'wb'))
     return wrapper
 
