@@ -110,21 +110,29 @@ class Analysis(object):
         # create bedtool with hg19 TSS positions
         hg19_ensembl_tss = pybedtools.BedTool(os.path.join(self.data_dir, "GRCh37_hg19_ensembl_genes.tss.bed"))
         # get closest TSS of each cll peak
-        closest = self.sites.closest(hg19_ensembl_tss).to_dataframe()[['chrom', 'start', 'end', 'thickStart', 'blockCount']]
+        closest = self.sites.closest(hg19_ensembl_tss, d=True).to_dataframe()[['chrom', 'start', 'end', 'thickStart', 'blockCount', 'blockSizes']]
+
+        # save distances to all TSSs (for plotting)
+        self.closest_tss_distances = closest['blockSizes'].tolist()
+
         # aggregate annotation per peak, concatenate various genes (comma-separated)
-        closest = closest.groupby(['chrom', 'start', 'end']).aggregate(lambda x: ",".join(set(x))).reset_index()
-        closest.columns = ['chrom', 'start', 'end', 'ensembl_gene_id', 'gene_name']
+        closest = closest.groupby(['chrom', 'start', 'end']).aggregate(lambda x: ",".join(set([str(i) for i in x]))).reset_index()
+        closest.columns = ['chrom', 'start', 'end', 'ensembl_gene_id', 'gene_name', 'distance']
         # save to disk
         closest.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.closest_gene.csv"), index=False)
 
         self.closest_gene = closest
 
     @pickle_me
-    def annotate_peak_class(self):
+    def annotate_peak_chromstate(self):
         # create bedtool with CD19 chromatin states
         states_cd19 = pybedtools.BedTool(os.path.join(self.data_dir, "E032_15_coreMarks_mnemonics.bed"))
         # intersect with cll peaks, to create annotation, get original peaks
         annotation = self.sites.intersect(states_cd19, wa=True, wb=True).to_dataframe()[['chrom', 'start', 'end', 'thickStart']]
+
+        # save all chromatin states of all peaks(for plotting)
+        self.chrom_states_all = annotation['thickStart'].tolist()
+
         # aggregate annotation per peak, concatenate various annotations (comma-separated)
         chrom_states = annotation.groupby(['chrom', 'start', 'end']).aggregate(lambda x: ",".join(x)).reset_index()
         chrom_states.columns = ['chrom', 'start', 'end', 'chromatin_state']
@@ -236,27 +244,46 @@ class Analysis(object):
 
     def plot_peak_characteristics(self):
         # Plot cumulative number of peaks
-        plt.plot(self.peak_count.keys(), self.peak_count.values(), 'o')
-        plt.ylim(0, max(self.peak_count.values()) + 5000)
-        plt.title("Cumulative peaks per sample")
-        plt.xlabel("Number of samples")
-        plt.ylabel("Total number of peaks")
-        plt.savefig(os.path.join(self.plots_dir, "total_peak_count.per_patient.pdf"), bbox_inches="tight")
-        plt.close('all')
+        fig, axis = plt.subplots()
+        axis.plot(self.peak_count.keys(), self.peak_count.values(), 'o')
+        axis.ylim(0, max(self.peak_count.values()) + 5000)
+        axis.title("Cumulative peaks per sample")
+        axis.xlabel("Number of samples")
+        axis.ylabel("Total number of peaks")
+        fig.savefig(os.path.join(self.plots_dir, "total_peak_count.per_patient.pdf"), bbox_inches="tight")
 
         # Loop at summary statistics:
         # interval lengths
-        sns.distplot([interval.length for interval in self.sites], bins=300, kde=False)
-        plt.xlabel("peak width (bp)")
-        plt.ylabel("frequency")
-        plt.savefig(os.path.join(self.plots_dir, "all_sample_peaks.lengths.pdf"), bbox_inches="tight")
-        plt.close('all')
+        fig, axis = plt.subplots()
+        sns.distplot([interval.length for interval in self.sites], bins=300, kde=False, ax=axis)
+        axis.xlabel("peak width (bp)")
+        axis.ylabel("frequency")
+        fig.savefig(os.path.join(self.plots_dir, "all_sample_peaks.lengths.pdf"), bbox_inches="tight")
 
         # plot support
-        sns.distplot(self.support["support"], bins=40)
-        plt.ylabel("frequency")
-        plt.savefig(os.path.join(self.plots_dir, "all_sample_peaks.support.pdf"), bbox_inches="tight")
-        plt.close('all')
+        fig, axis = plt.subplots()
+        sns.distplot(self.support["support"], bins=40, ax=axis)
+        axis.ylabel("frequency")
+        fig.savefig(os.path.join(self.plots_dir, "all_sample_peaks.support.pdf"), bbox_inches="tight")
+
+        # plot distance to nearest TSS
+        fig, axis = plt.subplots()
+        sns.distplot(self.closest_tss_distances, bins=200, ax=axis)
+        axis.set_xlabel("distance to nearest TSS (bp)")
+        axis.set_ylabel("frequency")
+        fig.savefig(os.path.join(self.plots_dir, "all_sample_peaks.tss_distance.pdf"), bbox_inches="tight")
+
+        # plot chromatin classes
+        count = Counter(self.chrom_states_all)
+        df = pd.DataFrame([count.keys(), count.values()]).T
+        df = df.sort([1], ascending=False)
+
+        fig, axis = plt.subplots()
+        sns.barplot(x=0, y=1, data=df, ax=axis)
+        axis.set_xlabel("chromatin states")
+        axis.set_ylabel("frequency")
+        fig.autofmt_xdate()
+        fig.savefig(os.path.join(self.plots_dir, "all_sample_peaks.chromatin_states.pdf"), bbox_inches="tight")
 
     def plot_rpkm(self):
         # Plot
@@ -708,9 +735,9 @@ else:
 
 # Annotate peaks with ChromHMM state from CD19 cells
 if generate:
-    analysis.annotate_peak_class()
+    analysis.annotate_peak_chromstate()
 else:
-    analysis.closest_gene = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.chromatin_state.csv"))
+    analysis.chrom_states = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.chromatin_state.csv"))
 
 # plot general peak set features
 if generate:
