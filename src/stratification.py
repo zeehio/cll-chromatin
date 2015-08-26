@@ -105,24 +105,61 @@ class Analysis(object):
 
         self.support = support
 
-    def annotate_peak_gene(self):
+    def get_peak_gene(self):
         # create bedtool with hg19 TSS positions
-        hg19_ensembl_tss = pybedtools.BedTool(os.path.join(self.data_dir, "GRCh37_hg19_ensembl_genes.tss.bed"))
+        hg19_ensembl_tss = pybedtools.BedTool(os.path.join(self.data_dir, "ensembl_tss.bed"))
         # get closest TSS of each cll peak
-        closest = self.sites.closest(hg19_ensembl_tss, d=True).to_dataframe()[['chrom', 'start', 'end', 'thickStart', 'blockCount', 'blockSizes']]
+        closest = self.sites.closest(hg19_ensembl_tss, d=True).to_dataframe()[['chrom', 'start', 'end', 'thickStart', 'blockCount']]
 
         # save distances to all TSSs (for plotting)
-        self.closest_tss_distances = closest['blockSizes'].tolist()
+        self.closest_tss_distances = closest['blockCount'].tolist()
 
         # aggregate annotation per peak, concatenate various genes (comma-separated)
         closest = closest.groupby(['chrom', 'start', 'end']).aggregate(lambda x: ",".join(set([str(i) for i in x]))).reset_index()
-        closest.columns = ['chrom', 'start', 'end', 'ensembl_gene_id', 'gene_name', 'distance']
+        closest.columns = ['chrom', 'start', 'end', 'ensembl_transcript_id', 'distance']
+
+        # add gene name and ensemble_gene_id
+        ensembl_gtn = pd.read_table(os.path.join(self.data_dir, "ensemblToGeneName.txt"), header=None)
+        ensembl_gtn.columns = ['ensembl_transcript_id', 'gene_name']
+
+        ensembl_gtp = pd.read_table(os.path.join(self.data_dir, "ensGtp.txt"), header=None)[[0, 1]]
+        ensembl_gtp.columns = ['ensembl_gene_id', 'ensembl_transcript_id']
+
+        gene_annotation = pd.merge(closest, ensembl_gtn)
+        self.gene_annotation = pd.merge(gene_annotation, ensembl_gtp)
+
         # save to disk
-        closest.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.closest_gene.csv"), index=False)
+        self.gene_annotation.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.closest_gene.csv"), index=False)
 
-        self.closest_gene = closest
+    def get_peak_genomic_location(self):
+        regions = [
+            "ensembl_genes.bed", "ensembl_tss2kb.bed",
+            "ensembl_utr5.bed", "ensembl_exons.bed", "ensembl_introns.bed", "ensembl_utr3.bed"]
 
-    def annotate_peak_chromstate(self):
+        for i, region in enumerate(regions):
+            region_name = region.replace(".bed", "").replace("ensembl_", "")
+            r = pybedtools.BedTool(os.path.join(self.data_dir, region))
+            if region_name == "genes":
+                df = self.sites.intersect(r, wa=True, f=0.2, v=True).to_dataframe()
+            else:
+                df = self.sites.intersect(r, wa=True, u=True, f=0.2).to_dataframe()
+            df['genomic_region'] = region_name
+            if i == 0:
+                region_annotation = df
+            else:
+                region_annotation = pd.concat([region_annotation, df])
+
+        region_annotation.sort(['chrom', 'start', 'end'], inplace=True)
+        region_annotation = region_annotation.reset_index(drop=True).drop_duplicates()
+        # join various regions per peak
+        self.region_annotation = region_annotation.groupby(['chrom', 'start', 'end']).aggregate(lambda x: ",".join(set([str(i) for i in x]))).reset_index()
+
+        self.region_annotation.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.region_annotation.csv"), index=False)
+
+        # keep long list of regions for plotting later
+        self.all_region_annotation = region_annotation['genomic_region']
+
+    def get_peak_chromstate(self):
         # create bedtool with CD19 chromatin states
         states_cd19 = pybedtools.BedTool(os.path.join(self.data_dir, "E032_15_coreMarks_mnemonics.bed"))
 
@@ -199,16 +236,22 @@ class Analysis(object):
         self.rpkm[[sample.name for sample in self.samples]] = np.log2(1 + self.rpkm[[sample.name for sample in self.samples]])
 
     @pickle_me
-    def rpkm_variance(self):
+    def annotate_rpkm(self):
         atacseq_samples = [sample for sample in self.samples if sample.technique == "ATAC-seq"]
+
+        # add closest gene
+
+        # add chromatin state
+
+        # add genomic location
 
         # add support to rpkm - this is added here because support was calculated prior to rpkms
         self.rpkm = pd.merge(self.rpkm, self.support[['chrom', 'start', 'end', 'support']], on=['chrom', 'start', 'end'])
-        # mean rpkm
+        # calculate mean rpkm
         self.rpkm['mean'] = self.rpkm[[sample.name for sample in atacseq_samples]].apply(lambda x: np.mean(x), axis=1)
-        # dispersion (variance / mean)
+        # calculate dispersion (variance / mean)
         self.rpkm['dispersion'] = self.rpkm[[sample.name for sample in atacseq_samples]].apply(lambda x: np.var(x) / np.mean(x), axis=1)
-        # qv2 vs mean rpkm
+        # calculate qv2
         self.rpkm['qv2'] = self.rpkm[[sample.name for sample in atacseq_samples]].apply(lambda x: (np.std(x) / np.mean(x)) ** 2, axis=1)
 
         self.rpkm.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t", index=False)
@@ -266,6 +309,30 @@ class Analysis(object):
         axis.set_xlabel("distance to nearest TSS (bp)")
         axis.set_ylabel("frequency")
         fig.savefig(os.path.join(self.plots_dir, "all_sample_peaks.tss_distance.pdf"), bbox_inches="tight")
+
+        # Plot genomic regions
+        # count region frequency
+        count = Counter(self.self.all_region_annotation)
+        data = pd.DataFrame([count.keys(), count.values()]).T
+        data = data.sort([1], ascending=False)
+
+        # create background
+        # shuffle regions in genome to create background (keep them in the same chromossome)
+        background = self.sites.shuffle(genome='hg19', chrom=True)
+        # count state frequency
+        states_cd19 = pybedtools.BedTool(os.path.join(self.data_dir, "E032_15_coreMarks_mnemonics.bed"))
+        background = background.intersect(states_cd19, wa=True, wb=True).to_dataframe()[['chrom', 'start', 'end', 'thickStart']]
+        background = Counter(background['thickStart'])
+        backround = pd.DataFrame([background.keys(), background.values()]).T
+
+        fig, axis = plt.subplots(2, sharex=True)
+        sns.barplot(x=0, y=1, data=data, ax=axis[0])
+        sns.barplot(x=0, y=1, data=background, ax=axis[1])
+        axis.set_xlabel("chromatin states")
+        axis.set_ylabel("frequency")
+
+        fig.autofmt_xdate()
+        fig.savefig(os.path.join(self.plots_dir, "all_sample_peaks.chromatin_states.pdf"), bbox_inches="tight")
 
         # Plot chromatin classes
         # count state frequency
@@ -740,13 +807,13 @@ else:
 
 # Annotate peaks with closest gene
 if generate:
-    analysis.annotate_peak_gene()
+    analysis.get_peak_gene()
 else:
     analysis.closest_gene = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.closest_gene.csv"))
 
 # Annotate peaks with ChromHMM state from CD19 cells
 if generate:
-    analysis.annotate_peak_chromstate()
+    analysis.get_peak_chromstate()
 else:
     analysis.chrom_states = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.chromatin_state.csv"))
 
@@ -762,9 +829,10 @@ if generate:
 else:
     analysis.rpkm = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t")
 
-# Get variance measurements across samples
+# Annotate peaks with closest gene, chromatin state,
+# genomic location, mean and variance measurements across samples
 if generate:
-    analysis.rpkm_variance()
+    analysis.annotate_rpkm()
 
 # Plot rpkm features across peaks/samples
 if generate:
