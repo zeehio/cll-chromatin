@@ -889,13 +889,7 @@ results_dir = os.path.join('.', "results")
 plots_dir = os.path.join(results_dir, "plots")
 
 # Get clinical info
-clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation.csv"))
-attributes = [
-    "patient_id", "sample_id", "timepoint",
-    "igvh_mutation_status", "patient_gender", "sample_viability",
-    "patient_birth_date", "diagnosis_date"
-]
-clinical = clinical[attributes].drop_duplicates()
+clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation2.csv"))
 
 # Start project
 # prj = pickle.load(open("prj.pickle", 'rb'))
@@ -989,13 +983,13 @@ if generate:
     t = 2
     analysis.filter_rpkm(t, method="rpkm")
 
-    n = 3
+    n = 10
     analysis.filter_rpkm(3, method="support")
 
     data = pd.merge(analysis.rpkm_filtered, analysis.chrom_states, on=['chrom', 'start', 'end'])
 
     analysis.pca_analysis(data[[sample.name for sample in analysis.samples]])
-    analysis.plot_pca(suffix="mean>%i" % t)
+    analysis.plot_pca(suffix="support>%i" % n)
 
     # Filter peaks based on sd
     n = 100
