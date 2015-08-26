@@ -292,7 +292,7 @@ class Analysis(object):
 
     def filter_rpkm(self, x, method="rpkm"):
         if method == "rpkm":
-            self.rpkm_filtered = self.rpkm[self.rpkm_annotated['mean'] > x]
+            self.rpkm_filtered = self.rpkm_annotated[self.rpkm_annotated['mean'] > x]
         elif method == "support":
             # this assumes x represents a minimum of samples
             # therefore we need to calculate
@@ -801,9 +801,9 @@ def annotate_treatments(samples, clinical):
             if sample_c['treated'] == "Y":
                 sample.treatment_active = True
                 # if sample is treated, find out which treatment based on timepoint
-                sample.treatment_type = sample_c['treatment_%i_regimen' % t]
+                sample.treatment_type = sample_c['treatment_%i_regimen' % sample.timepoint]
                 # CR, GR, PR, NR in this order of 'goodness'
-                sample.treatment_response = sample_c['treatment_%i_response' % t]
+                sample.treatment_response = sample_c['treatment_%i_response' % sample.timepoint]
             elif sample_c['treated'] == "N":
                 sample.treatment_active = False
                 sample.treatment_type = None
@@ -889,7 +889,7 @@ results_dir = os.path.join('.', "results")
 plots_dir = os.path.join(results_dir, "plots")
 
 # Get clinical info
-clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation2.csv"))
+clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation.csv"))
 
 # Start project
 # prj = pickle.load(open("prj.pickle", 'rb'))
@@ -979,43 +979,48 @@ if generate:
 # Try to separate samples in 2D space
 if generate:
     # PCA
-    # Decide on low-end threshold based on the elbow method
-    t = 2
-    analysis.filter_rpkm(t, method="rpkm")
 
-    n = 10
-    analysis.filter_rpkm(3, method="support")
+    # try different filtering strategies:
+    # - based on rpkm cut-off (decide on low-end threshold based on the elbow method)
+    # - based on peak support
+    filters = [
+        ("rpkm", 1.25), ("rpkm", 1.87), ("rpkm", 3),
+        ("support", 2), ("support", 5), ("support", 10), ("support", 20)]
 
-    data = pd.merge(analysis.rpkm_filtered, analysis.chrom_states, on=['chrom', 'start', 'end'])
+    for method, threshold in filters:
+        analysis.filter_rpkm(threshold, method=method)
 
-    analysis.pca_analysis(data[[sample.name for sample in analysis.samples]])
-    analysis.plot_pca(suffix="support>%i" % n)
+        filtering_name = ">".join([method, str(threshold)])
 
-    # Filter peaks based on sd
-    n = 100
-    atacseq_samples = [sample for sample in analysis.samples if sample.technique == "ATAC-seq"]
-    most_variable_data = data.sort(["dispersion"], ascending=False).head(n)
-    analysis.pca_analysis(most_variable_data[[sample.name for sample in analysis.samples]])
-    analysis.plot_pca(suffix="mostdispersion")
+        # Plot
+        analysis.pca_analysis(analysis.rpkm_filtered[[sample.name for sample in analysis.samples]])
+        analysis.plot_pca(suffix="%s_all" % filtering_name)
 
-    most_variable_data = data.sort(["qv2"], ascending=False).head(n)
-    analysis.pca_analysis(most_variable_data[[sample.name for sample in analysis.samples]])
-    analysis.plot_pca(suffix="mostqv2")
+        # Get n most variable peaks (based on dispersion)
+        n = 1000
+        most_variable_data = analysis.rpkm_filtered.sort(["dispersion"], ascending=False).head(n)
+        analysis.pca_analysis(most_variable_data[[sample.name for sample in analysis.samples]])
+        analysis.plot_pca(suffix="%s_mostdispersion" % filtering_name)
+        # Get n most variable peaks (based on qv2)
+        most_variable_data = analysis.rpkm_filtered.sort(["qv2"], ascending=False).head(n)
+        analysis.pca_analysis(most_variable_data[[sample.name for sample in analysis.samples]])
+        analysis.plot_pca(suffix="%s_mostqv2" % filtering_name)
 
-    # Use only Promoters
-    promoter_data = data.ix[data['chromatin_state'].str.contains("Tss")]
-    analysis.pca_analysis(promoter_data[[sample.name for sample in analysis.samples]])
-    analysis.plot_pca(suffix="promoters")
+        # All data
+        # use only Promoters
+        promoter_data = analysis.rpkm_filtered.ix[analysis.rpkm_filtered['chromatin_state'].str.contains("Tss")]
+        analysis.pca_analysis(promoter_data[[sample.name for sample in analysis.samples]])
+        analysis.plot_pca(suffix="%s_promoters" % filtering_name)
 
-    # Use only Enhancers
-    enhancer_data = data.ix[data['chromatin_state'].str.contains("Enh")]
-    analysis.pca_analysis(enhancer_data[[sample.name for sample in analysis.samples]])
-    analysis.plot_pca(suffix="enhancers")
+        # use only Enhancers
+        enhancer_data = analysis.rpkm_filtered.ix[analysis.rpkm_filtered['chromatin_state'].str.contains("Enh")]
+        analysis.pca_analysis(enhancer_data[[sample.name for sample in analysis.samples]])
+        analysis.plot_pca(suffix="%s_enhancers" % filtering_name)
 
-    # MDS
-    # X most variable sites
-    analysis.mds_analysis(most_variable_data[[sample.name for sample in analysis.samples]])
-    analysis.plot_mds(n)
+        # MDS
+        # n most variable sites
+        analysis.mds_analysis(most_variable_data[[sample.name for sample in analysis.samples]])
+        analysis.plot_mds(n, suffix="%s" % filtering_name)
 
 # COMPARISON mCLL - uCLL
 # test if sites come from same population based on rpkm values
