@@ -296,8 +296,8 @@ class Analysis(object):
         elif method == "support":
             # this assumes x represents a minimum of samples
             # therefore we need to calculate
-            n = len([s for s in self.samples if (s.cellLine == "CLL" and s.technique == "ATAC-seq")])
-            self.rpkm_filtered = self.rpkm[self.rpkm_annotated['support'] > x * n]
+            n = float(len([s for s in self.samples if (s.cellLine == "CLL" and s.technique == "ATAC-seq")]))
+            self.rpkm_filtered = self.rpkm_annotated[self.rpkm_annotated['support'] > x / n]
 
     def pca_analysis(self, data):
         # PCA
@@ -782,6 +782,46 @@ def annotate_igvh_mutations(samples, clinical):
     return new_samples
 
 
+def annotate_treatments(samples, clinical):
+    """
+    Annotate samples with timepoint, treatment_status, treatment_type
+    """
+    new_samples = list()
+
+    for sample in samples:
+        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
+            # get sample id
+            _id = name_to_sample_id(sample.name)
+            # get corresponding series from "clinical"
+            sample_c = clinical[clinical['sample_id'] == _id].squeeze()
+            # add timepoint
+            sample.timepoint = sample_c.timepoint
+            # add time since diagnosis
+            sample.time_since_diagnosis = pd.to_datetime(sample_c['treatment_%i_date' % sample.timepoint]) - pd.to_datetime(sample_c['diagnosis_date'])
+            if sample_c['treated'] == "Y":
+                sample.treatment_active = True
+                # if sample is treated, find out which treatment based on timepoint
+                sample.treatment_type = sample_c['treatment_%i_regimen' % t]
+                # CR, GR, PR, NR in this order of 'goodness'
+                sample.treatment_response = sample_c['treatment_%i_response' % t]
+            elif sample_c['treated'] == "N":
+                sample.treatment_active = False
+                sample.treatment_type = None
+                sample.treatment_response = None
+            elif pd.isnull(sample_c.treated):
+                sample.treatment_active = None
+                sample.treatment_type = None
+                sample.treatment_response = None
+        else:
+            sample.timepoint = None
+            sample.treatment_active = None
+            sample.treatment_type = None
+            sample.treatment_response = None
+            sample.time_since_diagnosis = None
+        new_samples.append(sample)
+    return new_samples
+
+
 def hexbin(x, y, color, **kwargs):
     cmap = sns.light_palette(color, as_cmap=True)
     plt.hexbin(x, y, gridsize=15, cmap=cmap, **kwargs)
@@ -867,6 +907,9 @@ prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 # Select ATAC-seq samples
 prj.samples = annotate_igvh_mutations(prj.samples, clinical)
 
+# Annotate with clinical data
+prj.samples = annotate_treatments(prj.samples, clinical)
+
 # Start analysis object
 # only with ATAC-seq samples
 analysis = Analysis(
@@ -944,7 +987,10 @@ if generate:
     # PCA
     # Decide on low-end threshold based on the elbow method
     t = 2
-    analysis.filter_rpkm(t)
+    analysis.filter_rpkm(t, method="rpkm")
+
+    n = 3
+    analysis.filter_rpkm(3, method="support")
 
     data = pd.merge(analysis.rpkm_filtered, analysis.chrom_states, on=['chrom', 'start', 'end'])
 
