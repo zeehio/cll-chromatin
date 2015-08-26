@@ -290,8 +290,14 @@ class Analysis(object):
 
         self.rpkm_annotated.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.rpkm.annotated.tsv"), sep="\t", index=False)
 
-    def filter_rpkm(self, x):
+    def filter_rpkm(self, x, method="rpkm"):
+        if method == "rpkm":
             self.rpkm_filtered = self.rpkm[self.rpkm_annotated['mean'] > x]
+        elif method == "support":
+            # this assumes x represents a minimum of samples
+            # therefore we need to calculate
+            n = len([s for s in self.samples if (s.cellLine == "CLL" and s.technique == "ATAC-seq")])
+            self.rpkm_filtered = self.rpkm[self.rpkm_annotated['support'] > x * n]
 
     def pca_analysis(self, data):
         # PCA
