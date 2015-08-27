@@ -258,6 +258,19 @@ class Analysis(object):
 
         self.rpkm.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t", index=False)
 
+    # @pickle_me
+    def normalize_coverage_quantiles(self):
+        # Normalize by feature length (Reads per kilobase)
+        to_norm = self.coverage[[sample.name for sample in self.samples]]
+        self.coverage_qnorm = pd.DataFrame(
+            normalize_quantiles(np.array(to_norm)),
+            index=to_norm.index,
+            columns=to_norm.columns
+        )
+        self.coverage_qnorm = self.coverage_qnorm.join(self.coverage[['chrom', 'start', 'end']])
+
+        self.coverage_qnorm.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.coverage_qnorm.tsv"), sep="\t", index=False)
+
     def log_rpkm(self):
         # Log2 transform
         self.rpkm[[sample.name for sample in self.samples]] = np.log2(1 + self.rpkm[[sample.name for sample in self.samples]])
@@ -756,6 +769,19 @@ def normalize_by_library_size(series, samples, rm_mt=True):
         return (series / size) * 1e6
 
 
+def normalize_quantiles(array):
+    """
+    array with samples in the columns and probes across the rows
+    """
+    n_array = np.zeros_like(array)
+
+    sort_order = np.argsort(array, axis=0)
+
+    n_array[sort_order, np.arange(array.shape[1])] = np.mean(array[sort_order, np.arange(array.shape[1])], axis=1)[:, np.newaxis]
+
+    return n_array
+
+
 def name_to_repr(name):
     return "_".join([name.split("_")[0]] + [name.split("_")[2]] + name.split("_")[3:4])
 
@@ -989,8 +1015,11 @@ else:
 # normalize coverage values
 if generate:
     analysis.normalize_coverage()
+    analysis.normalize_coverage_quantiles()
 else:
     analysis.rpkm = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t")
+    analysis.coverage_qnorm = pd.read_csv(os.path.join(analysis.data_dir, "all_sample_peaks.concatenated.coverage_qnorm.tsv"), sep="\t")
+
 
 # Annotate peaks with closest gene, chromatin state,
 # genomic location, mean and variance measurements across samples
