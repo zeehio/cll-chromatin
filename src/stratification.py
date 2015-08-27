@@ -204,7 +204,7 @@ class Analysis(object):
         self.all_chrom_state_annotation_background = chrom_state_annotation_b['thickStart'].tolist()
 
     @pickle_me
-    def measure_chromatin_openness(self):
+    def measure_coverage(self):
         # Select ATAC-seq samples
         samples = [s for s in self.prj.samples if type(s) == ATACseqSample]
 
@@ -212,7 +212,7 @@ class Analysis(object):
         # make strings with intervals
         sites_str = [str(i.chrom) + ":" + str(i.start) + "-" + str(i.stop) for i in self.sites]
         # count, create dataframe
-        coverage = pd.DataFrame(
+        self.coverage = pd.DataFrame(
             map(
                 lambda x:
                     pd.Series(x),
@@ -225,8 +225,6 @@ class Analysis(object):
             ),
             index=[sample.name for sample in samples]
         ).T
-        coverage.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.raw_coverage.tsv"), sep="\t", index=True)
-        coverage = pd.read_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.raw_coverage.tsv"), sep="\t", index_col=0)
 
         # Add interval description to df
         ints = map(
@@ -235,19 +233,22 @@ class Analysis(object):
                 x.split(":")[1].split("-")[0],
                 x.split(":")[1].split("-")[1]
             ),
-            coverage.index
+            self.coverage.index
         )
-        coverage["chrom"] = [x[0] for x in ints]
-        coverage["start"] = [int(x[1]) for x in ints]
-        coverage["end"] = [int(x[2]) for x in ints]
+        self.coverage["chrom"] = [x[0] for x in ints]
+        self.coverage["start"] = [int(x[1]) for x in ints]
+        self.coverage["end"] = [int(x[2]) for x in ints]
 
+        # save to disk
+        self.coverage.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.raw_coverage.tsv"), sep="\t", index=True)
+
+    # @pickle_me
+    def normalize_coverage(self):
         # Normalize by feature length (Reads per kilobase)
-        rpk = coverage.apply(normalize_by_interval_length, axis=1)
-        rpk.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.rpk.tsv"), sep="\t", index=True)
-        rpk = pd.read_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.rpk.tsv"), sep="\t", index_col=0)
+        rpk = self.coverage.apply(normalize_by_interval_length, axis=1)
 
         # Normalize by library size - mapped reads (Reads per kilobase per million)
-        rpkm = rpk[[sample.name for sample in samples]].apply(normalize_by_library_size, args=(samples, ), axis=0)
+        rpkm = rpk[[sample.name for sample in self.samples]].apply(normalize_by_library_size, args=(self.samples, ), axis=0)
 
         # Save
         self.rpkm = pd.concat([rpk[["chrom", "start", "end"]], rpkm], axis=1)
@@ -283,16 +284,24 @@ class Analysis(object):
             self.support[['chrom', 'start', 'end', 'support']], on=['chrom', 'start', 'end'])
         # calculate mean rpkm
         self.rpkm_annotated['mean'] = self.rpkm_annotated[[sample.name for sample in atacseq_samples]].apply(lambda x: np.mean(x), axis=1)
+        # calculate variance
+        self.rpkm_annotated['variance'] = self.rpkm_annotated[[sample.name for sample in atacseq_samples]].apply(lambda x: np.var(x), axis=1)
+        # calculate std deviation (sqrt(variance))
+        self.rpkm_annotated['std_deviation'] = np.sqrt(self.rpkm_annotated['variance'])
         # calculate dispersion (variance / mean)
-        self.rpkm_annotated['dispersion'] = self.rpkm_annotated[[sample.name for sample in atacseq_samples]].apply(lambda x: np.var(x) / np.mean(x), axis=1)
-        # calculate qv2
-        self.rpkm_annotated['qv2'] = self.rpkm_annotated[[sample.name for sample in atacseq_samples]].apply(lambda x: (np.std(x) / np.mean(x)) ** 2, axis=1)
+        self.rpkm_annotated['dispersion'] = self.rpkm_annotated['variance'] / self.rpkm_annotated['mean']
+        # calculate qv2 (std / mean) ** 2
+        self.rpkm_annotated['qv2'] = (self.rpkm_annotated['std_deviation'] / self.rpkm_annotated['mean']) ** 2
 
         self.rpkm_annotated.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.rpkm.annotated.tsv"), sep="\t", index=False)
 
-    def filter_rpkm(self, x, method="rpkm"):
+    def filter_rpkm(self, x, method):
         if method == "rpkm":
             self.rpkm_filtered = self.rpkm_annotated[self.rpkm_annotated['mean'] > x]
+        elif method == "std":
+            # this assumes x represents x times the value
+            # of the standard deviation for a given peak
+            self.rpkm_filtered = self.rpkm_annotated[self.rpkm_annotated['std_deviation'] > x]
         elif method == "support":
             # this assumes x represents a minimum of samples
             # therefore we need to calculate
@@ -411,6 +420,30 @@ class Analysis(object):
             data,
             id_vars=["chrom", "start", "end", 'mean', 'dispersion', 'qv2',
                      'gene_name', 'genomic_region', 'chromatin_state', 'support'], var_name="sample", value_name="rpkm")
+
+        # Together in same violin plot
+        # rpkm
+        sns.violinplot("genomic_region", "rpkm", data=data_melted)
+        plt.savefig(os.path.join(self.plots_dir, "rpkm.per_genomic_region.violinplot.pdf"), bbox_inches="tight")
+        plt.close()
+        sns.violinplot("genomic_region", "rpkm", data=data_melted)
+        plt.savefig(os.path.join(self.plots_dir, "rpkm.chromatin_state.violinplot.pdf"), bbox_inches="tight")
+        plt.close()
+        # dispersion
+        sns.violinplot("genomic_region", "dispersion", data=data_melted)
+        plt.savefig(os.path.join(self.plots_dir, "rpkm.dispersion.per_genomic_region.violinplot.pdf"), bbox_inches="tight")
+        plt.close()
+        sns.violinplot("genomic_region", "dispersion", data=data_melted)
+        plt.savefig(os.path.join(self.plots_dir, "rpkm.dispersion.chromatin_state.violinplot.pdf"), bbox_inches="tight")
+        plt.close()
+        # dispersion
+        sns.violinplot("genomic_region", "dispersion", data=data_melted)
+        plt.savefig(os.path.join(self.plots_dir, "rpkm.dispersion.per_genomic_region.violinplot.pdf"), bbox_inches="tight")
+        plt.close()
+
+        sns.violinplot("genomic_region", "dispersion", data=data_melted)
+        plt.savefig(os.path.join(self.plots_dir, "rpkm.dispersion.chromatin_state.violinplot.pdf"), bbox_inches="tight")
+        plt.close()
 
         # separated by variable in one grid
         g = sns.FacetGrid(data_melted, col="genomic_region", col_wrap=3)
@@ -580,7 +613,7 @@ class Analysis(object):
         variance = [np.round(i * 100, 0) for i in self.pca.explained_variance_ratio_]
 
         # dependent on igvh status
-        colors = samples_to_color(samples)
+        colors = samples_to_color(self.samples)
 
         # plot
         fig, axis = plt.subplots(nrows=2, ncols=2)
@@ -656,7 +689,7 @@ class Analysis(object):
 
     def plot_mds(self, n, suffix=""):
         # get unique colors
-        colors = samples_to_color(samples)
+        colors = samples_to_color(self.samples)
 
         # plot
         fig, axis = plt.subplots(1)
@@ -947,9 +980,15 @@ else:
 
 
 # WORK WITH "OPENNESS"
-# Get RPKM values for each peak in each sample
+# Get coverage values for each peak in each sample
 if generate:
-    analysis.measure_chromatin_openness()
+    analysis.measure_coverage()
+else:
+    analysis.coverage = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.raw_coverage.tsv"), sep="\t", index_col=0)
+
+# normalize coverage values
+if generate:
+    analysis.normalize_coverage()
 else:
     analysis.rpkm = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t")
 
@@ -985,7 +1024,8 @@ if generate:
     # - based on peak support
     filters = [
         ("rpkm", 1.25), ("rpkm", 1.87), ("rpkm", 3),
-        ("support", 2), ("support", 5), ("support", 10), ("support", 20)]
+        ("support", 2), ("support", 5), ("support", 10), ("support", 20),
+        ("std", 1)]
 
     for method, threshold in filters:
         analysis.filter_rpkm(threshold, method=method)
