@@ -22,7 +22,7 @@ from sklearn.decomposition import RandomizedPCA
 from sklearn.manifold import MDS
 from scipy.cluster.hierarchy import dendrogram
 from scipy.stats import mannwhitneyu
-# from statsmodels.sandbox.stats.multicomp import multipletests
+from statsmodels.sandbox.stats.multicomp import multipletests
 import itertools
 import cPickle as pickle
 from collections import Counter
@@ -913,6 +913,37 @@ def annotate_treatments(samples, clinical):
     return new_samples
 
 
+def annotate_gender(samples, clinical):
+    new_samples = list()
+
+    for sample in samples:
+        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
+            _id = name_to_sample_id(sample.name)
+            if clinical.loc[clinical['sample_id'] == _id, 'patient_gender'].tolist()[0] == "F":
+                sample.patient_gender = "F"
+            elif clinical.loc[clinical['sample_id'] == _id, 'patient_gender'].tolist()[0] == "M":
+                sample.patient_gender = "M"
+            else:
+                sample.patient_gender = None
+        else:
+            sample.patient_gender = None
+        new_samples.append(sample)
+    return new_samples
+
+
+def annotate_mutations(samples, clinical):
+    new_samples = list()
+
+    for sample in samples:
+        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
+            _id = name_to_sample_id(sample.name)
+            sample.mutations = clinical[clinical['sample_id'] == _id]['mutations'].tolist()[0]
+        else:
+            sample.mutations = None
+        new_samples.append(sample)
+    return new_samples
+
+
 def hexbin(x, y, color, **kwargs):
     cmap = sns.light_palette(color, as_cmap=True)
     plt.hexbin(x, y, gridsize=15, cmap=cmap, **kwargs)
@@ -988,13 +1019,11 @@ clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation.csv"))
 prj = Project("cll-patients")
 prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
-# Annotate with igvh mutated status
-# add "mutated" attribute to sample depending on IGVH mutation status
-# Select ATAC-seq samples
-prj.samples = annotate_igvh_mutations(prj.samples, clinical)
-
 # Annotate with clinical data
+prj.samples = annotate_igvh_mutations(prj.samples, clinical)
 prj.samples = annotate_treatments(prj.samples, clinical)
+prj.samples = annotate_mutations(prj.samples, clinical)
+
 
 # Start analysis object
 # only with ATAC-seq samples
@@ -1126,20 +1155,47 @@ if generate:
         analysis.plot_mds(n, suffix="%s" % filtering_name)
 
 # COMPARISON mCLL - uCLL
-# test if sites come from same population based on rpkm values
-pvalues = analysis.rpkm.apply(
-    lambda x: mannwhitneyu(
-        x.loc[[sample.name for sample in samples if sample.mutated]],
-        x.loc[[sample.name for sample in samples if not sample.mutated]])[1],
-    axis=1
-)
+# test if sites come from same population based on normalized, loged2, coverage values
+features = [
+    "mutated", (True, False),  # igvh mutation
+    "patient_gender", ("F", "M"),  # gender
+    "", ("", ""),  # treat/untreated
+]
 
-# correct for multiple testing
-# qvalues = pd.Series(multipletests(pvalues)[1])
+for feature, (group1, group2) in features:
+    g1 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group1]]
+    g2 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group2]]
 
-# get differential sites
-significant = analysis.rpkm.ix[pvalues[pvalues < 0.0001].index][[sample.name for sample in analysis.samples]]
-significant.to_csv(os.path.join(data_dir, "dors.mutated_vs_unmutated.tsv"), sep="\t", index=False)
+    p_values = list()
+    for i in range(len(analysis.coverage_qnorm_annotated)):
+        p_values.append(mannwhitneyu(g1.ix[i], g2.ix[i])[1])
+
+    q_values = pd.Series(multipletests(p_values)[1])
+
+    # add to annotation
+    analysis.coverage_qnorm_annotated["p_value_" + feature] = p_values
+    analysis.coverage_qnorm_annotated["q_value_" + feature] = q_values
+
+
+allmuts = ['SF3B1', 'ATM', 'del13', 'del11q', 'tri12', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
+for mut in allmuts:
+    g1 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if mut in str(sample.mutations)]]
+    g2 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if mut not in str(sample.mutations)]]
+
+    p_values = list()
+    for i in range(len(analysis.coverage_qnorm_annotated)):
+        p_values.append(mannwhitneyu(g1.ix[i], g2.ix[i])[1])
+
+    q_values = pd.Series(multipletests(p_values)[1])
+
+    # add to annotation
+    analysis.coverage_qnorm_annotated["p_value_" + mut] = p_values
+    analysis.coverage_qnorm_annotated["q_value_" + mut] = q_values
+
+
+# get all differential sites
+# significant = analysis.coverage_qnorm_annotated[analysis.coverage_qnorm_annotated["p_value_" + mut] < 0.05]
+# significant.to_csv(os.path.join(data_dir, "dors.mutated_vs_unmutated.tsv"), sep="\t", index=False)
 
 # correlate samples on significantly different sites
 sns.clustermap(
@@ -1186,21 +1242,21 @@ samples = new_samples
 
 # Repeat again independence test and
 # get all differential sites (from 3 comparisons)
-all_pvalues = pd.DataFrame()
+all_p_values = pd.DataFrame()
 for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
-    pvalues = pd.DataFrame(analysis.rpkm.apply(
+    p_values = pd.DataFrame(analysis.rpkm.apply(
         lambda x: mannwhitneyu(
             x.loc[[sample.name for sample in samples if sample.cluster == "r"]],
             x.loc[[sample.name for sample in samples if sample.cluster == "g"]])[1],
         axis=1
     ))
-    pvalues['comparison'] = "-".join([g1, g2])
-    all_pvalues = pd.concat([all_pvalues, pvalues])
+    p_values['comparison'] = "-".join([g1, g2])
+    all_p_values = pd.concat([all_p_values, p_values])
 
-all_pvalues.columns = ['p', 'comparison']
-all_pvalues.to_csv(os.path.join("data", "dors.3_populations.pvalues.tsv"), sep="\t", index=False)
+all_p_values.columns = ['p', 'comparison']
+all_p_values.to_csv(os.path.join("data", "dors.3_populations.p_values.tsv"), sep="\t", index=False)
 
-all_significant = analysis.rpkm.ix[all_pvalues[all_pvalues['p'] < 0.000001].index].drop_duplicates()
+all_significant = analysis.rpkm.ix[all_p_values[all_p_values['p'] < 0.000001].index].drop_duplicates()
 
 all_significant.to_csv(os.path.join("data", "dors.3_populations.significant.tsv"), sep="\t", index=False)
 
@@ -1225,9 +1281,9 @@ plt.savefig(os.path.join(plots_dir, "dors.3_populations.clustering.pdf"), bbox_i
 for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
     comparison = "-".join([g1, g2])
     specific = analysis.rpkm.loc[
-        all_pvalues[
-            (all_pvalues['p'] < 0.000001) &
-            (all_pvalues['comparison'] == comparison)
+        all_p_values[
+            (all_p_values['p'] < 0.000001) &
+            (all_p_values['comparison'] == comparison)
         ].index,
         ['chrom', 'start', 'end']
     ].drop_duplicates()
