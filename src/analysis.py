@@ -4,6 +4,7 @@
 This script makes plots to ilustrate the stratification between CLL patients.
 """
 
+import recipy
 import os
 from pipelines.models import Project, ATACseqSample
 import pybedtools
@@ -84,8 +85,8 @@ class Analysis(object):
         # remove blacklist regions
         blacklist = pybedtools.BedTool(os.path.join(self.data_dir, "wgEncodeDacMapabilityConsensusExcludable.bed"))
         # remove chrM peaks and save
-        sites = sites.intersect(v=True, b=blacklist).filter(lambda x: x.chrom != 'chrM').saveas(os.path.join(self.data_dir, "all_sample_peaks.concatenated.bed"))
-        sites = pybedtools.BedTool(os.path.join(self.data_dir, "all_sample_peaks.concatenated.bed"))
+        sites = sites.intersect(v=True, b=blacklist).filter(lambda x: x.chrom != 'chrM').saveas(os.path.join(self.data_dir, "cll_peaks.bed"))
+        sites = pybedtools.BedTool(os.path.join(self.data_dir, "cll_peaks.bed"))
 
         # Store
         self.sites = sites
@@ -105,8 +106,8 @@ class Analysis(object):
         # divide sum (of unique overlaps) by total to get support value between 0 and 1
         support["support"] = support[range(len(self.samples))].apply(lambda x: sum([i if i <= 1 else 1 for i in x]) / float(len(self.samples)), axis=1)
         # save
-        support.to_csv(os.path.join(self.data_dir, "all_sample_peaks.support.csv"), index=False)
-        support = pd.read_csv(os.path.join(self.data_dir, "all_sample_peaks.support.csv"))
+        support.to_csv(os.path.join(self.data_dir, "cll_peaks.support.csv"), index=False)
+        support = pd.read_csv(os.path.join(self.data_dir, "cll_peaks.support.csv"))
 
         self.support = support
 
@@ -131,7 +132,7 @@ class Analysis(object):
         self.gene_annotation = pd.merge(gene_annotation, ensembl_gtp)
 
         # save to disk
-        self.gene_annotation.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.gene_annotation.csv"), index=False)
+        self.gene_annotation.to_csv(os.path.join(self.data_dir, "cll_peaks.gene_annotation.csv"), index=False)
 
         # save distances to all TSSs (for plotting)
         self.closest_tss_distances = closest['blockCount'].tolist()
@@ -174,7 +175,7 @@ class Analysis(object):
         self.region_annotation = region_annotation.groupby(['chrom', 'start', 'end']).aggregate(lambda x: ",".join(set([str(i) for i in x]))).reset_index()
 
         # save to disk
-        self.region_annotation.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.region_annotation.csv"), index=False)
+        self.region_annotation.to_csv(os.path.join(self.data_dir, "cll_peaks.region_annotation.csv"), index=False)
 
         # keep long list of regions for plotting later
         self.all_region_annotation = region_annotation['genomic_region']
@@ -197,7 +198,7 @@ class Analysis(object):
         self.chrom_state_annotation.columns = ['chrom', 'start', 'end', 'chromatin_state']
 
         # save to disk
-        self.chrom_state_annotation.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.chromatin_state.csv"), index=False)
+        self.chrom_state_annotation.to_csv(os.path.join(self.data_dir, "cll_peaks.chromatin_state.csv"), index=False)
 
         # # keep long list of chromatin states (for plotting)
         self.all_chrom_state_annotation = chrom_state_annotation['thickStart'].tolist()
@@ -240,7 +241,7 @@ class Analysis(object):
         self.coverage["end"] = [int(x[2]) for x in ints]
 
         # save to disk
-        self.coverage.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.raw_coverage.tsv"), sep="\t", index=True)
+        self.coverage.to_csv(os.path.join(self.data_dir, "cll_peaks.raw_coverage.tsv"), sep="\t", index=True)
 
     # @pickle_me
     def normalize_coverage(self):
@@ -256,57 +257,62 @@ class Analysis(object):
         # calculate log
         self.log_rpkm()
 
-        self.rpkm.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t", index=False)
+        self.rpkm.to_csv(os.path.join(self.data_dir, "cll_peaks.rpkm.tsv"), sep="\t", index=False)
 
     # @pickle_me
     def normalize_coverage_quantiles(self):
-        # Normalize by feature length (Reads per kilobase)
+        # Normalize by quantiles
         to_norm = self.coverage[[sample.name for sample in self.samples]]
         self.coverage_qnorm = pd.DataFrame(
-            normalize_quantiles(np.array(to_norm)),
+            normalize_quantiles_r(np.array(to_norm)),
             index=to_norm.index,
             columns=to_norm.columns
         )
-        self.coverage_qnorm = self.coverage_qnorm.join(self.coverage[['chrom', 'start', 'end']])
+        # Log2 transform
+        self.coverage_qnorm = np.log2(1 + self.coverage_qnorm)
 
-        self.coverage_qnorm.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.coverage_qnorm.tsv"), sep="\t", index=False)
+        self.coverage_qnorm = self.coverage_qnorm.join(self.coverage[['chrom', 'start', 'end']])
+        self.coverage_qnorm.to_csv(os.path.join(self.data_dir, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t", index=False)
 
     def log_rpkm(self):
         # Log2 transform
         self.rpkm[[sample.name for sample in self.samples]] = np.log2(1 + self.rpkm[[sample.name for sample in self.samples]])
 
     @pickle_me
-    def annotate_rpkm(self):
-        atacseq_samples = [sample for sample in self.samples if sample.technique == "ATAC-seq"]
+    def annotate(self):
+        atacseq_samples = [sample for sample in self.samples if sample.cellLine == "CLL"]
 
         # add closest gene
-        self.rpkm_annotated = pd.merge(
-            self.rpkm,
+        self.coverage_qnorm_annotated = pd.merge(
+            self.coverage_qnorm,
             self.gene_annotation[['chrom', 'start', 'end', 'gene_name']], on=['chrom', 'start', 'end'])
         # add genomic location
-        self.rpkm_annotated = pd.merge(
-            self.rpkm_annotated,
+        self.coverage_qnorm_annotated = pd.merge(
+            self.coverage_qnorm_annotated,
             self.region_annotation[['chrom', 'start', 'end', 'genomic_region']], on=['chrom', 'start', 'end'])
         # add chromatin state
-        self.rpkm_annotated = pd.merge(
-            self.rpkm_annotated,
+        self.coverage_qnorm_annotated = pd.merge(
+            self.coverage_qnorm_annotated,
             self.chrom_state_annotation[['chrom', 'start', 'end', 'chromatin_state']], on=['chrom', 'start', 'end'])
         # add support to rpkm - this is added here because support was calculated prior to rpkms
-        self.rpkm_annotated = pd.merge(
-            self.rpkm_annotated,
+        self.coverage_qnorm_annotated = pd.merge(
+            self.coverage_qnorm_annotated,
             self.support[['chrom', 'start', 'end', 'support']], on=['chrom', 'start', 'end'])
         # calculate mean rpkm
-        self.rpkm_annotated['mean'] = self.rpkm_annotated[[sample.name for sample in atacseq_samples]].apply(lambda x: np.mean(x), axis=1)
+        self.coverage_qnorm_annotated['mean'] = self.coverage_qnorm_annotated[[sample.name for sample in atacseq_samples]].apply(lambda x: np.mean(x), axis=1)
         # calculate variance
-        self.rpkm_annotated['variance'] = self.rpkm_annotated[[sample.name for sample in atacseq_samples]].apply(lambda x: np.var(x), axis=1)
+        self.coverage_qnorm_annotated['variance'] = self.coverage_qnorm_annotated[[sample.name for sample in atacseq_samples]].apply(lambda x: np.var(x), axis=1)
         # calculate std deviation (sqrt(variance))
-        self.rpkm_annotated['std_deviation'] = np.sqrt(self.rpkm_annotated['variance'])
+        self.coverage_qnorm_annotated['std_deviation'] = np.sqrt(self.coverage_qnorm_annotated['variance'])
         # calculate dispersion (variance / mean)
-        self.rpkm_annotated['dispersion'] = self.rpkm_annotated['variance'] / self.rpkm_annotated['mean']
+        self.coverage_qnorm_annotated['dispersion'] = self.coverage_qnorm_annotated['variance'] / self.coverage_qnorm_annotated['mean']
         # calculate qv2 (std / mean) ** 2
-        self.rpkm_annotated['qv2'] = (self.rpkm_annotated['std_deviation'] / self.rpkm_annotated['mean']) ** 2
+        self.coverage_qnorm_annotated['qv2'] = (self.coverage_qnorm_annotated['std_deviation'] / self.coverage_qnorm_annotated['mean']) ** 2
 
-        self.rpkm_annotated.to_csv(os.path.join(self.data_dir, "all_sample_peaks.concatenated.rpkm.annotated.tsv"), sep="\t", index=False)
+        # calculate "fold-change" (max - min)
+        self.coverage_qnorm_annotated['fold_change'] = self.coverage_qnorm_annotated[[sample.name for sample in atacseq_samples]].apply(lambda x: x.max() - x.min(), axis=1)
+
+        self.coverage_qnorm_annotated.to_csv(os.path.join(self.data_dir, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t", index=False)
 
     def filter_rpkm(self, x, method):
         if method == "rpkm":
@@ -357,20 +363,20 @@ class Analysis(object):
         sns.distplot([interval.length for interval in self.sites], bins=300, kde=False, ax=axis)
         axis.xlabel("peak width (bp)")
         axis.ylabel("frequency")
-        fig.savefig(os.path.join(self.plots_dir, "all_sample_peaks.lengths.pdf"), bbox_inches="tight")
+        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.lengths.pdf"), bbox_inches="tight")
 
         # plot support
         fig, axis = plt.subplots()
         sns.distplot(self.support["support"], bins=40, ax=axis)
         axis.ylabel("frequency")
-        fig.savefig(os.path.join(self.plots_dir, "all_sample_peaks.support.pdf"), bbox_inches="tight")
+        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.support.pdf"), bbox_inches="tight")
 
         # Plot distance to nearest TSS
         fig, axis = plt.subplots()
         sns.distplot(self.closest_tss_distances, bins=200, ax=axis)
         axis.set_xlabel("distance to nearest TSS (bp)")
         axis.set_ylabel("frequency")
-        fig.savefig(os.path.join(self.plots_dir, "all_sample_peaks.tss_distance.pdf"), bbox_inches="tight")
+        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.tss_distance.pdf"), bbox_inches="tight")
 
         # Plot genomic regions
         # count region frequency
@@ -393,7 +399,7 @@ class Analysis(object):
 
         fig.autofmt_xdate()
         fig.tight_layout()
-        fig.savefig(os.path.join(self.plots_dir, "all_sample_peaks.genomic_regions.pdf"), bbox_inches="tight")
+        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.genomic_regions.pdf"), bbox_inches="tight")
 
         # Plot chromatin states
         # count region frequency
@@ -416,10 +422,11 @@ class Analysis(object):
 
         fig.autofmt_xdate()
         fig.tight_layout()
-        fig.savefig(os.path.join(self.plots_dir, "all_sample_peaks.chromatin_states.pdf"), bbox_inches="tight")
+        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.chromatin_states.pdf"), bbox_inches="tight")
 
     def plot_rpkm(self):
-        data = self.rpkm_annotated.copy()
+        # data = self.rpkm_annotated.copy()
+        data = self.coverage_qnorm_annotated.copy()
         # (rewrite to avoid putting them there in the first place)
         for variable in ['gene_name', 'genomic_region', 'chromatin_state']:
             d = data[variable].str.split(',').apply(pd.Series).stack()  # separate comma-delimited fields
@@ -432,61 +439,61 @@ class Analysis(object):
         data_melted = pd.melt(
             data,
             id_vars=["chrom", "start", "end", 'mean', 'dispersion', 'qv2',
-                     'gene_name', 'genomic_region', 'chromatin_state', 'support'], var_name="sample", value_name="rpkm")
+                     'gene_name', 'genomic_region', 'chromatin_state', 'support'], var_name="sample", value_name="norm_counts")
 
         # Together in same violin plot
         # rpkm
-        sns.violinplot("genomic_region", "rpkm", data=data_melted)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm.per_genomic_region.violinplot.pdf"), bbox_inches="tight")
+        sns.violinplot("genomic_region", "norm_counts", data=data_melted)
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.per_genomic_region.violinplot.pdf"), bbox_inches="tight")
         plt.close()
-        sns.violinplot("genomic_region", "rpkm", data=data_melted)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm.chromatin_state.violinplot.pdf"), bbox_inches="tight")
-        plt.close()
-        # dispersion
-        sns.violinplot("genomic_region", "dispersion", data=data_melted)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm.dispersion.per_genomic_region.violinplot.pdf"), bbox_inches="tight")
-        plt.close()
-        sns.violinplot("genomic_region", "dispersion", data=data_melted)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm.dispersion.chromatin_state.violinplot.pdf"), bbox_inches="tight")
+        sns.violinplot("genomic_region", "norm_counts", data=data_melted)
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.chromatin_state.violinplot.pdf"), bbox_inches="tight")
         plt.close()
         # dispersion
         sns.violinplot("genomic_region", "dispersion", data=data_melted)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm.dispersion.per_genomic_region.violinplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.per_genomic_region.violinplot.pdf"), bbox_inches="tight")
+        plt.close()
+        sns.violinplot("genomic_region", "dispersion", data=data_melted)
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.chromatin_state.violinplot.pdf"), bbox_inches="tight")
+        plt.close()
+        # dispersion
+        sns.violinplot("genomic_region", "dispersion", data=data_melted)
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.per_genomic_region.violinplot.pdf"), bbox_inches="tight")
         plt.close()
 
         sns.violinplot("genomic_region", "dispersion", data=data_melted)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm.dispersion.chromatin_state.violinplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.chromatin_state.violinplot.pdf"), bbox_inches="tight")
         plt.close()
 
         # separated by variable in one grid
         g = sns.FacetGrid(data_melted, col="genomic_region", col_wrap=3)
         g.map(sns.distplot, "mean", hist=False, rug=False)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm.mean.per_genomic_region.distplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.mean.per_genomic_region.distplot.pdf"), bbox_inches="tight")
         plt.close()
 
         g = sns.FacetGrid(data_melted, col="chromatin_state", col_wrap=3)
         g.map(sns.distplot, "mean", hist=False, rug=False)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm.mean.chromatin_state.distplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.mean.chromatin_state.distplot.pdf"), bbox_inches="tight")
         plt.close()
 
         g = sns.FacetGrid(data_melted, col="genomic_region", col_wrap=3)
         g.map(sns.distplot, "dispersion", hist=False, rug=False)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm.dispersion.per_genomic_region.distplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.per_genomic_region.distplot.pdf"), bbox_inches="tight")
         plt.close()
 
         g = sns.FacetGrid(data_melted, col="chromatin_state", col_wrap=3)
         g.map(sns.distplot, "dispersion", hist=False, rug=False)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm.dispersion.chromatin_state.distplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.chromatin_state.distplot.pdf"), bbox_inches="tight")
         plt.close()
 
         g = sns.FacetGrid(data_melted, col="genomic_region", col_wrap=3)
         g.map(sns.distplot, "support", hist=False, rug=False)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm.support.per_genomic_region.distplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.support.per_genomic_region.distplot.pdf"), bbox_inches="tight")
         plt.close()
 
         g = sns.FacetGrid(data_melted, col="chromatin_state", col_wrap=3)
         g.map(sns.distplot, "support", hist=False, rug=False)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm.support.chromatin_state.distplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.support.chromatin_state.distplot.pdf"), bbox_inches="tight")
         plt.close()
 
         #
@@ -536,6 +543,16 @@ class Analysis(object):
         plt.close('all')
         sns.jointplot('mean', "qv2", data=filtered)
         plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.support_vs_qv2.filtered.pdf"), bbox_inches="tight")
+
+    def plot_qnorm_comparison(self):
+        # Compare raw counts vs qnormalized data
+        fig, axis = plt.subplots(2, sharex=True)
+        [sns.distplot(np.log2(1 + self.coverage[[sample.name]]), ax=axis[0], hist=False) for sample in self.samples if sample.cellLine != "PBMC"]
+        [sns.distplot(self.coverage_qnorm[[sample.name]], ax=axis[1], hist=False) for sample in self.samples if sample.cellLine != "PBMC"]
+        axis[0].set_title("Raw counts")
+        axis[1].set_title("Quantile normalized counts")
+        axis[1].set_xlabel("log2(1 + x)")
+        fig.savefig(os.path.join(self.plots_dir, "coverage_vs_coverage_qnorm.pdf"), bbox_inches="tight")
 
     def plot_qv2_fit(self):
         from scipy.optimize import curve_fit
@@ -618,7 +635,7 @@ class Analysis(object):
             square=True, annot=False,
             figsize=(20, 16)
         )
-        plt.savefig(os.path.join(self.plots_dir, "all_sample_peaks.concatenated.correlation_clustering.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.correlation_clustering.pdf"), bbox_inches="tight")
         plt.close('all')
 
     def plot_pca(self, suffix=""):
@@ -679,7 +696,7 @@ class Analysis(object):
         axis[3].set_ylabel("PC5 - {0}% variance".format(variance[4]))
 
         plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-        plot_path = os.path.join(self.plots_dir, "all_sample_peaks.concatenated.PCA_{0}.pdf".format(suffix))
+        plot_path = os.path.join(self.plots_dir, "cll_peaks.PCA_{0}.pdf".format(suffix))
         fig.savefig(plot_path, bbox_inches="tight")
 
         # 3 components
@@ -697,7 +714,7 @@ class Analysis(object):
         ax.set_ylabel("PC2 - {0}% variance".format(variance[1]))
         ax.set_zlabel("PC3 - {0}% variance".format(variance[2]))
         plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-        plot_path = os.path.join(self.plots_dir, "all_sample_peaks.concatenated.PCA_{0}_3comp.pdf".format(suffix))
+        plot_path = os.path.join(self.plots_dir, "cll_peaks.PCA_{0}_3comp.pdf".format(suffix))
         fig.savefig(plot_path, bbox_inches="tight")
 
     def plot_mds(self, n, suffix=""):
@@ -715,7 +732,7 @@ class Analysis(object):
             )
         axis.set_title("MDS on %i most variable regions" % n)
         plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-        plot_path = os.path.join(self.plots_dir, "all_sample_peaks.concatenated.MDS_{0}.pdf".format(suffix))
+        plot_path = os.path.join(self.plots_dir, "cll_peaks.MDS_{0}.pdf".format(suffix))
         fig.savefig(plot_path, bbox_inches="tight")
 
 
@@ -780,6 +797,21 @@ def normalize_quantiles(array):
     n_array[sort_order, np.arange(array.shape[1])] = np.mean(array[sort_order, np.arange(array.shape[1])], axis=1)[:, np.newaxis]
 
     return n_array
+
+
+def normalize_quantiles_r(array):
+    # install package
+    # R
+    # source('http://bioconductor.org/biocLite.R')
+    # biocLite('preprocessCore')
+
+    import rpy2.robjects as robjects
+    import rpy2.robjects.numpy2ri
+    rpy2.robjects.numpy2ri.activate()
+
+    robjects.r('require("preprocessCore")')
+    normq = robjects.r('normalize.quantiles')
+    return np.array(normq(array))
 
 
 def name_to_repr(name):
@@ -938,6 +970,7 @@ def run_lola(bed_files, universe_file, output_folder):
     # convert the pandas dataframe to an R dataframe
     lola(bed_files, universe_file, output_folder)
 
+to_exclude_sample_id = ['45960']
 
 # Should we regenerate the data?
 generate = False
@@ -978,31 +1011,31 @@ analysis.clinical = clinical
 if generate:
     analysis.get_consensus_sites()
 else:
-    analysis.sites = pybedtools.BedTool(os.path.join(data_dir, "all_sample_peaks.concatenated.bed"))
+    analysis.sites = pybedtools.BedTool(os.path.join(data_dir, "cll_peaks.bed"))
 
 # Calculate peak support
 if generate:
     analysis.calculate_peak_support()
 else:
-    analysis.support = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.support.csv"))
+    analysis.support = pd.read_csv(os.path.join(data_dir, "cll_peaks.support.csv"))
 
 # Annotate peaks with closest gene
 if generate:
     analysis.get_peak_gene_annotation()
 else:
-    analysis.gene_annotation = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.gene_annotation.csv"))
+    analysis.gene_annotation = pd.read_csv(os.path.join(data_dir, "cll_peaks.gene_annotation.csv"))
 
 # Annotate peaks with genomic regions
 if generate:
     analysis.get_peak_genomic_location()
 else:
-    analysis.region_annotation = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.region_annotation.csv"))
+    analysis.region_annotation = pd.read_csv(os.path.join(data_dir, "cll_peaks.region_annotation.csv"))
 
 # Annotate peaks with ChromHMM state from CD19 cells
 if generate:
     analysis.get_peak_chromatin_state()
 else:
-    analysis.chrom_state_annotation = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.chromatin_state.csv"))
+    analysis.chrom_state_annotation = pd.read_csv(os.path.join(data_dir, "cll_peaks.chromatin_state.csv"))
 
 
 # WORK WITH "OPENNESS"
@@ -1010,23 +1043,24 @@ else:
 if generate:
     analysis.measure_coverage()
 else:
-    analysis.coverage = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.raw_coverage.tsv"), sep="\t", index_col=0)
+    analysis.coverage = pd.read_csv(os.path.join(data_dir, "cll_peaks.raw_coverage.tsv"), sep="\t", index_col=0)
 
 # normalize coverage values
 if generate:
     analysis.normalize_coverage()
     analysis.normalize_coverage_quantiles()
 else:
-    analysis.rpkm = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.rpkm.tsv"), sep="\t")
-    analysis.coverage_qnorm = pd.read_csv(os.path.join(analysis.data_dir, "all_sample_peaks.concatenated.coverage_qnorm.tsv"), sep="\t")
+    # analysis.rpkm = pd.read_csv(os.path.join(data_dir, "cll_peaks.rpkm.tsv"), sep="\t")
+    analysis.coverage_qnorm = pd.read_csv(os.path.join(data_dir, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t")
 
 
 # Annotate peaks with closest gene, chromatin state,
 # genomic location, mean and variance measurements across samples
 if generate:
-    analysis.annotate_rpkm()
+    analysis.annotate()
 else:
-    analysis.rpkm_annotated = pd.read_csv(os.path.join(data_dir, "all_sample_peaks.concatenated.rpkm.annotated.tsv"), sep="\t")
+    analysis.coverage_qnorm_annotated = pd.read_csv(os.path.join(data_dir, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
+    # analysis.rpkm_annotated = pd.read_csv(os.path.join(data_dir, "cll_peaks.rpkm.annotated.tsv"), sep="\t")
 
 
 # plot general peak set features
@@ -1201,7 +1235,7 @@ for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
 
 # run lola
 # use all cll sites as universe
-universe_file = os.path.join(data_dir, "all_sample_peaks.concatenated.bed")
+universe_file = os.path.join(data_dir, "cll_peaks.bed")
 
 for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
     comparison = "-".join([g1, g2])
@@ -1229,3 +1263,18 @@ for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
 # Train classifiers on groups
 # Predict for all samples
 # Assess: ROC, AUC
+
+
+# from comparison.py:
+
+# COMPARE CLL WITH NORMAL CELLS
+# we'll have matched B-cells from the patients as well
+
+
+# DE NOVO/CLL-SPECIFIC ENHANCERS
+# Find unique enhancers across CLL samples compared with normal B-cells
+# Search other cell types for overlaping enhancers:
+# - if possitive -> enhancer activation
+# - if negative -> de novo enhancer -> explore mechanism
+# validate with H3K27ac ChIP-seq
+# validate with RNA expression
