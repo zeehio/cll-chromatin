@@ -1,3 +1,12 @@
+#!/usr/bin/env python
+
+"""
+Quantile normalization demonstration on ATAC-seq data from:
+
+Qu, K., Zaba, L. C., Giresi, P. G., Li, R., Longmire, M., Kim, Y. H., … Chang, H. Y. (2015).
+Individuality and Variation of Personal Regulomes in Primary Human T Cells. Cell Systems, 1(1), 51–61
+http://doi.org/10.1016/j.cels.2015.06.003
+"""
 
 import os
 import matplotlib.pyplot as plt
@@ -10,6 +19,9 @@ sns.set_context("paper")
 
 
 def normalize_quantiles_r(array):
+    """
+    Normalize quantiles of a numpy array using the R library preprocessCore.
+    """
     # install package
     # R
     # source('http://bioconductor.org/biocLite.R')
@@ -23,16 +35,18 @@ def normalize_quantiles_r(array):
     normq = robjects.r('normalize.quantiles')
     return np.array(normq(array))
 
-
+# read in raw counts data
 df = pd.read_csv("mergePeaks.raw.txt", sep="\t")
 df = df.reset_index(drop=True)
 df = np.array(df)
 
+# read in already normalized data
 df2 = pd.read_csv("mergePeaks.raw.qnorm.txt", sep="\t")
 df2 = df2.reset_index(drop=True)
 df2 = df2.drop(['Transcript_id', 'GeneSymbol'], axis=1)
 df2 = np.array(df2)
 
+# let's normalize it ourselves as well
 df_qnorm = normalize_quantiles_r(df)
 
 # Compare raw counts vs qnormalized data
@@ -44,7 +58,7 @@ axis[0].set_title("raw")
 axis[1].set_title("their norm")
 axis[2].set_title("our norm")
 
-fig.savefig(os.path.join("cell_systems.coverage_vs_coverage_qnorm.pdf"))
+fig.savefig(os.path.join("cell_systems.coverage_vs_coverage_qnorm.pdf"), bbox_inches="tight")
 
 # four particular site
 fig, axis = plt.subplots(2)
