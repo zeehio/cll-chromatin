@@ -1001,7 +1001,7 @@ def run_lola(bed_files, universe_file, output_folder):
     # convert the pandas dataframe to an R dataframe
     lola(bed_files, universe_file, output_folder)
 
-to_exclude_sample_id = ['45960']
+to_exclude_sample_id = ['1-5-45960']
 
 # Should we regenerate the data?
 generate = False
@@ -1335,3 +1335,33 @@ for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
 # - if negative -> de novo enhancer -> explore mechanism
 # validate with H3K27ac ChIP-seq
 # validate with RNA expression
+
+
+# FOOTPRINTING AND GRNs
+
+def merge_bams(bams):
+    pass
+
+
+to_exclude_sample_id = ['1-5-45960']
+
+muts = list()
+unmuts = list()
+
+for sample in prj.samples:
+    if sample.sampleID in to_exclude_sample_id or sample.technique != "ATAC-seq":
+        continue
+    if sample.mutated:
+        muts.append(sample.filteredshifted)
+    elif not sample.mutated:
+        unmuts.append(sample.filteredshifted)
+
+# merge bams
+
+
+# PIQ output file with (all) usable matches
+# .RC-calls.csv
+
+# filter for purity > 0.7 (optional)
+
+# filter for overlap with peaks

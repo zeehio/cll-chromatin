@@ -6,16 +6,13 @@ gene regulatory networks infered from transcription-factor footprints
 in ATAC-seq data.
 """
 
-import yaml
 import os
 from pipelines.models import Project, ATACseqSample
 import numpy as np
-import HTSeq
-import pybedtools
-import multiprocessing
-import parmap
+import re
 import cPickle as pickle
 import pandas as pd
+import pybedtools
 
 
 def save_pandas(data, fname):
@@ -61,294 +58,174 @@ def load_pandas(fname, mmap_mode='r'):
         return pd.Series(values, index=meta[0])
 
 
-def prepare_motifs():
+def name_to_sample_id(name):
+    return name.split("_")[3:4][0]
+
+
+def annotate_igvh_mutations(samples, clinical):
+    new_samples = list()
+
+    for sample in samples:
+        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
+            _id = name_to_sample_id(sample.name)
+            if clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 1:
+                sample.mutated = True
+            elif clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 2:
+                sample.mutated = False
+            else:
+                sample.mutated = None
+        else:
+            sample.mutated = None
+        new_samples.append(sample)
+    return new_samples
+
+
+def piq_prepare_motifs(motif_file="~/workspace/piq-single/pwms/jasparfix.txt", n_motifs=1316):
     """
-    Prepare motifs for footprinting.
     """
-    motifs_dir = "/data/groups/lab_bock/shared/resources/genomes/hg19/motifs"
     cmds = list()
-
-    # Get ENCODE motif matches
-    cmds.append("wget http://compbio.mit.edu/encode-motifs/matches.txt.gz")  # get motifs
-    cmds.append("gzip -d matches.txt.gz")  # extract
-    cmds.append("tr ' ' \\t < matches.txt > matches.tsv")  # replace spaces with tabs
-    cmds.append("""perl -ane 'print "$F[1]\t$F[2]\t$F[3]\t$F[4]\t$F[0]\n"' matches.tsv > matches.bed""")  # make bed file
-
-    # Run file preparation
-    for cmd in cmds:
-        os.system(cmd)
-
-    # make output dir
-    if not os.path.exists(os.path.join(motifs_dir, "TFs")):
-        os.mkdir(os.path.join(motifs_dir, "TFs"))
-
-    # read master file, split per TF
-    with open("matches.bed", "r") as handle:
-        for line in handle:
-            tf = line.split("\t")[4].split("_")[0]
-            with open(os.path.join("TFs", tf + ".bed"), 'a') as handle2:
-                handle2.write(line)
+    for motif in range(n_motifs):
+        cmd = "Rscript ~/workspace/piq-single/pwmmatch.exact.r"
+        cmd += " ~/workspace/piq-single/common.r"
+        cmd += " {0}".format(motif_file)
+        cmd += " " + str(motif)
+        cmd += " /scratch/users/arendeiro/piq/motif.matches/"
+        cmds.append(cmd)
+    return cmds
 
 
-def prepare_intervals(sites):
-    # Get all TF motifs
-    motifs_files = os.listdir(os.path.join("/data/groups/lab_bock/shared/resources/genomes/hg19/motifs/TFs"))
-    motif_files = [os.path.abspath(os.path.join("/data/groups/lab_bock/shared/resources/genomes/hg19/motifs/TFs", motif)) for motif in motifs_files]
-
-    # intersect motifs with all cll sites
-    for motif_file in motif_files:
-        # read in bedfile
-        motifs = pybedtools.BedTool(motif_file)
-        # get motif name
-        motif_name = os.path.basename(motif_file.split(".")[0])
-
-        # keep only motifs overlaping the consensus set of sites
-        motifs = motifs.intersect(b=sites, u=True)
-
-        # add window around
-        intervals = motifs.slop(b=100, genome="hg19")
-
-        # save new files
-        intervals.saveas(os.path.join(data_dir, 'motifs', motif_name + ".bed"))
-
-
-def truncate_interval(interval, center=True, n=1):
+def piq_prepare_bams(bams, output_cache):
     """
-    Truncate genomic interval to a number of basepairs from its center (if center is True) or its start.
-
-    :param interval: a pybedtools.Interval object.
-    :type interval: pybedtools.Interval
-    :param center: If interval should be truncated to its center position
-    :type center: bool
-    :param n: Number of basepairs to truncate interval to.
-    :type n: int
-    :returns: Truncated pybedtools.Interval object.
-    :rtype: pybedtools.Interval
+    :type bams: list
+    :type output_cache: str
     """
-    if center:
-        center = ((interval.end - interval.start) / 2) + interval.start
-        interval.start = center
-    interval.end = interval.start + n
-    return interval
+    cmd = "Rscript ~/workspace/piq-single/bam2rdata.r ~/workspace/piq-single/common.r {0} ".format(output_cache)
+    cmd += " ".join(bams)
+    return cmd
 
 
-def bedtools_interval_to_genomic_interval(interval):
+def piq_footprint(bam_cache, n_motifs, tmp_dir, results_dir):
     """
-    Given a pybedtools.Interval object, returns a HTSeq.GenomicInterval object.
-
-    :param interval: a pybedtools.Interval object.
-    :type interval: pybedtools.Interval
-    :returns: HTSeq.GenomicInterval object.
-    :rtype: HTSeq.GenomicInterval
     """
-    if interval.strand == "+" or interval.strand == 0 or interval.strand == str(0):
-        return HTSeq.GenomicInterval(interval.chrom, interval.start, interval.end, "+")
-    elif interval.strand == "-" or interval.strand == 0 or interval.strand == str(1):
-        return HTSeq.GenomicInterval(interval.chrom, interval.start, interval.end, "-")
-    else:
-        return HTSeq.GenomicInterval(interval.chrom, interval.start, interval.end)
+    cmds = list()
+    for motif in range(1, n_motifs + 1):
+        cmd = "Rscript ~/workspace/piq-single/pertf.r"
+        cmd += " ~/workspace/piq-single/common.r"
+        cmd += " /scratch/users/arendeiro/piq/motif.matches/"
+        cmd += " " + os.path.join(tmp_dir, str(motif))
+        cmd += " " + results_dir
+        cmd += " " + bam_cache
+        cmd += " " + str(motif)
+        cmds.append(cmd)
+
+    return cmds
 
 
-def footprint(bed_file, bam_file, sites, sample_name, fragmentsize=1, orientation=True, duplicates=True, strand_specific=True):
+def piq_parse_output(results_dir, n_motifs, all_peaks):
     """
-    Gets read coverage in genomic intervals. Passes coverage to call_footprints and returns posterior probabilities.
-
-    :param bed_file: Bed file.
-    :type bed_file: str
-    :param bam: HTSeq.BAM_Reader object, must be sorted and indexed with .bai file.
-    :type bam: HTSeq.BAM_Reader
-    :type fragmentsize: int
-    :type stranded: bool
-    :type duplicates: bool
-    :returns: OrderedDict with regionName:numpy.array(coverage)
-    :rtype: collections.OrderedDict
     """
-    # read in bedfile
-    motifs = pybedtools.BedTool(bed_file)
-    # get motif name
-    motif_name = os.path.basename(bed_file.split(".")[0])
-    # get motif length (length of first interval)
-    motif_length = motifs[0].length
+    # get all cll peaks to filter data
+    b = pybedtools.BedTool(all_peaks)
 
-    # convert intervals to HTSeq.GenomicInterval
-    intervals = map(bedtools_interval_to_genomic_interval, motifs)
+    # get genes' TSS
 
-    # Handle bam file
-    bam = HTSeq.BAM_Reader(bam_file)
+    # loop through motifs/TFs, filter and establish relationship between TF and gene
+    for motif in range(1, n_motifs + 1):
+        # get all files in output dir
+        files = os.listdir(results_dir)
 
-    # exclude bad chroms
-    chroms_exclude = ['chrM', 'chrX', 'chrY']
+        # find which file has the output (csv of matches only)
+        # (this is stupid but necessary due to PIQ handling of output file names)
+        for f in files:
+            m = re.match(r'%i.*\.RC-calls.csv$' % motif, f)
+            if hasattr(m, "string"):
+                result_file = m.string
 
-    # get dimensions of matrix to store profiles of Tn5 transposition
-    n = len(intervals)
-    m = intervals[0].length
+        # make bed file from it
+        df = pd.read_csv(os.path.join(results_dir, result_file), index_col=0)
+        df.rename(columns={"coord": "start"})
+        df["end"] = df["start"] + 1
 
-    # create empty matrix
-    if not strand_specific:
-        coverage = np.zeros((n, m), dtype=np.float64)
-    else:
-        # if "strand_specific", get signal for both strands independently, but concatenated
-        coverage = np.zeros((n, m * 2), dtype=np.float64)
+        df[['chr', 'start', 'end', 'pwm', 'shape', 'score', 'purity']].to_csv(os.path.join("tmp.bed"), index=False, header=False)
 
-    # Loop through intervals, get coverage, increment matrix count
-    for i, feature in enumerate(intervals):
-        # counter just to track
-        if i % 1000 == 0:
-            print(n - i)
+        # filter for motifs overlapping CLL peaks
+        a = pybedtools.BedTool(os.path.join("tmp.bed"))
 
-        # Check if feature is not in bad chromosomes
-        if feature.chrom in chroms_exclude:
-            continue
+        df2 = a.intersect(b, wa=True).to_dataframe()
 
-        # Fetch alignments in interval
-        for aln in bam[feature]:
-            # check it's aligned
-            if not aln.aligned:
-                continue
-
-            # check if duplicate
-            if not duplicates and aln.pcr_or_optical_duplicate:
-                continue
-
-            aln.iv.length = fragmentsize  # adjust reads to specified size
-
-            # get position relative to window if required (motif-oriented)
-            if orientation:
-                if feature.strand == "+" or feature.strand == ".":
-                    start_in_window = aln.iv.start - feature.start - 1
-                    end_in_window = aln.iv.end - feature.start - 1
-                else:
-                    start_in_window = feature.length - abs(feature.start - aln.iv.end) - 1
-                    end_in_window = feature.length - abs(feature.start - aln.iv.start) - 1
-            else:
-                start_in_window = aln.iv.start - feature.start - 1
-                end_in_window = aln.iv.end - feature.start - 1
-
-            # check fragment is within window; this is because of fragmentsize adjustment
-            if start_in_window < 0 or end_in_window > feature.length:
-                continue
-
-            # add +1 to all positions overlapped by read within window
-            if not strand_specific:
-                coverage[i, start_in_window: end_in_window] += 1
-            else:
-                if aln.iv.strand == "+":
-                    coverage[i, start_in_window: end_in_window] += 1
-                else:
-                    coverage[i, m + start_in_window: m + end_in_window] += 1
-    # Call footprints, get posterior probabilities
-    try:
-        probs = call_footprints(coverage, np.ones([len(coverage), 1]), motif_length, os.path.join(plots_dir, "footprints", sample_name + "." + motif_name + ".pdf"))
-        if len(probs) != len(coverage):
-            probs = np.zeros(len(coverage))
-    except:
-        # if error, return zeros
-        probs = np.zeros(len(coverage))
-    return probs
+        # CONNECT
+        # Now assign a relashionship between this TF and a gene:
+        # get nearest gene TSS
 
 
-def call_footprints(cuts, annot, motif_length, plot):
-    """
-    Call footprints.
-    Requires dataframe with cuts and dataframe with annotation (2> cols).
-    """
-    import rpy2.robjects as robj  # for ggplot in R
-    import rpy2.robjects.pandas2ri  # for R dataframe conversion
-    import rpy2.robjects.numpy2ri  # for R numpy objects conversion
-
-    robj.pandas2ri.activate()
-
-    # Plot with R
-    footprint = robj.r("""
-    library("CENTIPEDE")
-
-    function(cuts, annot, plotFile, mLen) {
-        centFit <- fitCentipede(
-            Xlist = list(as.matrix(cuts)),
-            Y = as.matrix(annot),
-            sweeps = 1000
-        )
-        pdf(plotFile)
-            plotProfile(centFit$LambdaParList[[1]],Mlen=mLen)
-        dev.off()
-        return(centFit$PostPr)
-    }
-    """)
-
-    # run the plot function on the dataframe
-    return footprint(cuts, annot, plot, motif_length).flatten()
-
-
-# Read configuration file
-with open("config.yaml", 'r') as handle:
-    config = yaml.load(handle)
-
-# Project dirs
-data_dir = os.path.join(config["paths"]["parent"], config["projectname"], "data")
-results_dir = os.path.join(config["paths"]["parent"], config["projectname"], "results")
+# Get path configuration
+data_dir = os.path.abspath(os.path.join('.', "data"))
+scratch_dir = os.path.join("/scratch/users/arendeiro/piq")
+results_dir = os.path.abspath(os.path.join('.', "results"))
 plots_dir = os.path.join(results_dir, "plots")
 
-# Directory for footprint plots
-if not os.path.exists(os.path.join(plots_dir, "footprints")):
-    os.mkdir(os.path.exists(os.path.join(plots_dir, "footprints")))
+# Get clinical info
+clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation.csv"))
+
+# Get all CLL peaks
+cll_peaks = os.path.join(data_dir, "cll_peaks.bed")
 
 # Start project
 prj = Project("cll-patients")
 prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
 # Select ATAC-seq samples
-samples = [s for s in prj.samples if type(s) == ATACseqSample]
+prj.samples = [s for s in prj.samples if type(s) == ATACseqSample]
 
+prj.samples = annotate_igvh_mutations(prj.samples, clinical)
+
+to_exclude_sample_id = ['1-5-45960']
 
 # FOOTPRINTING
-# Get all cll sites
-sites = pybedtools.BedTool(os.path.join(data_dir, "all_sample_peaks.concatenated.bed"))
-# Use motifs from here: http://compbio.mit.edu/encode-motifs/
-# Split motifs by TF
-motifs_dir = "/data/groups/lab_bock/shared/resources/genomes/hg19/motifs"
+motifs_file = "~/workspace/piq-single/pwms/jasparfix.txt"
+n_motifs = 1316
 
-# make motif bed files for each TF from bulk file
-prepare_motifs()
+# prepare motifs for footprinting (done once)
+cmds = piq_prepare_motifs(motifs_file, n_motifs)
+for cmd in cmds:
+    os.system(cmd)
 
-# make intervals out of motifs
-prepare_intervals(sites)
+# get unmutated/mutated samples
+muts = list()
+unmuts = list()
 
-# get filtered motif files
-motifs_files = [os.path.join(data_dir, "motifs", x) for x in os.listdir(os.path.join(data_dir, 'motifs'))]
+for sample in prj.samples:
+    if sample.sampleID in to_exclude_sample_id or sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
+        continue
+    if sample.mutated:
+        muts.append(sample.filteredshifted)
+    elif not sample.mutated:
+        unmuts.append(sample.filteredshifted)
 
-# Get coverage around motifs there
-# Footprint with centipede
-# Get posterior probabilities for every site in an array
-# Reduce by concatenation all arrays for various TFs into one long array
-# Create matrix sites vs samples with probabilities as values
+# prepare merged bam files from IGVH mutated and unmutated samples
+os.chdir("/home/arendeiro/workspace/piq-single/")
+cmd = piq_prepare_bams(muts, os.path.join(data_dir, "CLL_all_igvhmutated_samples.filteredshifted.RData"))
+os.system(cmd)
+cmd = piq_prepare_bams(unmuts, os.path.join(data_dir, "CLL_all_igvhunmutated_samples.filteredshifted.RData"))
+os.system(cmd)
 
-# Loop through samples, get coverage, footprint, reduce
-# Make dataframe
-all_probs = pd.DataFrame(columns=[sample.name for sample in samples])
-
-try:
-    for sample in samples[1:]:
-        # calculate posterior probabilities in parallel for several TFs
-        probs = reduce(
-            lambda x, y: np.concatenate([x, y]),
-            parmap.map(
-                footprint,
-                motifs_files,
-                sample.filteredshifted,  # be stringent here, ask for sample.filtered
-                sites,
-                sample.name
-            )
-        )
-        all_probs[sample.name] = probs
-        # serialize
-        save_pandas(all_probs, os.path.join(data_dir, "all_samples.footprint_probabilities.pdy"))
-except KeyboardInterrupt:
-    pass
+# run footprinting
+os.mkdir(os.path.join(scratch_dir, "mutated"))
+cmds = piq_footprint(
+    os.path.join(data_dir, "CLL_all_igvhmutated_samples.filteredshifted.RData"), n_motifs, scratch_dir,
+    results_dir=os.path.join(scratch_dir, "mutated")
+)
+for cmd in cmds:
+    os.system(cmd)
+os.mkdir(os.path.join(scratch_dir, "unmutated"))
+cmds = piq_footprint(os.path.join(data_dir, "CLL_all_igvhunmutated_samples.filteredshifted.RData"), n_motifs, scratch_dir, os.path.join(scratch_dir, "unmutated"))
+for cmd in cmds:
+    os.system(cmd)
 
 
-# "all_probs" can further be seen as a multiindex dataframe with indice levels of:
-#   TF
-#   position (chrom, start, end)
+# parse output
+piq_parse_output(os.path.join(scratch_dir, "mutated"))
+
 
 # connect each motif to a gene:
 # get TSS annotation
