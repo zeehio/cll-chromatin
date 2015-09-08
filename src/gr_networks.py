@@ -8,6 +8,8 @@ in ATAC-seq data.
 
 import os
 from pipelines.models import Project, ATACseqSample
+from pipelines import toolkit as tk
+import textwrap
 import numpy as np
 import re
 import cPickle as pickle
@@ -99,8 +101,11 @@ def piq_prepare_bams(bams, output_cache):
     :type bams: list
     :type output_cache: str
     """
-    cmd = "Rscript ~/workspace/piq-single/bam2rdata.r ~/workspace/piq-single/common.r {0} ".format(output_cache)
+    cmd = """
+    Rscript ~/workspace/piq-single/bam2rdata.r ~/workspace/piq-single/common.r {0} """.format(output_cache)
     cmd += " ".join(bams)
+    cmd += """
+    """
     return cmd
 
 
@@ -109,13 +114,16 @@ def piq_footprint(bam_cache, n_motifs, tmp_dir, results_dir):
     """
     cmds = list()
     for motif in range(1, n_motifs + 1):
-        cmd = "Rscript ~/workspace/piq-single/pertf.r"
+        cmd = """
+    Rscript ~/workspace/piq-single/pertf.r"""
         cmd += " ~/workspace/piq-single/common.r"
         cmd += " /scratch/users/arendeiro/piq/motif.matches/"
         cmd += " " + os.path.join(tmp_dir, str(motif))
         cmd += " " + results_dir
         cmd += " " + bam_cache
         cmd += " " + str(motif)
+        cmd += """
+    """
         cmds.append(cmd)
 
     return cmds
@@ -151,7 +159,7 @@ def piq_parse_output(results_dir, n_motifs, all_peaks):
         # filter for motifs overlapping CLL peaks
         a = pybedtools.BedTool(os.path.join("tmp.bed"))
 
-        df2 = a.intersect(b, wa=True).to_dataframe()
+        a.intersect(b, wa=True).to_dataframe()
 
         # CONNECT
         # Now assign a relashionship between this TF and a gene:
@@ -186,24 +194,63 @@ motifs_file = "~/workspace/piq-single/pwms/jasparfix.txt"
 n_motifs = 1316
 
 # prepare motifs for footprinting (done once)
-cmds = piq_prepare_motifs(motifs_file, n_motifs)
-for cmd in cmds:
-    os.system(cmd)
+# cmds = piq_prepare_motifs(motifs_file, n_motifs)
+# for cmd in cmds:
+#     os.system(cmd)
 
 # get unmutated/mutated samples
 muts = list()
 unmuts = list()
 
+# stupid PIQ hard-coded links
+os.chdir("/home/arendeiro/workspace/piq-single/")
+
+# for each sample
+jobs = list()
 for sample in prj.samples:
     if sample.sampleID in to_exclude_sample_id or sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
         continue
-    if sample.mutated:
-        muts.append(sample.filteredshifted)
-    elif not sample.mutated:
-        unmuts.append(sample.filteredshifted)
+
+    foots_dir = os.path.join(sample.dirs.sampleRoot, "footprints")
+    if not os.path.exists(foots_dir):
+        os.mkdir(foots_dir)
+    r_data = os.path.join(foots_dir, sample.name + ".filteredshifted.RData")
+    tmp_dir = os.path.join(scratch_dir, sample.name)
+    if not os.path.exists(tmp_dir):
+        os.mkdir(tmp_dir)
+    job_file = os.path.join(foots_dir, "slurm_job.sh")
+
+    # prepare slurm job header
+    cmd = tk.slurmHeader(sample.name + "_PIQ_footprinting", os.path.join(foots_dir, "slurm.log"), cpusPerTask=2, queue="shortq")
+
+    # stupid PIQ hard-coded links
+    cmd += """
+    cd /home/arendeiro/workspace/piq-single/
+    """
+
+    # prepare bams
+    cmd += piq_prepare_bams([sample.filteredshifted], r_data)
+
+    # footprint
+    cmd_list = piq_footprint(r_data, n_motifs, tmp_dir, results_dir=foots_dir)
+    cmd += "\n".join(cmd_list)
+
+    # slurm footer
+    cmd += tk.slurmFooter()
+
+    # write job to file
+    with open(job_file, 'w') as handle:
+        handle.writelines(textwrap.dedent(cmd))
+
+    # append file to jobs
+    jobs.append(job_file)
+
+
+# submit jobs
+for job in jobs:
+    tk.slurmSubmitJob(job)
 
 # prepare merged bam files from IGVH mutated and unmutated samples
-os.chdir("/home/arendeiro/workspace/piq-single/")
 cmd = piq_prepare_bams(muts, os.path.join(data_dir, "CLL_all_igvhmutated_samples.filteredshifted.RData"))
 os.system(cmd)
 cmd = piq_prepare_bams(unmuts, os.path.join(data_dir, "CLL_all_igvhunmutated_samples.filteredshifted.RData"))
@@ -223,19 +270,9 @@ for cmd in cmds:
     os.system(cmd)
 
 
-# parse output
+# parse output,
+# connect each motif to a gene
 piq_parse_output(os.path.join(scratch_dir, "mutated"))
-
-
-# connect each motif to a gene:
-# get TSS annotation
-# get nearest TSS from motif
-# for each motif with posterior probability > 0.99, create relation TF -> gene
-
-
-# more:
-# get factor occupancy score (FOS) for each factor in each site
-# cluster again patients based on TF occupancy
 
 
 # NETWORKS
