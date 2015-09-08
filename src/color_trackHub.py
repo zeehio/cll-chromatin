@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 
 """
+Add info to track hub.
+Color code according to sample features.
 """
 
 import os
