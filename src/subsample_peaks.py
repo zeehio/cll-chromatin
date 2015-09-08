@@ -9,9 +9,9 @@ from pipelines.models import Project
 from pipelines import toolkit as tk
 import numpy as np
 import textwrap
-# import pandas as pd
-# import matplotlib.pyplot as plt
-# import seaborn as sns
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 def subsample_bam(input_bam, n, output_bam):
@@ -35,8 +35,8 @@ def count_peaks_thresholds(peak_file, thresholds, output_file):
     for threshold in thresholds:
         threshold = -np.log10(threshold)
         cmd = """
-    COUNT=`awk '{ if ($8 >= %f) print }' %s | wc -l`; echo "%f\t$COUNT" >> output_file
-        """ % (threshold, peak_file, threshold)
+    COUNT=`awk '{ if ($8 >= %f) print }' %s | wc -l`; echo "%f\t$COUNT" >> %s
+        """ % (threshold, peak_file, threshold, output_file)
         cmds.append(cmd)
 
     return "".join(cmds)
@@ -119,5 +119,35 @@ for job in jobs:
     tk.slurmSubmitJob(job)
 
 # collect
+counts = pd.DataFrame()
+
+for sample in prj.samples:
+    if sample.technique == "ATAC-seq" and sample.cellLine == "CLL":
+        # subsample bam file in log scale
+        for reads in millions:
+            run_name = "_".join([sample.name, str(reads) + "M"])
+            output_file = os.path.join(output_dir, run_name + ".tsv")
+
+            # read outfile
+            with open("output_file", "r") as handle:
+                lines = handle.readlines()
+
+            # parse
+            for line in lines:
+                threshold, count = line.strip().split("\t")
+                threshold = int(float(threshold))
+                count = int(count)
+                if threshold == '32.000000' and count == '0':
+                    continue
+                else:
+                    series = pd.Series([reads, threshold, count], index=['reads', 'threshold', 'count'])
+                    counts = counts.append(series, ignore_index=True)
+
+# average over samples
+c = counts.groupby(['reads', 'threshold']).aggregate(np.mean)
+c = c.reset_index()
 
 # plot
+g = sns.FacetGrid(c, hue="threshold")
+g.map(plt.scatter, 'reads', 'count')
+plt.show()

@@ -1156,13 +1156,13 @@ if generate:
 
 # COMPARISON mCLL - uCLL
 # test if sites come from same population based on normalized, loged2, coverage values
-features = [
-    "mutated", (True, False),  # igvh mutation
-    "patient_gender", ("F", "M"),  # gender
-    "", ("", ""),  # treat/untreated
-]
+features = {
+    "mutated": (True, False),  # igvh mutation
+    "patient_gender": ("F", "M"),  # gender
+    # "", ("", ""),  # treat/untreated
+}
 
-for feature, (group1, group2) in features:
+for feature, (group1, group2) in features.items():
     g1 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group1]]
     g2 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group2]]
 
@@ -1192,6 +1192,7 @@ for mut in allmuts:
     analysis.coverage_qnorm_annotated["p_value_" + mut] = p_values
     analysis.coverage_qnorm_annotated["q_value_" + mut] = q_values
 
+analysis.to_pickle()
 
 # get all differential sites
 # significant = analysis.coverage_qnorm_annotated[analysis.coverage_qnorm_annotated["p_value_" + mut] < 0.05]
