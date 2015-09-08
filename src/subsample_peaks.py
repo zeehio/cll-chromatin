@@ -13,6 +13,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+sns.set_style("whitegrid")
+sns.set_context("paper")
+
 
 def subsample_bam(input_bam, n, output_bam):
     """
@@ -64,7 +67,7 @@ if not os.path.exists(output_dir):
 thresholds = [1e-2, 1e-4, 1e-8, 1e-16, 1e-32]
 
 # M reads to subsample
-millions = [1, 2, 4, 8, 16, 32]
+millions = [1, 2, 4, 8, 16, 24, 28, 32]
 
 # Loop through samples, make job
 jobs = list()
@@ -91,7 +94,8 @@ for sample in prj.samples:
             cmd = tk.slurmHeader(
                 jobName=run_name,
                 output=os.path.join(scratch_dir, run_name + ".log"),
-                queue="shortq"
+                queue="shortq",
+                cpusPerTask=4
             )
 
             # subsample
@@ -129,7 +133,7 @@ for sample in prj.samples:
             output_file = os.path.join(output_dir, run_name + ".tsv")
 
             # read outfile
-            with open("output_file", "r") as handle:
+            with open(output_file, "r") as handle:
                 lines = handle.readlines()
 
             # parse
@@ -140,14 +144,16 @@ for sample in prj.samples:
                 if threshold == '32.000000' and count == '0':
                     continue
                 else:
-                    series = pd.Series([reads, threshold, count], index=['reads', 'threshold', 'count'])
+                    series = pd.Series([reads, threshold, count], index=['reads', 'threshold', 'peak_count'])
                     counts = counts.append(series, ignore_index=True)
 
 # average over samples
-c = counts.groupby(['reads', 'threshold']).aggregate(np.mean)
+c = counts.groupby(['reads', 'threshold']).aggregate(max)
 c = c.reset_index()
 
 # plot
 g = sns.FacetGrid(c, hue="threshold")
-g.map(plt.scatter, 'reads', 'count')
-plt.show()
+g.map(plt.scatter, 'reads', 'peak_count')
+plt.legend()
+
+plt.savefig(os.path.join(plots_dir, "read_subsampling_peak_number.svg"))
