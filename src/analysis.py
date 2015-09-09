@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 """
-This script makes plots to ilustrate the stratification between CLL patients.
+This is the main script of the cll-patients project.
 """
 
 import recipy
@@ -23,7 +23,6 @@ from sklearn.manifold import MDS
 from scipy.cluster.hierarchy import dendrogram
 from scipy.stats import mannwhitneyu
 from statsmodels.sandbox.stats.multicomp import multipletests
-import itertools
 import cPickle as pickle
 from collections import Counter
 
@@ -65,7 +64,6 @@ class Analysis(object):
         # GET CONSENSUS SITES ACROSS CLL ATAC-SEQ SAMPLES
         samples = [sample for sample in self.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"]
 
-        peak_count = dict()
         for i, sample in enumerate(samples):
             print(sample.name)
             # Get summits of peaks and window around them
@@ -77,8 +75,6 @@ class Analysis(object):
             else:
                 # Concatenate all peaks
                 sites = sites.cat(peaks)
-            # Let's keep track of the number of new peaks found with each new sample
-            peak_count[i] = len(sites)
 
         # Merge overlaping peaks across samples
         sites = sites.merge()
@@ -94,6 +90,8 @@ class Analysis(object):
 
     def estimate_peak_saturation(self, n=100):
         """
+        Randomizes sample order n times and measures the number of unique peaks after adding each sample after the other.
+        Plots this.
         """
         import random
         # GET CONSENSUS SITES ACROSS CLL ATAC-SEQ SAMPLES
@@ -120,11 +118,20 @@ class Analysis(object):
                 else:
                     peak_count[j].append(len(sites))
 
-        # Average values over random runs
-        self.peak_count = [np.mean(x) for i, x in peak_count.items()]
+        # Plot
+        fig, axis = plt.subplots(1)
+        df = pd.DataFrame(peak_count)
+        df.apply(np.mean).plot(label="mean", ax=axis)
+        df.apply(np.min).plot(label="min", ax=axis)
+        df.apply(np.max).plot(label="max", ax=axis)
+        axis.set_xlabel("# samples")
+        axis.set_ylabel("# peaks")
+        axis.set_ylim((0, 120000))
+        plt.legend(loc='best')
+        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.cum_peak_count.svg"), bbox_inches="tight")
 
         # Store
-        pickle.dump(self.peak_count, open(os.path.join(self.data_dir, "cll_peaks.cum_peak_count.pickle"), 'wb'))
+        df.to_csv(os.path.join(self.data_dir, "cll_peaks.cum_peak_count.csv"), index=False)
 
     def calculate_peak_support(self):
         # calculate support (number of samples overlaping each merged peak)
@@ -1047,7 +1054,7 @@ def run_lola(bed_files, universe_file, output_folder):
 
             dbPath = "/data/groups/lab_bock/shared/resources/regions/LOLACore/hg19/"
 
-            dbPath = "/data/groups/lab_bock/shared/resources/regions/customRegionDB/hg19/"
+            #dbPath = "/data/groups/lab_bock/shared/resources/regions/customRegionDB/hg19/"
             regionDB = loadRegionDB(dbPath)
 
             if (typeof(bedFiles) == "character") {
@@ -1068,6 +1075,16 @@ def run_lola(bed_files, universe_file, output_folder):
 
     # convert the pandas dataframe to an R dataframe
     lola(bed_files, universe_file, output_folder)
+
+
+def goverlap(genes_file, universe_file, output_file):
+    """
+    from https://github.com/endrebak/goverlap
+    """
+    cmd = """goverlap -a {0} -s hsap -n 12 -l 0.10 -x {1} > {2}
+    """.format(genes_file, universe_file, output_file)
+    os.system(cmd)
+
 
 to_exclude_sample_id = ['1-5-45960']
 
@@ -1110,6 +1127,12 @@ if generate:
 else:
     analysis.sites = pybedtools.BedTool(os.path.join(data_dir, "cll_peaks.bed"))
     analysis.peak_count = pickle.load(open(os.path.join(data_dir, "cll_peaks.cum_peak_count.pickle"), 'rb'))
+
+# estimate peak saturation among all samples
+if generate:
+    analysis.estimate_peak_saturation(n=10)
+else:
+    peak_count = pd.read_csv(os.path.join("cll_peaks.cum_peak_count.csv"))
 
 # Calculate peak support
 if generate:
@@ -1295,6 +1318,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
         row_colors=sample_colors
     )
     plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_correlation.svg" % method), bbox_inches="tight")
+    plt.close('all')
 
     # cluster samples and sites
     # plot heatmap of differentialy open sites
@@ -1309,120 +1333,165 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.svg" % method), bbox_inches="tight")
     plt.close('all')
 
-    # REGION CARACTERIZATION
-    # get dendrogram data and plot it,
-    # determine height to separate clusters
-    # this must be done empirically for each feature type
-    thresholds = {"mutation": 28}
+    # VARIABLE SITE CARACTERIZATION
+    # plot features of all sites
+    significant['length'] = significant.apply(lambda x: x['end'] - x['start'], axis=1)
 
-    dendr = dendrogram(sites_cluster.dendrogram_row.linkage, color_threshold=thresholds[feature], labels=significant_values.index)  # labels have to be reset for some reason... grrrr!
-    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.sites.dendrogram.svg" % method), bbox_inches="tight")
+    # plot interval lengths and support
+    for variable in ['length', 'support']:
+        fig, axis = plt.subplots()
+        sns.distplot(significant[variable], bins=300, kde=False, ax=axis)
+        fig.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.peak_%s.svg" % (method, variable)), bbox_inches="tight")
 
-    # assign a cluster to each peak
-    site_cluster_dict = dict(zip(dendr['ivl'], dendr['color_list']))
-    significant['cluster'] = [site_cluster_dict[x] if x in site_cluster_dict.keys() else None for x in significant.index]
+    # # Plot distance to nearest TSS
+    # fig, axis = plt.subplots()
+    # sns.distplot(significant['closest_tss_distances'], bins=200, ax=axis)
+    # fig.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.closest_tss_distances.svg" % method), bbox_inches="tight")
 
-    # for each cluster, make bed file, save, run lola, etc...
-    for cluster in significant['cluster'].unique():
-        if cluster is None:
-            continue
-        elif cluster == "r":
-            cluster_name = "uCLL"
-        elif cluster == "g":
-            cluster_name = "mCLL"
+    # plot genomic location and chromatin state
+    for variable in ['genomic_region', 'chromatin_state']:
+        fig, axis = plt.subplots()
+        count = Counter([y for x in significant.apply(lambda x: x[variable].split(","), axis=1) for y in x])
+        data = pd.DataFrame([count.keys(), count.values()]).T.reset_index(drop=True)
+        data.sort([1], ascending=False, inplace=True)
+        sns.barplot(x=0, y=1, data=data, ax=axis)
+        fig.autofmt_xdate()
+        fig.tight_layout()
+        fig.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.%s.svg" % (method, variable)), bbox_inches="tight")
 
-        # make bed file, save
-        bed_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.sites.%s.bed" % (method, cluster_name))
-        significant[significant['cluster'] == cluster]['chrom', 'start', 'end'].to_csv(bed_file, index=False)
+    # save as bed
+    bed_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.bed" % method)
+    significant[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
 
-    # FURTHER SAMPLE CARACTERIZATION (divide in more clusters)
-    # get cluster assignments from linkage matrix
-    lm = sites_cluster.dendrogram_col.linkage
-
-    # plot dendrogram
-    # determine height to separate clusters
-    dendr = dendrogram(lm, labels=significant_values.columns)  # color_threshold=20
-    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.samples.dendrogram.svg" % method), bbox_inches="tight")
-
-    # assign each sample to one cluster
-    clusters = get_cluster_classes(dendr)
-
-    # concatenate clusters on the unmutated side
-    unmutated_cluster = ['b', 'c', 'm', 'y']
-
-    # annotate samples with cluster
-    new_samples = list()
-    for cluster, sample_names in clusters.items():
-        for sample_name in sample_names:
-            s = [sample for sample in analysis.samples if sample.name == sample_name][0]
-            s.cluster = cluster if cluster not in unmutated_cluster else 'b'
-            new_samples.append(s)
-    samples = new_samples
-
-# Repeat again independence test and
-# get all differential sites (from 3 comparisons)
-all_p_values = pd.DataFrame()
-for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
-    p_values = pd.DataFrame(analysis.rpkm.apply(
-        lambda x: mannwhitneyu(
-            x.loc[[sample.name for sample in samples if sample.cluster == "r"]],
-            x.loc[[sample.name for sample in samples if sample.cluster == "g"]])[1],
-        axis=1
-    ))
-    p_values['comparison'] = "-".join([g1, g2])
-    all_p_values = pd.concat([all_p_values, p_values])
-
-all_p_values.columns = ['p', 'comparison']
-all_p_values.to_csv(os.path.join("data", "dors.3_populations.p_values.tsv"), sep="\t", index=False)
-
-all_significant = analysis.rpkm.ix[all_p_values[all_p_values['p'] < 0.000001].index].drop_duplicates()
-
-all_significant.to_csv(os.path.join("data", "dors.3_populations.significant.tsv"), sep="\t", index=False)
-
-# correlate samples on significantly different sites
-sns.clustermap(
-    all_significant.corr(),
-    method="complete",
-    square=True, annot=False,
-    figsize=(20, 16)
-)
-plt.savefig(os.path.join(plots_dir, "dors.3_populations.correlation_clustering.svg"), bbox_inches="tight")
-
-# heatmap all significat sites
-clustermap = sns.clustermap(
-    all_significant[[sample.name for sample in samples]],
-    cmap=plt.get_cmap('YlGn'),
-    square=False, annot=False
-)
-plt.savefig(os.path.join(plots_dir, "dors.3_populations.clustering.svg"), bbox_inches="tight")
-
-# export dors regions
-for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
-    comparison = "-".join([g1, g2])
-    specific = analysis.rpkm.loc[
-        all_p_values[
-            (all_p_values['p'] < 0.000001) &
-            (all_p_values['comparison'] == comparison)
-        ].index,
-        ['chrom', 'start', 'end']
-    ].drop_duplicates()
-    specific.to_csv(os.path.join(data_dir, "dors.{0}.bed".format(comparison)), sep="\t", index=False, header=None)
-
-# run lola
-# use all cll sites as universe
-universe_file = os.path.join(data_dir, "cll_peaks.bed")
-
-for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
-    comparison = "-".join([g1, g2])
-    bed_file = os.path.join(data_dir, "dors.{0}.bed".format(comparison))
-    output_folder = os.path.join(data_dir, "lola", "dors_{0}".format(comparison))
+    # Lola
+    # use all cll sites as universe
+    universe_file = os.path.join(data_dir, "cll_peaks.bed")
+    output_folder = os.path.join(data_dir, "lola", "cll_peaks.%s_significant.clustering_sites" % method)
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
     # run
     run_lola(bed_file, universe_file, output_folder)
 
-# get closest gene: GO, KEGG, OMIM, mSigDB
-# de novo motif finding - enrichment
+    # GO Terms
+    # write gene names to file
+    all_cll_genes_file = os.path.join(data_dir, "cll_peaks.closest_genes.txt")
+    with open(all_cll_genes_file, 'w') as handle:
+        for gene in significant['gene_name']:
+            handle.write(gene + "\n")
+    feature_genes_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.txt" % method)
+    with open(feature_genes_file, 'w') as handle:
+        for gene in significant['gene_name']:
+            handle.write(gene + "\n")
+    output_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.go_enrichment.tsv" % method)
+    # test enrichements of closest gene function: GO, KEGG, OMIM
+    goverlap(feature_genes_file, all_cll_genes_file, output_file)
+
+    # Motifs
+    # de novo motif finding - enrichment
+
+    # VARIABLE SITE SUBSET CARACTERIZATION (CLUSTERS)
+    # get dendrogram data and plot it,
+    # determine height to separate clusters
+    # this must be done empirically for each feature type
+    thresholds = {"mutation": 28, "patient_gender": 8}
+
+    dendr = dendrogram(sites_cluster.dendrogram_row.linkage, color_threshold=thresholds[feature], labels=significant_values.index)  # labels have to be reset for some reason... grrrr!
+    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.dendrogram.svg" % method), bbox_inches="tight")
+
+    # assign a cluster to each peak
+    site_cluster_dict = dict(zip(dendr['ivl'], dendr['color_list']))
+    significant['cluster'] = [site_cluster_dict[x] if x in site_cluster_dict.keys() else None for x in significant.index]
+
+    # for each cluster, test equality of features with all significant peaks
+    # or count genomic regions/chromatin states
+    p_values = pd.DataFrame()
+    counts = pd.DataFrame()
+    cluster_counts = pd.DataFrame()
+    for cluster_name, cluster in enumerate(significant['cluster'].unique()):
+        if cluster is None:
+            continue
+
+        # grab data only from this cluster
+        cluster_data = significant[significant['cluster'] == cluster]
+
+        # continuous variables, test difference of means
+        for variable in ['length', 'support']:
+            # test and append to df
+            series = pd.Series(
+                [cluster_name, variable, mannwhitneyu(cluster_data[variable], significant[variable])[1]],
+                index=['cluster', 'variable', 'p-value'])
+            p_values = p_values.append(series, ignore_index=True)
+
+        # categorical variables, plot side by side
+        for variable in ['genomic_region', 'chromatin_state']:
+            for data in ['significant', 'cluster_data']:
+                significant_count = Counter([y for x in eval(data).apply(lambda x: x[variable].split(","), axis=1) for y in x])
+                df = pd.DataFrame(significant_count.values())
+                df['data'] = data
+                df['values'] = significant_count.keys()
+                df['cluster'] = cluster_name
+                df['variable'] = variable
+                counts = counts.append(df)
+
+    # plot enrichments
+    df = df.rename(columns={0: "counts"})
+    g = sns.FacetGrid(counts, col="cluster", row="variable", hue="data", sharex=False, margin_titles=True)
+    g.map(sns.barplot, "values", 0)
+    plt.legend(loc="best")
+    g.set_axis_labels(x_var="cluster #", y_var="count")
+    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.clusters.enrichments.svg" % method), bbox_inches="tight")
+
+    # plot p-values
+    p_values['p-value'] = -np.log10(p_values['p-value'])
+    p_values.sort('p-value', ascending=False, inplace=True)
+    g = sns.FacetGrid(p_values, col="variable", margin_titles=True)
+    g.map(sns.barplot, "cluster", "p-value")
+    # add sig line
+    for axis in g.axes[0]:
+        axis.axhline(-np.log10(0.05), linestyle='- -', color='black')
+    g.set_axis_labels(x_var="cluster #", y_var="-log10(pvalue)")
+    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.clusters.length_support_p-values.svg" % method), bbox_inches="tight")
+
+    # for each cluster make bed file, save, run lola, etc...
+    # consider joining clusters in a feature-specific way in the future
+    for cluster_name, cluster in enumerate(significant['cluster'].unique()):
+        if cluster is None:
+            continue
+
+        # make bed file, save
+        bed_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.sites.cluster_%i.bed" % (method, cluster_name))
+        cluster_data[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
+
+        # Lola
+        # use all cll sites as universe
+        universe_file = os.path.join(data_dir, "cll_peaks.bed")
+        output_folder = os.path.join(data_dir, "lola", "cll_peaks.%s_significant.clustering_sites.cluster_%i" % (method, cluster_name))
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+        # run
+        run_lola(bed_file, universe_file, output_folder)
+
+        # GO Terms
+        # write gene names to file
+        feature_genes_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.txt" % method)
+        cluster_genes_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.cluster_%i.txt" % (method, cluster_name))
+        with open(cluster_genes_file, 'w') as handle:
+            for gene in significant['gene_name']:
+                handle.write(gene + "\n")
+        output_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.cluster_%i.go_enrichment.tsv" % (method, cluster_name))
+        # test enrichements of closest gene function: GO, KEGG, OMIM
+        goverlap(feature_genes_file, feature_genes_file, output_file)
+
+        # MOTIFS
+        # de novo motif finding - enrichment
+
+
+# FURTHER SAMPLE CARACTERIZATION (divide in more clusters)
+# get cluster assignments from linkage matrix
+# select 'intermediate' cluster
+
+# Repeat again independence test and
+# get all differential sites (from 3 comparisons)
 
 # Subset data in Enhancers/Promoters
 # stratify again
