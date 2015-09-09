@@ -198,14 +198,10 @@ n_motifs = 1316
 # for cmd in cmds:
 #     os.system(cmd)
 
-# get unmutated/mutated samples
-muts = list()
-unmuts = list()
-
 # stupid PIQ hard-coded links
 os.chdir("/home/arendeiro/workspace/piq-single/")
 
-# for each sample
+# for each sample create R cache with bam file
 jobs = list()
 for sample in prj.samples:
     if sample.sampleID in to_exclude_sample_id or sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
@@ -246,34 +242,65 @@ for sample in prj.samples:
     jobs.append(job_file)
 
 
-# submit jobs
+# submit jobs (to create bam file caches)
 for job in jobs:
     tk.slurmSubmitJob(job)
 
-# prepare merged bam files from IGVH mutated and unmutated samples
-cmd = piq_prepare_bams(muts, os.path.join(data_dir, "CLL_all_igvhmutated_samples.filteredshifted.RData"))
-os.system(cmd)
-cmd = piq_prepare_bams(unmuts, os.path.join(data_dir, "CLL_all_igvhunmutated_samples.filteredshifted.RData"))
-os.system(cmd)
 
-# run footprinting
-os.mkdir(os.path.join(scratch_dir, "mutated"))
-cmds = piq_footprint(
-    os.path.join(data_dir, "CLL_all_igvhmutated_samples.filteredshifted.RData"), n_motifs, scratch_dir,
-    results_dir=os.path.join(scratch_dir, "mutated")
-)
-for cmd in cmds:
-    os.system(cmd)
-os.mkdir(os.path.join(scratch_dir, "unmutated"))
-cmds = piq_footprint(os.path.join(data_dir, "CLL_all_igvhunmutated_samples.filteredshifted.RData"), n_motifs, scratch_dir, os.path.join(scratch_dir, "unmutated"))
-for cmd in cmds:
-    os.system(cmd)
+# for each sample launch several jobs (>1000) to footprint
+jobs = list()
+for sample in prj.samples[1:5]:
+    if sample.sampleID in to_exclude_sample_id or sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
+        continue
+
+    foots_dir = os.path.join(sample.dirs.sampleRoot, "footprints")
+    if not os.path.exists(foots_dir):
+        os.mkdir(foots_dir)
+    r_data = os.path.join(foots_dir, sample.name + ".filteredshifted.RData")
+    tmp_dir = os.path.join(scratch_dir, sample.name)
+    if not os.path.exists(tmp_dir):
+        os.mkdir(tmp_dir)
+
+    cmd_list = piq_footprint(r_data, n_motifs, tmp_dir, results_dir=foots_dir)
+
+    for motif, foot_cmd in enumerate(cmd_list):
+        motif += 1
+        job_file = os.path.join(foots_dir, "slurm_job_motif%i.sh" % motif)
+        slurm_log = os.path.join(foots_dir, "slurm_motif%i.log" % motif)
+
+        # prepare slurm job header
+        cmd = tk.slurmHeader(sample.name + "_PIQ_footprinting_motif%i" % motif, slurm_log, cpusPerTask=2, queue="shortq")
+
+        # stupid PIQ hard-coded links
+        cmd += """
+        cd /home/arendeiro/workspace/piq-single/
+        """
+
+        # footprint
+        cmd += """
+        {0}
+        """.format(foot_cmd)
+
+        # delete its own slurm files
+        cmd += """
+        rm {0}
+        rm {1}
+        """.format(job_file, slurm_log)
+
+        # slurm footer
+        cmd += tk.slurmFooter()
+
+        # write job to file
+        with open(job_file, 'w') as handle:
+            handle.writelines(textwrap.dedent(cmd))
+
+        # append file to jobs
+        jobs.append(job_file)
 
 
-# parse output,
-# connect each motif to a gene
-piq_parse_output(os.path.join(scratch_dir, "mutated"))
-
+# submit jobs (to footprint)
+for job in jobs:
+    tk.slurmSubmitJob(job)
 
 # NETWORKS
 # Network construction:
