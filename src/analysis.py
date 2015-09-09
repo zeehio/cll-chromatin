@@ -90,6 +90,7 @@ class Analysis(object):
 
         # Store
         self.sites = sites
+        pickle.dump(peak_count, open(os.path.join(self.data_dir, "cll_peaks.cum_peak_count.bed"), 'wb'))
         self.peak_count = peak_count
 
     def calculate_peak_support(self):
@@ -351,8 +352,8 @@ class Analysis(object):
         # Plot cumulative number of peaks
         fig, axis = plt.subplots()
         axis.plot(self.peak_count.keys(), self.peak_count.values(), 'o')
-        axis.ylim(0, max(self.peak_count.values()) + 5000)
-        axis.title("Cumulative peaks per sample")
+        axis.set_ylim(0, max(self.peak_count.values()) + 5000)
+        axis.set_title("Cumulative peaks per sample")
         axis.xlabel("Number of samples")
         axis.ylabel("Total number of peaks")
         fig.savefig(os.path.join(self.plots_dir, "total_peak_count.per_patient.pdf"), bbox_inches="tight")
@@ -361,14 +362,14 @@ class Analysis(object):
         # interval lengths
         fig, axis = plt.subplots()
         sns.distplot([interval.length for interval in self.sites], bins=300, kde=False, ax=axis)
-        axis.xlabel("peak width (bp)")
-        axis.ylabel("frequency")
+        axis.set_xlabel("peak width (bp)")
+        axis.set_ylabel("frequency")
         fig.savefig(os.path.join(self.plots_dir, "cll_peaks.lengths.pdf"), bbox_inches="tight")
 
         # plot support
         fig, axis = plt.subplots()
         sns.distplot(self.support["support"], bins=40, ax=axis)
-        axis.ylabel("frequency")
+        axis.set_ylabel("frequency")
         fig.savefig(os.path.join(self.plots_dir, "cll_peaks.support.pdf"), bbox_inches="tight")
 
         # Plot distance to nearest TSS
@@ -1041,6 +1042,7 @@ if generate:
     analysis.get_consensus_sites()
 else:
     analysis.sites = pybedtools.BedTool(os.path.join(data_dir, "cll_peaks.bed"))
+    analysis.peak_count = pickle.load(open(os.path.join(data_dir, "cll_peaks.cum_peak_count.bed"), 'rb'))
 
 # Calculate peak support
 if generate:
@@ -1335,33 +1337,3 @@ for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
 # - if negative -> de novo enhancer -> explore mechanism
 # validate with H3K27ac ChIP-seq
 # validate with RNA expression
-
-
-# FOOTPRINTING AND GRNs
-
-def merge_bams(bams):
-    pass
-
-
-to_exclude_sample_id = ['1-5-45960']
-
-muts = list()
-unmuts = list()
-
-for sample in prj.samples:
-    if sample.sampleID in to_exclude_sample_id or sample.technique != "ATAC-seq":
-        continue
-    if sample.mutated:
-        muts.append(sample.filteredshifted)
-    elif not sample.mutated:
-        unmuts.append(sample.filteredshifted)
-
-# merge bams
-
-
-# PIQ output file with (all) usable matches
-# .RC-calls.csv
-
-# filter for purity > 0.7 (optional)
-
-# filter for overlap with peaks
