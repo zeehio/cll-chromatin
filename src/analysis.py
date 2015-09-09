@@ -87,13 +87,44 @@ class Analysis(object):
         # remove blacklist regions
         blacklist = pybedtools.BedTool(os.path.join(self.data_dir, "wgEncodeDacMapabilityConsensusExcludable.bed"))
         # remove chrM peaks and save
-        sites = sites.intersect(v=True, b=blacklist).filter(lambda x: x.chrom != 'chrM').saveas(os.path.join(self.data_dir, "cll_peaks.bed"))
-        sites = pybedtools.BedTool(os.path.join(self.data_dir, "cll_peaks.bed"))
+        sites.intersect(v=True, b=blacklist).filter(lambda x: x.chrom != 'chrM').saveas(os.path.join(self.data_dir, "cll_peaks.bed"))
 
         # Store
-        self.sites = sites
-        self.peak_count = peak_count
-        pickle.dump(peak_count, open(os.path.join(self.data_dir, "cll_peaks.cum_peak_count.pickle"), 'wb'))
+        self.sites = pybedtools.BedTool(os.path.join(self.data_dir, "cll_peaks.bed"))
+
+    def estimate_peak_saturation(self, n=100):
+        """
+        """
+        import random
+        # GET CONSENSUS SITES ACROSS CLL ATAC-SEQ SAMPLES
+        samples = [sample for sample in self.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"]
+
+        peak_count = dict()
+        for i in range(n):
+            samples_copy = samples[:]
+            random.shuffle(samples_copy)
+            for j, sample in enumerate(samples_copy):
+                print(sample.name)
+                # Get summits of peaks and window around them
+                peaks = pybedtools.BedTool(sample.peaks)  # .slop(g=pybedtools.chromsizes('hg19'), b=250)
+                # Merge overlaping peaks within a sample
+                peaks = peaks.merge()
+                if j == 0:
+                    sites = peaks
+                else:
+                    # Concatenate all peaks
+                    sites = sites.cat(peaks)
+                # Let's keep track of the number of new peaks found with each new sample
+                if j not in peak_count.keys():
+                    peak_count[j] = [len(sites)]
+                else:
+                    peak_count[j].append(len(sites))
+
+        # Average values over random runs
+        self.peak_count = [np.mean(x) for i, x in peak_count.items()]
+
+        # Store
+        pickle.dump(self.peak_count, open(os.path.join(self.data_dir, "cll_peaks.cum_peak_count.pickle"), 'wb'))
 
     def calculate_peak_support(self):
         # calculate support (number of samples overlaping each merged peak)
@@ -369,7 +400,7 @@ class Analysis(object):
         axis.set_title("Cumulative peaks per sample")
         axis.set_xlabel("Number of samples")
         axis.set_ylabel("Total number of peaks")
-        fig.savefig(os.path.join(self.plots_dir, "total_peak_count.per_patient.pdf"), bbox_inches="tight")
+        fig.savefig(os.path.join(self.plots_dir, "total_peak_count.per_patient.svg"), bbox_inches="tight")
 
         # Loop at summary statistics:
         # interval lengths
@@ -378,13 +409,13 @@ class Analysis(object):
         axis.set_xlim(0, 2000)  # cut it at 2kb
         axis.set_xlabel("peak width (bp)")
         axis.set_ylabel("frequency")
-        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.lengths.pdf"), bbox_inches="tight")
+        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.lengths.svg"), bbox_inches="tight")
 
         # plot support
         fig, axis = plt.subplots()
         sns.distplot(self.support["support"], bins=40, ax=axis)
         axis.set_ylabel("frequency")
-        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.support.pdf"), bbox_inches="tight")
+        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.support.svg"), bbox_inches="tight")
 
         # Plot distance to nearest TSS
         fig, axis = plt.subplots()
@@ -392,7 +423,7 @@ class Analysis(object):
         axis.set_xlim(0, 100000)  # cut it at 100kb
         axis.set_xlabel("distance to nearest TSS (bp)")
         axis.set_ylabel("frequency")
-        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.tss_distance.pdf"), bbox_inches="tight")
+        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.tss_distance.svg"), bbox_inches="tight")
 
         # Plot genomic regions
         # these are just long lists with genomic regions
@@ -419,7 +450,7 @@ class Analysis(object):
 
         fig.autofmt_xdate()
         fig.tight_layout()
-        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.genomic_regions.pdf"), bbox_inches="tight")
+        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.genomic_regions.svg"), bbox_inches="tight")
 
         # Plot chromatin states
         # get long list of chromatin states (for plotting)
@@ -446,7 +477,7 @@ class Analysis(object):
 
         fig.autofmt_xdate()
         fig.tight_layout()
-        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.chromatin_states.pdf"), bbox_inches="tight")
+        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.chromatin_states.svg"), bbox_inches="tight")
 
     def plot_rpkm(self):
         # data = self.rpkm_annotated.copy()
@@ -468,56 +499,56 @@ class Analysis(object):
         # Together in same violin plot
         # rpkm
         sns.violinplot("genomic_region", "norm_counts", data=data_melted)
-        plt.savefig(os.path.join(self.plots_dir, "norm_counts.per_genomic_region.violinplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.per_genomic_region.violinplot.svg"), bbox_inches="tight")
         plt.close()
         sns.violinplot("genomic_region", "norm_counts", data=data_melted)
-        plt.savefig(os.path.join(self.plots_dir, "norm_counts.chromatin_state.violinplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.chromatin_state.violinplot.svg"), bbox_inches="tight")
         plt.close()
         # dispersion
         sns.violinplot("genomic_region", "dispersion", data=data_melted)
-        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.per_genomic_region.violinplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.per_genomic_region.violinplot.svg"), bbox_inches="tight")
         plt.close()
         sns.violinplot("genomic_region", "dispersion", data=data_melted)
-        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.chromatin_state.violinplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.chromatin_state.violinplot.svg"), bbox_inches="tight")
         plt.close()
         # dispersion
         sns.violinplot("genomic_region", "dispersion", data=data_melted)
-        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.per_genomic_region.violinplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.per_genomic_region.violinplot.svg"), bbox_inches="tight")
         plt.close()
 
         sns.violinplot("genomic_region", "dispersion", data=data_melted)
-        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.chromatin_state.violinplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.chromatin_state.violinplot.svg"), bbox_inches="tight")
         plt.close()
 
         # separated by variable in one grid
         g = sns.FacetGrid(data_melted, col="genomic_region", col_wrap=3)
         g.map(sns.distplot, "mean", hist=False, rug=False)
-        plt.savefig(os.path.join(self.plots_dir, "norm_counts.mean.per_genomic_region.distplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.mean.per_genomic_region.distplot.svg"), bbox_inches="tight")
         plt.close()
 
         g = sns.FacetGrid(data_melted, col="chromatin_state", col_wrap=3)
         g.map(sns.distplot, "mean", hist=False, rug=False)
-        plt.savefig(os.path.join(self.plots_dir, "norm_counts.mean.chromatin_state.distplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.mean.chromatin_state.distplot.svg"), bbox_inches="tight")
         plt.close()
 
         g = sns.FacetGrid(data_melted, col="genomic_region", col_wrap=3)
         g.map(sns.distplot, "dispersion", hist=False, rug=False)
-        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.per_genomic_region.distplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.per_genomic_region.distplot.svg"), bbox_inches="tight")
         plt.close()
 
         g = sns.FacetGrid(data_melted, col="chromatin_state", col_wrap=3)
         g.map(sns.distplot, "dispersion", hist=False, rug=False)
-        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.chromatin_state.distplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.chromatin_state.distplot.svg"), bbox_inches="tight")
         plt.close()
 
         g = sns.FacetGrid(data_melted, col="genomic_region", col_wrap=3)
         g.map(sns.distplot, "support", hist=False, rug=False)
-        plt.savefig(os.path.join(self.plots_dir, "norm_counts.support.per_genomic_region.distplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.support.per_genomic_region.distplot.svg"), bbox_inches="tight")
         plt.close()
 
         g = sns.FacetGrid(data_melted, col="chromatin_state", col_wrap=3)
         g.map(sns.distplot, "support", hist=False, rug=False)
-        plt.savefig(os.path.join(self.plots_dir, "norm_counts.support.chromatin_state.distplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.support.chromatin_state.distplot.svg"), bbox_inches="tight")
         plt.close()
 
         #
@@ -529,44 +560,44 @@ class Analysis(object):
         for sample in self.samples:
             sns.distplot(self.rpkm_annotated[[sample.name]], hist=False, label=sample.name)
         # plt.legend()
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.distplot.all.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.distplot.all.svg"), bbox_inches="tight")
         plt.close()
 
         # separately in one grid
         g = sns.FacetGrid(data_melted, col="sample", aspect=2, col_wrap=4)
         g.map(sns.distplot, "rpkm", hist=False)
         plt.xlim(0, 15)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.distplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.distplot.svg"), bbox_inches="tight")
         plt.close()
 
         # boxplot rpkm per sample
         # Plot the orbital period with horizontal boxes
         sns.boxplot(x="rpkm", y="sample", data=data_melted)
         plt.xlim(0, 15)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.boxplot.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.boxplot.svg"), bbox_inches="tight")
         plt.close()
 
     def plot_variance(self):
         sns.jointplot('mean', "dispersion", data=self.rpkm_annotated)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.dispersion.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.dispersion.svg"), bbox_inches="tight")
         plt.close('all')
 
         sns.jointplot('mean', "qv2", data=self.rpkm_annotated)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.qv2_vs_mean.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.qv2_vs_mean.svg"), bbox_inches="tight")
         plt.close('all')
 
         sns.jointplot('support', "qv2", data=self.rpkm_annotated)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.support_vs_qv2.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.support_vs_qv2.svg"), bbox_inches="tight")
         plt.close('all')
 
         # Filter out regions which the maximum across all samples is below a treshold
         filtered = self.rpkm_annotated[self.rpkm_annotated[[sample.name for sample in self.samples]].apply(max, axis=1) > 3]
 
         sns.jointplot('mean', "dispersion", data=filtered)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.dispersion.filtered.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.dispersion.filtered.svg"), bbox_inches="tight")
         plt.close('all')
         sns.jointplot('mean', "qv2", data=filtered)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.support_vs_qv2.filtered.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.support_vs_qv2.filtered.svg"), bbox_inches="tight")
 
     def plot_qnorm_comparison(self):
         # Compare raw counts vs qnormalized data
@@ -576,7 +607,7 @@ class Analysis(object):
         axis[0].set_title("Raw counts")
         axis[1].set_title("Quantile normalized counts")
         axis[1].set_xlabel("log2(1 + x)")
-        fig.savefig(os.path.join(self.plots_dir, "coverage_vs_coverage_qnorm.pdf"), bbox_inches="tight")
+        fig.savefig(os.path.join(self.plots_dir, "coverage_vs_coverage_qnorm.svg"), bbox_inches="tight")
 
     def plot_qv2_fit(self):
         from scipy.optimize import curve_fit
@@ -629,7 +660,7 @@ class Analysis(object):
         axis[1].set_xlabel("mean")
         axis[1].set_ylabel("residuals")
 
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.qv2_vs_mean.fit_residuals.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.qv2_vs_mean.fit_residuals.svg"), bbox_inches="tight")
 
     def plot_sample_correlations(self):
         # get colors depending on IGVH mut
@@ -659,7 +690,7 @@ class Analysis(object):
             square=True, annot=False,
             figsize=(20, 16)
         )
-        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.correlation_clustering.pdf"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.correlation_clustering.svg"), bbox_inches="tight")
         plt.close('all')
 
     def plot_pca(self, suffix=""):
@@ -875,6 +906,19 @@ def samples_to_color(samples, method="mutation"):
     # rainbow (unique color per sample)
     elif method == "unique":
         return cm.Paired(np.linspace(0, 1, len(samples)))
+    elif method == "gender":
+        colors = list()
+        for sample in samples:
+            if sample.patient_gender is "F":
+                colors.append('red')
+            elif sample.patient_gender is "M":
+                colors.append('blue')
+            elif sample.patient_gender is None:
+                if sample.cellLine == "CLL":
+                    colors.append('gray')
+                else:
+                    colors.append('black')
+        return colors
     else:
         raise ValueError("Method %s is not valid" % method)
 
@@ -973,11 +1017,11 @@ def hexbin(x, y, color, **kwargs):
     plt.hexbin(x, y, gridsize=15, cmap=cmap, **kwargs)
 
 
-def get_cluster_classes(den, label='ivl'):
+def get_cluster_classes(dendrogram, label='ivl'):
     from collections import defaultdict
 
     cluster_idxs = defaultdict(list)
-    for c, pi in zip(den['color_list'], den['icoord']):
+    for c, pi in zip(dendrogram['color_list'], dendrogram['icoord']):
         for leg in pi[1:3]:
             i = (leg - 5.0) / 10.0
             if abs(i - int(i)) < 1e-5:
@@ -985,7 +1029,7 @@ def get_cluster_classes(den, label='ivl'):
 
     cluster_classes = {}
     for c, l in cluster_idxs.items():
-        i_l = [den[label][j] for j in l]
+        i_l = [dendrogram[label][j] for j in l]
         cluster_classes[c] = i_l
 
     return cluster_classes
@@ -1047,7 +1091,7 @@ prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 prj.samples = annotate_igvh_mutations(prj.samples, clinical)
 prj.samples = annotate_treatments(prj.samples, clinical)
 prj.samples = annotate_mutations(prj.samples, clinical)
-
+prj.samples = annotate_gender(prj.samples, clinical)
 
 # Start analysis object
 # only with ATAC-seq samples
@@ -1187,6 +1231,7 @@ features = {
     "mutated": (True, False),  # igvh mutation
     "patient_gender": ("F", "M"),  # gender
     # "", ("", ""),  # treat/untreated
+    # "relapse", ("True", "False") # relapse or before relapse
 }
 
 for feature, (group1, group2) in features.items():
@@ -1203,6 +1248,7 @@ for feature, (group1, group2) in features.items():
     analysis.coverage_qnorm_annotated["p_value_" + feature] = p_values
     analysis.coverage_qnorm_annotated["q_value_" + feature] = q_values
 
+analysis.to_pickle()
 
 allmuts = ['SF3B1', 'ATM', 'del13', 'del11q', 'tri12', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
 for mut in allmuts:
@@ -1221,52 +1267,97 @@ for mut in allmuts:
 
 analysis.to_pickle()
 
-# get all differential sites
-# significant = analysis.coverage_qnorm_annotated[analysis.coverage_qnorm_annotated["p_value_" + mut] < 0.05]
-# significant.to_csv(os.path.join(data_dir, "dors.mutated_vs_unmutated.tsv"), sep="\t", index=False)
+# get differential sites per type of feature
+for i, (feature, (group1, group2)) in enumerate(features.items()):
+    # get significant sites
+    significant = analysis.coverage_qnorm_annotated[analysis.coverage_qnorm_annotated["p_value_" + feature] < 0.0001]
 
-# correlate samples on significantly different sites
-sns.clustermap(
-    significant.corr(),
-    method="complete",
-    square=True, annot=False,
-    figsize=(20, 16)
-)
-plt.savefig(os.path.join(plots_dir, "dors.correlation_clustering.pdf"), bbox_inches="tight")
+    # get normalized counts only for CLL samples
+    sel_samples = [sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.sampleID != to_exclude_sample_id]
+    significant_values = significant[[sample.name for sample in sel_samples]]
 
-# cluster samples and sites
-# plot heatmap of differentialy open sites
-clustermap = sns.clustermap(
-    significant,
-    cmap=plt.get_cmap('YlGn'),
-    square=False, annot=False,
-)
-plt.savefig(os.path.join(plots_dir, "dors.clustering.pdf"), bbox_inches="tight")
+    # get nice sample IDs
+    significant_values.columns = map(name_to_repr, significant_values.columns)
 
-# get cluster assignments from linkage matrix
-lm = clustermap.dendrogram_col.linkage
+    # get colors depending on feature (gender, )
+    if feature == "mutated":
+        method = "mutation"
+    elif feature == "patient_gender":
+        method = "gender"
+    sample_colors = samples_to_color(sel_samples, method=method)
 
-# plot dendrogram
-# determine height to separate clusters
-dendr = dendrogram(lm, labels=significant.columns, color_threshold=65)
-plt.savefig(os.path.join(plots_dir, "dors.dendrogram.pdf"), bbox_inches="tight")
+    # correlate samples on significantly different sites
+    corr_cluster = sns.clustermap(
+        significant_values.corr(),
+        method="complete",
+        annot=False,
+        col_colors=sample_colors,
+        row_colors=sample_colors
+    )
+    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_correlation.svg" % method), bbox_inches="tight")
 
-# plt.show()
+    # cluster samples and sites
+    # plot heatmap of differentialy open sites
+    sites_cluster = sns.clustermap(
+        significant_values,
+        cmap=plt.get_cmap('YlGn'),
+        annot=False,
+        standard_scale=0,
+        yticklabels=False,
+        col_colors=sample_colors
+    )
+    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.svg" % method), bbox_inches="tight")
+    plt.close('all')
 
-# assign each sample to one cluster
-clusters = get_cluster_classes(dendr)
+    # REGION CARACTERIZATION
+    # get dendrogram data and plot it,
+    # determine height to separate clusters
+    # this must be done empirically for each feature type
+    thresholds = {"mutation": 28}
 
-# concatenate clusters on the unmutated side
-unmutated_cluster = ['b', 'c', 'm', 'y']
+    dendr = dendrogram(sites_cluster.dendrogram_row.linkage, color_threshold=thresholds[feature], labels=significant_values.index)  # labels have to be reset for some reason... grrrr!
+    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.sites.dendrogram.svg" % method), bbox_inches="tight")
 
-# annotate samples with cluster
-new_samples = list()
-for cluster, sample_names in clusters.items():
-    for sample_name in sample_names:
-        s = [sample for sample in analysis.samples if sample.name == sample_name][0]
-        s.cluster = cluster if cluster not in unmutated_cluster else 'b'
-        new_samples.append(s)
-samples = new_samples
+    # assign a cluster to each peak
+    site_cluster_dict = dict(zip(dendr['ivl'], dendr['color_list']))
+    significant['cluster'] = [site_cluster_dict[x] if x in site_cluster_dict.keys() else None for x in significant.index]
+
+    # for each cluster, make bed file, save, run lola, etc...
+    for cluster in significant['cluster'].unique():
+        if cluster is None:
+            continue
+        elif cluster == "r":
+            cluster_name = "uCLL"
+        elif cluster == "g":
+            cluster_name = "mCLL"
+
+        # make bed file, save
+        bed_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.sites.%s.bed" % (method, cluster_name))
+        significant[significant['cluster'] == cluster]['chrom', 'start', 'end'].to_csv(bed_file, index=False)
+
+    # FURTHER SAMPLE CARACTERIZATION (divide in more clusters)
+    # get cluster assignments from linkage matrix
+    lm = sites_cluster.dendrogram_col.linkage
+
+    # plot dendrogram
+    # determine height to separate clusters
+    dendr = dendrogram(lm, labels=significant_values.columns)  # color_threshold=20
+    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.samples.dendrogram.svg" % method), bbox_inches="tight")
+
+    # assign each sample to one cluster
+    clusters = get_cluster_classes(dendr)
+
+    # concatenate clusters on the unmutated side
+    unmutated_cluster = ['b', 'c', 'm', 'y']
+
+    # annotate samples with cluster
+    new_samples = list()
+    for cluster, sample_names in clusters.items():
+        for sample_name in sample_names:
+            s = [sample for sample in analysis.samples if sample.name == sample_name][0]
+            s.cluster = cluster if cluster not in unmutated_cluster else 'b'
+            new_samples.append(s)
+    samples = new_samples
 
 # Repeat again independence test and
 # get all differential sites (from 3 comparisons)
@@ -1295,7 +1386,7 @@ sns.clustermap(
     square=True, annot=False,
     figsize=(20, 16)
 )
-plt.savefig(os.path.join(plots_dir, "dors.3_populations.correlation_clustering.pdf"), bbox_inches="tight")
+plt.savefig(os.path.join(plots_dir, "dors.3_populations.correlation_clustering.svg"), bbox_inches="tight")
 
 # heatmap all significat sites
 clustermap = sns.clustermap(
@@ -1303,7 +1394,7 @@ clustermap = sns.clustermap(
     cmap=plt.get_cmap('YlGn'),
     square=False, annot=False
 )
-plt.savefig(os.path.join(plots_dir, "dors.3_populations.clustering.pdf"), bbox_inches="tight")
+plt.savefig(os.path.join(plots_dir, "dors.3_populations.clustering.svg"), bbox_inches="tight")
 
 # export dors regions
 for g1, g2 in itertools.combinations(['r', 'g', 'b'], 2):
