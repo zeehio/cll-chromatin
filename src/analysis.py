@@ -62,9 +62,11 @@ class Analysis(object):
 
     @pickle_me
     def get_consensus_sites(self):
-        # GET CONSENSUS SITES ACROSS SAMPLES
+        # GET CONSENSUS SITES ACROSS CLL ATAC-SEQ SAMPLES
+        samples = [sample for sample in self.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"]
+
         peak_count = dict()
-        for i, sample in enumerate(self.samples):
+        for i, sample in enumerate(samples):
             print(sample.name)
             # Get summits of peaks and window around them
             peaks = pybedtools.BedTool(sample.peaks)  # .slop(g=pybedtools.chromsizes('hg19'), b=250)
@@ -90,8 +92,8 @@ class Analysis(object):
 
         # Store
         self.sites = sites
-        pickle.dump(peak_count, open(os.path.join(self.data_dir, "cll_peaks.cum_peak_count.bed"), 'wb'))
         self.peak_count = peak_count
+        pickle.dump(peak_count, open(os.path.join(self.data_dir, "cll_peaks.cum_peak_count.pickle"), 'wb'))
 
     def calculate_peak_support(self):
         # calculate support (number of samples overlaping each merged peak)
@@ -108,11 +110,14 @@ class Analysis(object):
         support["support"] = support[range(len(self.samples))].apply(lambda x: sum([i if i <= 1 else 1 for i in x]) / float(len(self.samples)), axis=1)
         # save
         support.to_csv(os.path.join(self.data_dir, "cll_peaks.support.csv"), index=False)
-        support = pd.read_csv(os.path.join(self.data_dir, "cll_peaks.support.csv"))
 
         self.support = support
 
     def get_peak_gene_annotation(self):
+        """
+        Annotates peaks with closest gene.
+        Needs files downloaded by prepare_external_files.py
+        """
         # create bedtool with hg19 TSS positions
         hg19_ensembl_tss = pybedtools.BedTool(os.path.join(self.data_dir, "ensembl_tss.bed"))
         # get closest TSS of each cll peak
@@ -137,8 +142,13 @@ class Analysis(object):
 
         # save distances to all TSSs (for plotting)
         self.closest_tss_distances = closest['blockCount'].tolist()
+        pickle.dump(self.closest_tss_distances, open(os.path.join(self.data_dir, "cll_peaks.closest_tss_distances.pickle"), 'wb'))
 
     def get_peak_genomic_location(self):
+        """
+        Annotates peaks with its type of genomic location.
+        Needs files downloaded by prepare_external_files.py
+        """
         regions = [
             "ensembl_genes.bed", "ensembl_tss2kb.bed",
             "ensembl_utr5.bed", "ensembl_exons.bed", "ensembl_introns.bed", "ensembl_utr3.bed"]
@@ -174,15 +184,18 @@ class Analysis(object):
         region_annotation_b = region_annotation_b.reset_index(drop=True).drop_duplicates()
         # join various regions per peak
         self.region_annotation = region_annotation.groupby(['chrom', 'start', 'end']).aggregate(lambda x: ",".join(set([str(i) for i in x]))).reset_index()
+        self.region_annotation_b = region_annotation_b.groupby(['chrom', 'start', 'end']).aggregate(lambda x: ",".join(set([str(i) for i in x]))).reset_index()
 
         # save to disk
         self.region_annotation.to_csv(os.path.join(self.data_dir, "cll_peaks.region_annotation.csv"), index=False)
-
-        # keep long list of regions for plotting later
-        self.all_region_annotation = region_annotation['genomic_region']
-        self.all_region_annotation_backround = region_annotation_b['genomic_region']
+        self.region_annotation_b.to_csv(os.path.join(self.data_dir, "cll_peaks.region_annotation_background.csv"), index=False)
 
     def get_peak_chromatin_state(self):
+        """
+        Annotates peaks with chromatin states.
+        (For now states are from CD19+ cells).
+        Needs files downloaded by prepare_external_files.py
+        """
         # create bedtool with CD19 chromatin states
         states_cd19 = pybedtools.BedTool(os.path.join(self.data_dir, "E032_15_coreMarks_mnemonics.bed"))
 
@@ -198,12 +211,12 @@ class Analysis(object):
         self.chrom_state_annotation = chrom_state_annotation.groupby(['chrom', 'start', 'end']).aggregate(lambda x: ",".join(x)).reset_index()
         self.chrom_state_annotation.columns = ['chrom', 'start', 'end', 'chromatin_state']
 
+        self.chrom_state_annotation_b = chrom_state_annotation_b.groupby(['chrom', 'start', 'end']).aggregate(lambda x: ",".join(x)).reset_index()
+        self.chrom_state_annotation_b.columns = ['chrom', 'start', 'end', 'chromatin_state']
+
         # save to disk
         self.chrom_state_annotation.to_csv(os.path.join(self.data_dir, "cll_peaks.chromatin_state.csv"), index=False)
-
-        # # keep long list of chromatin states (for plotting)
-        self.all_chrom_state_annotation = chrom_state_annotation['thickStart'].tolist()
-        self.all_chrom_state_annotation_background = chrom_state_annotation_b['thickStart'].tolist()
+        self.chrom_state_annotation_b.to_csv(os.path.join(self.data_dir, "cll_peaks.chromatin_state_background.csv"), index=False)
 
     @pickle_me
     def measure_coverage(self):
@@ -354,14 +367,15 @@ class Analysis(object):
         axis.plot(self.peak_count.keys(), self.peak_count.values(), 'o')
         axis.set_ylim(0, max(self.peak_count.values()) + 5000)
         axis.set_title("Cumulative peaks per sample")
-        axis.xlabel("Number of samples")
-        axis.ylabel("Total number of peaks")
+        axis.set_xlabel("Number of samples")
+        axis.set_ylabel("Total number of peaks")
         fig.savefig(os.path.join(self.plots_dir, "total_peak_count.per_patient.pdf"), bbox_inches="tight")
 
         # Loop at summary statistics:
         # interval lengths
         fig, axis = plt.subplots()
         sns.distplot([interval.length for interval in self.sites], bins=300, kde=False, ax=axis)
+        axis.set_xlim(0, 2000)  # cut it at 2kb
         axis.set_xlabel("peak width (bp)")
         axis.set_ylabel("frequency")
         fig.savefig(os.path.join(self.plots_dir, "cll_peaks.lengths.pdf"), bbox_inches="tight")
@@ -375,21 +389,26 @@ class Analysis(object):
         # Plot distance to nearest TSS
         fig, axis = plt.subplots()
         sns.distplot(self.closest_tss_distances, bins=200, ax=axis)
+        axis.set_xlim(0, 100000)  # cut it at 100kb
         axis.set_xlabel("distance to nearest TSS (bp)")
         axis.set_ylabel("frequency")
         fig.savefig(os.path.join(self.plots_dir, "cll_peaks.tss_distance.pdf"), bbox_inches="tight")
 
         # Plot genomic regions
+        # these are just long lists with genomic regions
+        all_region_annotation = [item for sublist in self.region_annotation['genomic_region'].apply(lambda x: x.split(",")) for item in sublist]
+        all_region_annotation_b = [item for sublist in self.region_annotation_b['genomic_region'].apply(lambda x: x.split(",")) for item in sublist]
+
         # count region frequency
-        count = Counter(self.all_region_annotation)
+        count = Counter(all_region_annotation)
         data = pd.DataFrame([count.keys(), count.values()]).T
         data = data.sort([1], ascending=False)
         # also for background
-        background = Counter(self.all_region_annotation_backround)
+        background = Counter(all_region_annotation_b)
         background = pd.DataFrame([background.keys(), background.values()]).T
         background = background.ix[data.index]  # same sort order as in the real data
 
-        fig, axis = plt.subplots(2, sharex=True)
+        fig, axis = plt.subplots(2, sharex=True, sharey=True)
         sns.barplot(x=0, y=1, data=data, ax=axis[0])
         sns.barplot(x=0, y=1, data=background, ax=axis[1])
         axis[0].set_title("ATAC-seq peaks")
@@ -403,16 +422,20 @@ class Analysis(object):
         fig.savefig(os.path.join(self.plots_dir, "cll_peaks.genomic_regions.pdf"), bbox_inches="tight")
 
         # Plot chromatin states
+        # get long list of chromatin states (for plotting)
+        all_chrom_state_annotation = [item for sublist in self.chrom_state_annotation['chromatin_state'].apply(lambda x: x.split(",")) for item in sublist]
+        all_chrom_state_annotation_b = [item for sublist in self.chrom_state_annotation_b['chromatin_state'].apply(lambda x: x.split(",")) for item in sublist]
+
         # count region frequency
-        count = Counter(self.all_chrom_state_annotation)
+        count = Counter(all_chrom_state_annotation)
         data = pd.DataFrame([count.keys(), count.values()]).T
         data = data.sort([1], ascending=False)
         # also for background
-        background = Counter(self.all_chrom_state_annotation_background)
+        background = Counter(all_chrom_state_annotation_b)
         background = pd.DataFrame([background.keys(), background.values()]).T
         background = background.ix[data.index]  # same sort order as in the real data
 
-        fig, axis = plt.subplots(2, sharex=True)
+        fig, axis = plt.subplots(2, sharex=True, sharey=True)
         sns.barplot(x=0, y=1, data=data, ax=axis[0])
         sns.barplot(x=0, y=1, data=background, ax=axis[1])
         axis[0].set_title("ATAC-seq peaks")
@@ -1042,7 +1065,7 @@ if generate:
     analysis.get_consensus_sites()
 else:
     analysis.sites = pybedtools.BedTool(os.path.join(data_dir, "cll_peaks.bed"))
-    analysis.peak_count = pickle.load(open(os.path.join(data_dir, "cll_peaks.cum_peak_count.bed"), 'rb'))
+    analysis.peak_count = pickle.load(open(os.path.join(data_dir, "cll_peaks.cum_peak_count.pickle"), 'rb'))
 
 # Calculate peak support
 if generate:
@@ -1055,19 +1078,21 @@ if generate:
     analysis.get_peak_gene_annotation()
 else:
     analysis.gene_annotation = pd.read_csv(os.path.join(data_dir, "cll_peaks.gene_annotation.csv"))
+    analysis.closest_tss_distances = pickle.load(open(os.path.join(data_dir, "cll_peaks.closest_tss_distances.pickle"), 'rb'))
 
 # Annotate peaks with genomic regions
 if generate:
     analysis.get_peak_genomic_location()
 else:
     analysis.region_annotation = pd.read_csv(os.path.join(data_dir, "cll_peaks.region_annotation.csv"))
+    analysis.region_annotation_b = pd.read_csv(os.path.join(data_dir, "cll_peaks.region_annotation_background.csv"))
 
-# Annotate peaks with ChromHMM state from CD19 cells
+# Annotate peaks with ChromHMM state from CD19+ cells
 if generate:
     analysis.get_peak_chromatin_state()
 else:
     analysis.chrom_state_annotation = pd.read_csv(os.path.join(data_dir, "cll_peaks.chromatin_state.csv"))
-
+    analysis.chrom_state_annotation_b = pd.read_csv(os.path.join(data_dir, "cll_peaks.chromatin_state_background.csv"))
 
 # WORK WITH "OPENNESS"
 # Get coverage values for each peak in each sample
