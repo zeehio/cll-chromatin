@@ -101,6 +101,8 @@ def piq_prepare_bams(bams, output_cache):
     :type bams: list
     :type output_cache: str
     """
+    # add before:
+    # salloc -c 12 -p develop --mem-per-cpu 8000
     cmd = """
     Rscript ~/workspace/piq-single/bam2rdata.r ~/workspace/piq-single/common.r {0} """.format(output_cache)
     cmd += " ".join(bams)
@@ -301,6 +303,62 @@ for sample in prj.samples[1:5]:
 # submit jobs (to footprint)
 for job in jobs:
     tk.slurmSubmitJob(job)
+
+
+# FOOTPRINT GROUPS UNMUTATED/MUTATED
+
+# get unmutated/mutated samples
+muts = list()
+unmuts = list()
+for sample in prj.samples:
+    if sample.sampleID in to_exclude_sample_id or sample.technique != "ATAC-seq" or sample.cellLine != "CLL" or sample.readType == "SE":
+        continue
+    if sample.mutated is True:
+        muts.append(sample.filteredshifted)
+    elif sample.mutated is False:
+        unmuts.append(sample.filteredshifted)
+
+# merge bam files manually
+muts_bam = os.path.join(data_dir, "CLL_all_igvhmutated_samples.filteredshifted.bam")
+muts_cache = os.path.join(data_dir, "CLL_all_igvhmutated_samples.filteredshifted.RData")
+unmuts_bam = os.path.join(data_dir, "CLL_all_igvhunmutated_samples.filteredshifted.bam")
+unmuts_cache = os.path.join(data_dir, "CLL_all_igvhunmutated_samples.filteredshifted.RData")
+
+os.system("sambamba merge -t 12 -p %s " % muts_bam + " ".join(muts))
+os.system("sambamba merge -t 12 -p %s " % unmuts_bam + " ".join(unmuts))
+
+# prepare merged bam files from IGVH mutated and unmutated samples
+cmd = piq_prepare_bams(muts, muts_cache)
+os.system(cmd)
+cmd = piq_prepare_bams(unmuts, unmuts_cache)
+os.system(cmd)
+
+# prepare also Nextera background
+nextera_dir = "/scratch/users/arendeiro/PGA1Nextera"
+nextera_bam = os.path.join(nextera_dir, "PGA_0001_Nextera-2.bam")
+nextera_cache = os.path.join(nextera_dir, "PGA_0001_Nextera-2.RData")
+
+cmd = piq_prepare_bams([nextera_bam], nextera_cache)
+os.system(cmd)
+
+# run footprinting
+os.mkdir(os.path.join(scratch_dir, "mutated"))
+cmds = piq_footprint(
+    os.path.join(data_dir, "CLL_all_igvhmutated_samples.filteredshifted.RData"), n_motifs, scratch_dir,
+    results_dir=os.path.join(scratch_dir, "mutated")
+)
+for cmd in cmds:
+    os.system(cmd)
+os.mkdir(os.path.join(scratch_dir, "unmutated"))
+cmds = piq_footprint(os.path.join(data_dir, "CLL_all_igvhunmutated_samples.filteredshifted.RData"), n_motifs, scratch_dir, os.path.join(scratch_dir, "unmutated"))
+for cmd in cmds:
+    os.system(cmd)
+
+
+# parse output,
+# connect each motif to a gene
+piq_parse_output(os.path.join(scratch_dir, "mutated"))
+
 
 # NETWORKS
 # Network construction:

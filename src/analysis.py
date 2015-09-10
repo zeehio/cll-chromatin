@@ -1083,7 +1083,7 @@ def goverlap(genes_file, universe_file, output_file):
     """
     cmd = """goverlap -a {0} -s hsap -n 12 -l 0.10 -x {1} > {2}
     """.format(genes_file, universe_file, output_file)
-    os.system(cmd)
+    return cmd
 
 
 to_exclude_sample_id = ['1-5-45960']
@@ -1255,6 +1255,8 @@ features = {
     "patient_gender": ("F", "M"),  # gender
     # "", ("", ""),  # treat/untreated
     # "relapse", ("True", "False") # relapse or before relapse
+    # "treatment_1st", ("untreated", "Chlor")  # untreated vs 1st line chemotherapy
+    # "treatment_2nd", ("untreated", "Ibrut")  # untreated vs ibrutinib
 }
 
 for feature, (group1, group2) in features.items():
@@ -1376,7 +1378,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     # write gene names to file
     all_cll_genes_file = os.path.join(data_dir, "cll_peaks.closest_genes.txt")
     with open(all_cll_genes_file, 'w') as handle:
-        for gene in significant['gene_name']:
+        for gene in analysis.coverage_qnorm_annotated['gene_name']:
             handle.write(gene + "\n")
     feature_genes_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.txt" % method)
     with open(feature_genes_file, 'w') as handle:
@@ -1384,7 +1386,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
             handle.write(gene + "\n")
     output_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.go_enrichment.tsv" % method)
     # test enrichements of closest gene function: GO, KEGG, OMIM
-    goverlap(feature_genes_file, all_cll_genes_file, output_file)
+    cmd = goverlap(feature_genes_file, all_cll_genes_file, output_file)
 
     # Motifs
     # de novo motif finding - enrichment

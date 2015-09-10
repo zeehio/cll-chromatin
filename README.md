@@ -44,6 +44,7 @@ As defined in [`pipelines`](https://github.com/afrendeiro/pipelines):
 - Footprinting
     - close loop with PIQ
     - try using Nextera background
+    - Test on DNAse (reproduce Saeed et al 2014)
     - Try uCLL/mCLL/iCLL footprinting
     - Filter motifs from not expressed stuff in CLL + other criteria
 - Predict:
