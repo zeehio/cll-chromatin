@@ -22,52 +22,53 @@ Sample names are a concatenation of any of the existing annotation fields: `cell
 ### Project structure
 As defined in [`pipelines`](https://github.com/afrendeiro/pipelines):
 
-For all my projects:
-
 `projectsroot`: /data/groups/lab_bock/shared/projects/
 
 `htmlroot`: /data/groups/lab_bock/public_html/arendeiro/
 
 
-# Todo
+# Analysis
 
-## Data production
-+ Open-chromatin
-    + ATAC-seq
-+ Histone mods (possible):
-    + H3K27AC
-    + H3K4ME1
-    + H3K4ME3?
-+ RNA?
+### To-do list
+- Characterize u/mCLL:
+    - LOLA, GO, KEGG, motifs
+    - differential expression between mCLL and uCLL (log2 fold-change + p-value)
+    - isolate the iCLLs: repeat above
+- New comparisons (after each, do as above comparison):
+    - Untreated/Treated
+    - Relapse
+    - (mutations: p53, del13q, del11, tri12)
+- Disease progression
+    - Get same patient
+    -Use time-series method to cluster patterns depending on 'direction' with time
+- Footprinting
+    - close loop with PIQ
+    - try using Nextera background
+    - Try uCLL/mCLL/iCLL footprinting
+    - Filter motifs from not expressed stuff in CLL + other criteria
+- Predict:
+    - Minimal number of sites to detect a trait
+    - ROC curves
+    - in-silico drug prescription (based on genes under regulation by these peaks)
+- Correlate with expression
+    - Get spanish gene expresion data
+    - Correlate with differentially open sites
+- Nucleosome position differences:
+    - Call nucleosomes and dyads using NucleoATAC
+    - Look for global nucleosome positioning differences between clusters and compared with controls
+    - Look for global nucleosome positioning differences within groups of gene classes (e.g. genes involved in cellular proliferation, cell cycle, B-cell biology and other classes).
+- Once B-cell population data is here:
+    - cell-type-specific signatures
+    - revisit LOLA
+    - revisit drug comparisons (see if cells become more like progenitors after treatment)
+    + *de novo* enhancer detection
+        + compare with other Naive/Memory B-cells from patients/donors
 
-## Ideas
-+ get differentialy open regions between groups:
-    + correlate each peak a variable from patient data, plot p-values for each variable along heatmap
-    + test enrichment of each groups of regions with:
-        + LOLA
-        + nearest gene: KEGG pathways, GO, OMIM
-+ GRNs
-    + Footprint-based
-        + Footprint each patient or groups of patients
-        + Establish TF -> gene relation
-        + Compare networks
+### For the future
 + Co-regulated cis-regulatory modules
     + correlate (or use other measurement) peaks
     + if unsuccessful, do the same with tiling regions instead of peaks
-+ Correlate chromatin openness along genes with gene expression
-    + use spanish data
 + genetic variants/QTLs:
     + http://www.nature.com/nmeth/journal/v12/n5/full/nmeth.3326.html
     + http://biorxiv.org/content/early/2015/04/30/018788
     + enrichment in GWAS variants
-+ nucleosome position differences:
-    + Call nucleosomes and dyads using NucleoATAC
-    + Look for global nucleosome positioning differences between clusters and compared with controls
-    + Look for global nucleosome positioning differences within groups of gene classes (e.g. genes involved in cellular proliferation, cell cycle, B-cell biology and other classes).
-+ *de novo* enhancer detection
-    + compare with other Naive/Memory B-cells from patients/donors
-+ *Time-lapse* of same-patient data:
-    + Treat each sample as independent, test differences, measure enrichments
-    + Clonal evolution within patients (if genotyped)
-+ Finding new biomarkers
-    + Look at earliest points (if possible before diagnosis) for consistent activation
