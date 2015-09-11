@@ -30,6 +30,7 @@ As defined in [`pipelines`](https://github.com/afrendeiro/pipelines):
 # Analysis
 
 ### To-do list
+#### 1
 - Characterize u/mCLL:
     - LOLA, GO, KEGG, motifs
     - differential expression between mCLL and uCLL (log2 fold-change + p-value)
@@ -38,6 +39,15 @@ As defined in [`pipelines`](https://github.com/afrendeiro/pipelines):
     - Untreated/Treated
     - Relapse
     - (mutations: p53, del13q, del11, tri12)
+- Characterize CLL (Cancer)
+    - Get ATAC-seq/DNase data from T-cells, PBMCs, Myoblasts, Dendritic cells, MSCs, GM12878, K562, Raji cells, RJ2.2.5 cells, IMR90, Ewing line SKMNC,
+    - Get CLL-specific sites
+    - Correlate sites
+    - characterize CLL-specific sites
+        - lola, go, etc...
+        - Build network with these (genes with r >=0.7)
+
+#### 2
 - Disease progression
     - Get same patient
     -Use time-series method to cluster patterns depending on 'direction' with time
@@ -54,18 +64,20 @@ As defined in [`pipelines`](https://github.com/afrendeiro/pipelines):
 - Correlate with expression
     - Get spanish gene expresion data
     - Correlate with differentially open sites
+
+#### 3
 - Nucleosome position differences:
     - Call nucleosomes and dyads using NucleoATAC
     - Look for global nucleosome positioning differences between clusters and compared with controls
     - Look for global nucleosome positioning differences within groups of gene classes (e.g. genes involved in cellular proliferation, cell cycle, B-cell biology and other classes).
 - Once B-cell population data is here:
-    - cell-type-specific signatures
-    - revisit LOLA
+    - get CLL-specific sites, characterize again
     - revisit drug comparisons (see if cells become more like progenitors after treatment)
+    - use cell-type-specific signatures to characterize CLL-specific
     + *de novo* enhancer detection
         + compare with other Naive/Memory B-cells from patients/donors
 
-### For the future
+#### future
 + Co-regulated cis-regulatory modules
     + correlate (or use other measurement) peaks
     + if unsuccessful, do the same with tiling regions instead of peaks
