@@ -1042,10 +1042,10 @@ def get_cluster_classes(dendrogram, label='ivl'):
     return cluster_classes
 
 
-def run_lola(bed_files, universe_file, output_folder):
+def lola(bed_files, universe_file, output_folder):
     import rpy2.robjects as robj
 
-    lola = robj.r("""
+    run = robj.r("""
         function(bedFiles, universeFile, outputFolder) {
             library("bedr")
             library("LOLA")
@@ -1074,7 +1074,29 @@ def run_lola(bed_files, universe_file, output_folder):
     """)
 
     # convert the pandas dataframe to an R dataframe
-    lola(bed_files, universe_file, output_folder)
+    run(bed_files, universe_file, output_folder)
+
+
+def seq2pathway():
+    """
+    """
+    import rpy2.robjects as robj
+
+    run = robj.r("""
+        function() {
+            library("seq2pathway")
+
+            runseq2pathway(
+                inputfile, search_radius=150000, promoter_radius=200,
+                genome=c("hg19"),
+                adjacent=FALSE, SNP=FALSE, PromoterStop=FALSE, NearestTwoDirection=TRUE,
+                DataBase=c("GOterm"), FAIMETest=FALSE, FisherTest=TRUE,
+                collapsemethod=c("MaxMean", "function", "ME", "maxRowVariance", "MinMean", "absMinMean", "absMaxMean", "Average"),
+                alpha=5, B=100, na.rm=F, min_Intersect_Count=5
+            )
+        }
+    """)
+    run()
 
 
 def goverlap(genes_file, universe_file, output_file):
@@ -1387,7 +1409,9 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
     # run
-    run_lola(bed_file, universe_file, output_folder)
+    lola(bed_file, universe_file, output_folder)
+
+    # seq2pathway
 
     # GO Terms
     # write gene names to file
@@ -1486,7 +1510,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
         # run
-        run_lola(bed_file, universe_file, output_folder)
+        lola(bed_file, universe_file, output_folder)
 
         # GO Terms
         # write gene names to file
