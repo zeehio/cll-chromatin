@@ -1248,7 +1248,8 @@ if generate:
         analysis.mds_analysis(most_variable_data[[sample.name for sample in analysis.samples]])
         analysis.plot_mds(n, suffix="%s" % filtering_name)
 
-# COMPARISON mCLL - uCLL
+
+# TRAIT-SPECIFIC SITES
 # test if sites come from same population based on normalized, loged2, coverage values
 features = {
     "mutated": (True, False),  # igvh mutation
@@ -1257,47 +1258,61 @@ features = {
     # "relapse", ("True", "False") # relapse or before relapse
     # "treatment_1st", ("untreated", "Chlor")  # untreated vs 1st line chemotherapy
     # "treatment_2nd", ("untreated", "Ibrut")  # untreated vs ibrutinib
+    # possible other groups:
+    # ['SF3B1', 'ATM', 'del13', 'del11q', 'tri12', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
 }
-
-for feature, (group1, group2) in features.items():
-    g1 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group1]]
-    g2 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group2]]
-
-    p_values = list()
-    for i in range(len(analysis.coverage_qnorm_annotated)):
-        p_values.append(mannwhitneyu(g1.ix[i], g2.ix[i])[1])
-
-    q_values = pd.Series(multipletests(p_values)[1])
-
-    # add to annotation
-    analysis.coverage_qnorm_annotated["p_value_" + feature] = p_values
-    analysis.coverage_qnorm_annotated["q_value_" + feature] = q_values
-
-analysis.to_pickle()
-
-allmuts = ['SF3B1', 'ATM', 'del13', 'del11q', 'tri12', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
-for mut in allmuts:
-    g1 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if mut in str(sample.mutations)]]
-    g2 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if mut not in str(sample.mutations)]]
-
-    p_values = list()
-    for i in range(len(analysis.coverage_qnorm_annotated)):
-        p_values.append(mannwhitneyu(g1.ix[i], g2.ix[i])[1])
-
-    q_values = pd.Series(multipletests(p_values)[1])
-
-    # add to annotation
-    analysis.coverage_qnorm_annotated["p_value_" + mut] = p_values
-    analysis.coverage_qnorm_annotated["q_value_" + mut] = q_values
-
-analysis.to_pickle()
 
 # get differential sites per type of feature
 for i, (feature, (group1, group2)) in enumerate(features.items()):
-    # get significant sites
-    significant = analysis.coverage_qnorm_annotated[analysis.coverage_qnorm_annotated["p_value_" + feature] < 0.0001]
+    # get groups
+    g1 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group1]]
+    g2 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group2]]
 
-    # get normalized counts only for CLL samples
+    # compute p-value, add to annotation
+    fold_change = list()
+    mean_a = list()
+    mean_b = list()
+    p_values = list()
+    for i in range(len(analysis.coverage_qnorm_annotated)):
+        # compute log2 fold-change
+        a = g1.ix[i].mean()
+        b = g2.ix[i].mean()
+        mean_a.append(a)
+        mean_b.append(b)
+        fold_change.append(np.log2(a / b))
+        # compute p-value
+        p_values.append(mannwhitneyu(g1.ix[i], g2.ix[i])[1])
+
+    # add to annotation
+    analysis.coverage_qnorm_annotated["_".join(["fold_change", feature])] = fold_change
+    analysis.coverage_qnorm_annotated["_".join(["mean", feature, str(group1)])] = mean_a
+    analysis.coverage_qnorm_annotated["_".join(["mean", feature, str(group2)])] = mean_b
+    # compute q values
+    q_values = pd.Series(multipletests(p_values)[1])
+    analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] = p_values
+    analysis.coverage_qnorm_annotated["_".join(["q_value", feature])] = q_values
+
+    # visualize distribution of fold-change, p-values
+    # A vs B
+    sns.jointplot(np.log2(1 + np.array(mean_a)), np.log2(1 + np.array(mean_b)))
+    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_fold_change.svg" % method), bbox_inches="tight")
+    plt.close('all')
+    # volcano plot (logfoldchange vs logpvalue)
+    sns.jointplot(
+        np.array(fold_change), -np.log10(np.array(p_values)),
+        stat_func=None, space=0, xlim=(-2.5, 2.5)
+    )
+    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_volcano.svg" % method), bbox_inches="tight")
+    plt.close('all')
+
+    # get significant sites
+    # TODO: perhaps filter by fold-change too
+    significant = analysis.coverage_qnorm_annotated[
+        (analysis.coverage_qnorm_annotated["p_value_" + feature] < 0.0001) &
+        (abs(analysis.coverage_qnorm_annotated["fold_change" + feature]) > 1)
+    ]
+
+    # get normalized counts in significant sites only for CLL samples
     sel_samples = [sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.sampleID != to_exclude_sample_id]
     significant_values = significant[[sample.name for sample in sel_samples]]
 
@@ -1335,7 +1350,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.svg" % method), bbox_inches="tight")
     plt.close('all')
 
-    # VARIABLE SITE CARACTERIZATION
+    # VARIABLE SITE CHARACTERIZATION
     # plot features of all sites
     significant['length'] = significant.apply(lambda x: x['end'] - x['start'], axis=1)
 
