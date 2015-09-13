@@ -113,6 +113,7 @@ def piq_prepare_bams(bams, output_cache):
 
 def piq_footprint(bam_cache, n_motifs, tmp_dir, results_dir):
     """
+    Footprint using PIQ.
     """
     cmds = list()
     for motif in range(1, n_motifs + 1):
