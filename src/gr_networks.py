@@ -141,14 +141,15 @@ def piq_to_network(results_dir, n_motifs):
     # get all cll peaks to filter data
     all_peaks = pybedtools.BedTool("data/cll_peaks.bed")
     # read in gene info
-    tsss = pd.read_csv("data/ensembl_tss.bed", sep="\t", header=None)
-    tsss.columns = ["chrom", "start", "end", "id", "score", "strand"]
+    tsss = pd.read_csv("data/hg19.refSeq.TSS.mRNA.bed", sep="\t", header=None)
+    tsss.columns = ["chrom", "start", "end", "id"]
 
     # prepare TF vs Gene matrix
     scores = pd.DataFrame(index=tsss["id"], columns=range(1, n_motifs + 1))
 
     # loop through motifs/TFs, filter and establish relationship between TF and gene
     for motif in range(1, n_motifs + 1):
+        print(motif)
         # get both forward and reverse complement PIQ output files
         result_files = list()
         for f in files:
@@ -178,6 +179,7 @@ def piq_to_network(results_dir, n_motifs):
 
         # If empty give 0 to every gene for this TF
         if len(footprints) < 1:
+            print "continuing 1"
             continue
 
         footprints[['chr', 'start', 'end', 'pwm', 'shape', 'score', 'purity']].to_csv(os.path.join("tmp.bed"), sep="\t", index=False, header=False)
@@ -188,6 +190,7 @@ def piq_to_network(results_dir, n_motifs):
 
         # If empty give 0 to every gene for this TF
         if len(footprints) < 1:
+            print "continuing 2"
             continue
 
         # CONNECT
@@ -396,7 +399,8 @@ for cmd in cmds:
 # parse output,
 # connect each motif to a gene
 for sample in prj.samples[1:5]:
-    scores = piq_to_network(os.path.join(scratch_dir, "mutated"), n_motifs)
+    print sample
+    scores = piq_to_network(os.path.join(sample.dirs.sampleRoot, "footprints"), n_motifs)
     scores.to_csv(os.path.join(sample.dirs.sampleRoot, "footprints", "piq.TF-gene_scores.csv"))
 
     # Investigate the distribution of scores.

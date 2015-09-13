@@ -76,6 +76,12 @@ tsss = pybedtools.BedTool("../data/GRCh37_hg19_ensembl_genes.tss.bed")
 tsss.sort().saveas("../data/GRCh37_hg19_ensembl_genes.tss.bed")
 
 
+# Get refseq bed file from UCSC, add 1 bp upstream, name as hg19.refSeq.TSS.bed
+"sed 's/_up_1_.*//' hg19.refSeq.TSS.bed > t"
+# Filter out ncRNAs
+"grep NM t > hg19.refSeq.TSS.mRNA.bed"
+
+
 # Get roadmap CD19 perypheral blood HMM state annotation
 # read more about it here http://egg2.wustl.edu/roadmap/web_portal/chr_state_learning.html#core_15state
 roadmap_url = "http://egg2.wustl.edu/roadmap/data/byFileType/chromhmmSegmentations/ChmmModels/coreMarks/jointModel/final/"
