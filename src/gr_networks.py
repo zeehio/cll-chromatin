@@ -131,41 +131,79 @@ def piq_footprint(bam_cache, n_motifs, tmp_dir, results_dir):
     return cmds
 
 
-def piq_parse_output(results_dir, n_motifs, all_peaks):
+def piq_to_network(results_dir, n_motifs):
     """
+    Parse PIQ output, filter footprints.
+    Returns matrix with likelyhood score of each TF regulating each gene.
     """
+    # list results_dir
+    files = os.listdir(results_dir)
     # get all cll peaks to filter data
-    b = pybedtools.BedTool(all_peaks)
+    all_peaks = pybedtools.BedTool("data/cll_peaks.bed")
+    # read in gene info
+    tsss = pd.read_csv("data/ensembl_tss.bed", sep="\t", header=None)
+    tsss.columns = ["chrom", "start", "end", "id", "score", "strand"]
 
-    # get genes' TSS
+    # prepare TF vs Gene matrix
+    scores = pd.DataFrame(index=tsss["id"], columns=range(1, n_motifs + 1))
 
     # loop through motifs/TFs, filter and establish relationship between TF and gene
     for motif in range(1, n_motifs + 1):
-        # get all files in output dir
-        files = os.listdir(results_dir)
-
-        # find which file has the output (csv of matches only)
-        # (this is stupid but necessary due to PIQ handling of output file names)
+        # get both forward and reverse complement PIQ output files
+        result_files = list()
         for f in files:
-            m = re.match(r'%i.*\.RC-calls.csv$' % motif, f)
+            m = re.match(r'%i-.*\.csv$' % motif, f)
             if hasattr(m, "string"):
-                result_file = m.string
+                result_files.append(m.string)
 
         # make bed file from it
-        df = pd.read_csv(os.path.join(results_dir, result_file), index_col=0)
-        df.rename(columns={"coord": "start"})
-        df["end"] = df["start"] + 1
+        # concatenate files (forward and reverse complement are treated differently by PIQ)
+        for i, result_file in enumerate(result_files):
+            df = pd.read_csv(os.path.join(results_dir, result_file), index_col=0)
+            df.rename(columns={"coord": "start"}, inplace=True)
+            # fix coordinates
+            if "RC-calls.csv" not in result_file:
+                df["end"] = df["start"] + 1
+            else:
+                df["end"] = df["start"]
+                df["start"] = df["start"] - 1
+            # concatenate
+            if i == 0:
+                df2 = df
+            else:
+                df2 = pd.concat([df, df2])
 
-        df[['chr', 'start', 'end', 'pwm', 'shape', 'score', 'purity']].to_csv(os.path.join("tmp.bed"), index=False, header=False)
+        # Filter for purity
+        footprints = df2[df2["purity"] > 0.7]
+
+        # If empty give 0 to every gene for this TF
+        if len(footprints) < 1:
+            continue
+
+        footprints[['chr', 'start', 'end', 'pwm', 'shape', 'score', 'purity']].to_csv(os.path.join("tmp.bed"), sep="\t", index=False, header=False)
 
         # filter for motifs overlapping CLL peaks
-        a = pybedtools.BedTool(os.path.join("tmp.bed"))
+        footprints = pybedtools.BedTool(os.path.join("tmp.bed")).intersect(all_peaks, wa=True).to_dataframe()
+        footprints.columns = ["chrom", "start", "end", "pwm", "shape", "score", "purity"]
 
-        a.intersect(b, wa=True).to_dataframe()
+        # If empty give 0 to every gene for this TF
+        if len(footprints) < 1:
+            continue
 
         # CONNECT
-        # Now assign a relashionship between this TF and a gene:
-        # get nearest gene TSS
+        # Now assign a score between this TF and every gene:
+        # get distance to nearest gene TSS in the same chromosome as footprint
+        for chrom in footprints["chrom"].unique():
+            # calculate the distance between each footprint and every gene in the chromosome
+            for i in tsss[tsss["chrom"] == chrom].index:
+                gene_scores = list()
+                for j in footprints[footprints["chrom"] == chrom].index:
+                    dist = abs(footprints.ix[j]["start"] - tsss.ix[i]["start"])
+                    gene_scores.append(2 * (footprints.ix[j]["purity"] - 0.5) * 10 ** -(dist / 1e6))
+                scores.loc[tsss.ix[i]["id"], motif] = sum(gene_scores)
+
+    # everything else gets 0
+    return scores.fillna(0)
 
 
 # Get path configuration
@@ -357,17 +395,12 @@ for cmd in cmds:
 
 # parse output,
 # connect each motif to a gene
-piq_parse_output(os.path.join(scratch_dir, "mutated"))
+for sample in prj.samples[1:5]:
+    scores = piq_to_network(os.path.join(scratch_dir, "mutated"), n_motifs)
+    scores.to_csv(os.path.join(sample.dirs.sampleRoot, "footprints", "piq.TF-gene_scores.csv"))
 
+    # Investigate the distribution of scores.
 
-# NETWORKS
-# Network construction:
-
-# Calculate a "regulation score" between EVERY TF and EVERY gene:
-# - for each TF, for each chromossome, sum the weighted posterior probabilities of factor A regulating gene I.
-# weigh these by dividing by the (log) of the distance of each binding site to the TSS of gene I.
-# This will give a matrix of TS-gene "regulation scores".
-# Investigate the distribution of scores.
 
 # Compare regulation across patients:
 # - for each TF, correlate the scores with the scores of all other transcription factors in the other patient.
