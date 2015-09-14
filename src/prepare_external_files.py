@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import os
+import numpy as np
 import pandas as pd
 import pybedtools
 
@@ -92,3 +93,9 @@ os.system("wget {0}{1}".format(roadmap_url, roadmap_15statesHMM))
 os.system("tar zxvf {0} {1}".format(roadmap_15statesHMM, roadmap_15statesHMM_CD19))
 os.system("gzip -d {0}".format(roadmap_15statesHMM_CD19))
 os.system("mv E032_15_coreMarks_mnemonics.bed ../data/E032_15_coreMarks_mnemonics.bed")
+
+
+# Get GOtermID - GOtermDescription mapping
+# download data from Biomart (for some reason the GOterm name cannot be get automatically)
+# http://www.ensembl.org/biomart/martview/6451fcd5296302994382deee7bd9c8eb?VIRTUALSCHEMANAME=default&ATTRIBUTES=hsapiens_gene_ensembl.default.feature_page.name_1006|hsapiens_gene_ensembl.default.feature_page.go_id&FILTERS=&VISIBLEPANEL=resultspanel
+"mv x data/goID_goName.csv"

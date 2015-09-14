@@ -17,6 +17,7 @@ import parmap
 import pysam
 import pandas as pd
 import numpy as np
+from sklearn import preprocessing
 from sklearn.preprocessing import normalize
 from sklearn.decomposition import RandomizedPCA
 from sklearn.manifold import MDS
@@ -1042,7 +1043,15 @@ def get_cluster_classes(dendrogram, label='ivl'):
     return cluster_classes
 
 
+def bed_to_fasta(bed_file, fasta_file):
+    cmd = "bedtools getfasta -fi ~/resources/genomes/hg19/hg19.fa -bed {0} -fo {1}".format(bed_file, fasta_file)
+    os.system(cmd)
+
+
 def lola(bed_files, universe_file, output_folder):
+    """
+    Performs location overlap analysis (LOLA) on bedfiles with regions sets.
+    """
     import rpy2.robjects as robj
 
     run = robj.r("""
@@ -1077,26 +1086,53 @@ def lola(bed_files, universe_file, output_folder):
     run(bed_files, universe_file, output_folder)
 
 
-def seq2pathway():
+def seq2pathway(bed_file):
     """
+    Performs seq2pathway analysis on a bedfile with a region set.
     """
     import rpy2.robjects as robj
+    import pandas.rpy.common as com
 
     run = robj.r("""
-        function() {
+        function(bed_file) {
             library("seq2pathway")
 
-            runseq2pathway(
-                inputfile, search_radius=150000, promoter_radius=200,
+            input_df = read.table(bed_file)
+
+            results = runseq2pathway(
+                input_df, search_radius=150000, promoter_radius=2000,
                 genome=c("hg19"),
-                adjacent=FALSE, SNP=FALSE, PromoterStop=FALSE, NearestTwoDirection=TRUE,
-                DataBase=c("GOterm"), FAIMETest=FALSE, FisherTest=TRUE,
+                adjacent=FALSE, SNP=FALSE, PromoterStop=TRUE, NearestTwoDirection=TRUE,
+                DataBase=c("GOterm", "MsigDB_C5", 'MsigDB_C6'), FAIMETest=FALSE, FisherTest=TRUE,
                 collapsemethod=c("MaxMean", "function", "ME", "maxRowVariance", "MinMean", "absMinMean", "absMaxMean", "Average"),
                 alpha=5, B=100, na.rm=F, min_Intersect_Count=5
             )
+            # extract content
+            BP = do.call(rbind.data.frame, results$gene2pathway_result.FET$GO_BP)
+            MF = do.call(rbind.data.frame, results$gene2pathway_result.FET$GO_MF)
+            CC = do.call(rbind.data.frame, results$gene2pathway_result.FET$GO_CC)
+
+            return(results)
         }
     """)
-    run()
+    # convert to Python objects
+    results = com.convert_robj(run(bed_file))
+    # get only pathway results
+    results = results['gene2pathway_result.FET']
+    # concate results from different  ontologies
+    df2 = pd.DataFrame()
+    for ontology in ['MF', 'CC', 'BP']:
+        df = results["GO_" + ontology]
+        df['ontology'] = ontology
+        df2 = pd.concat([df2, df], ignore_index=True)
+
+    # intersect with GO term ID and name
+    names = pd.read_csv(os.path.join(data_dir, "goID_goName.csv"))
+    names.columns = ["Name", "GOID"]
+
+    df2 = df2.merge(names)
+
+    return df2
 
 
 def goverlap(genes_file, universe_file, output_file):
@@ -1105,6 +1141,24 @@ def goverlap(genes_file, universe_file, output_file):
     """
     cmd = """goverlap -a {0} -s hsap -n 12 -l 0.10 -x {1} > {2}
     """.format(genes_file, universe_file, output_file)
+    return cmd
+
+
+def meme(input_fasta, output_dir):
+    """
+    De novo motif finding with MEME-chip.
+    """
+    cmd = """meme-chip \\
+    -meme-p 12 \\
+    -meme-minw 6 -meme-maxw 30 -meme-nmotifs 20 \\
+    -dreme-e 0.05 \\
+    -centrimo-score 5.0 \\
+    -centrimo-ethresh 10.0 \\
+    -ccut 147 \\
+    -db ~/resources/motifs/motif_databases/HUMAN/HOCOMOCOv9.meme -meme-mod zoops \\
+    -oc {0} \\
+    {1}
+    """.format(output_dir, input_fasta)
     return cmd
 
 
@@ -1285,11 +1339,14 @@ features = {
 }
 
 # get differential sites per type of feature
+# to overide:
+# i, (feature, (group1, group2)) = (0, (features.items()[0]))
 for i, (feature, (group1, group2)) in enumerate(features.items()):
     # get groups
     g1 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group1]]
     g2 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group2]]
 
+    # ANNOTATE
     # compute p-value, add to annotation
     fold_change = list()
     mean_a = list()
@@ -1314,6 +1371,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] = p_values
     analysis.coverage_qnorm_annotated["_".join(["q_value", feature])] = q_values
 
+    # VISUALIZE
     # visualize distribution of fold-change, p-values
     # A vs B
     sns.jointplot(np.log2(1 + np.array(mean_a)), np.log2(1 + np.array(mean_b)))
@@ -1330,10 +1388,15 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     # get significant sites
     # TODO: perhaps filter by fold-change too
     significant = analysis.coverage_qnorm_annotated[
-        (analysis.coverage_qnorm_annotated["p_value_" + feature] < 0.0001) &
-        (abs(analysis.coverage_qnorm_annotated["fold_change" + feature]) > 1)
+        (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.0001) &
+        (abs(analysis.coverage_qnorm_annotated["_".join(["fold_change", feature])]) > 1)
     ]
 
+    # SAVE AS BED
+    bed_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.bed" % method)
+    significant[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
+
+    # EXPLORE
     # get normalized counts in significant sites only for CLL samples
     sel_samples = [sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.sampleID != to_exclude_sample_id]
     significant_values = significant[[sample.name for sample in sel_samples]]
@@ -1372,7 +1435,71 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.svg" % method), bbox_inches="tight")
     plt.close('all')
 
-    # VARIABLE SITE CHARACTERIZATION
+    # # pca
+
+    # x = significant_values.values  # returns a numpy array
+    # min_max_scaler = preprocessing.Normalizer()
+    # x_scaled = min_max_scaler.fit_transform(x)
+    # x = pd.DataFrame(x_scaled)
+    # # random PCA
+    # pca = RandomizedPCA()
+    # pca_fit = pca.fit(x).transform(x)
+    # # plot
+    # variance = [np.round(i * 100, 0) for i in pca.explained_variance_ratio_]
+
+    # # dependent on igvh status
+    # colors = samples_to_color(sel_samples)
+
+    # # plot
+    # fig, axis = plt.subplots(1)
+    # # 1vs2 components
+    # for i, sample in enumerate(sel_samples):
+    #     axis.scatter(
+    #         pca.components_[i, 0], pca.components_[i, 1],
+    #         label=name_to_repr(sample.name),
+    #         color=colors[i],
+    #         s=50
+    #     )
+    # axis.set_xlabel("PC1 - {0}% variance".format(variance[0]))
+    # axis.set_ylabel("PC2 - {0}% variance".format(variance[1]))
+    # fig.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.pca.svg" % method), bbox_inches="tight")
+
+    # # 3 components
+    # fig = plt.figure()
+    # # plot each point
+    # ax = fig.add_subplot(111, projection='3d')
+    # for i, sample in enumerate(sel_samples):
+    #     ax.scatter(
+    #         pca.components_[i, 0], pca.components_[i, 1], pca.components_[i, 2],
+    #         label=name_to_repr(sample.name),
+    #         color=colors[i],
+    #         s=50
+    #     )
+    # ax.set_xlabel("PC1 - {0}% variance".format(variance[0]))
+    # ax.set_ylabel("PC2 - {0}% variance".format(variance[1]))
+    # ax.set_zlabel("PC3 - {0}% variance".format(variance[2]))
+    # plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
+    # fig.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.pca.svg" % method), bbox_inches="tight")
+    # plt.close('all')
+
+    # # mds
+    # mds = MDS()  # n_components=2, dissimilarity="precomputed", random_state=1)
+    # mds_fit = mds.fit_transform(x)
+    # # plot
+    # colors = samples_to_color(sel_samples)
+    # fig, axis = plt.subplots(1)
+    # for i, sample in enumerate(sel_samples):
+    #     axis.scatter(
+    #         mds_fit[i, 0], mds_fit[i, 1],
+    #         label=name_to_repr(sample.name),
+    #         color=colors[i],
+    #         s=50
+    #     )
+    # plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
+    # plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.mds.svg" % method), bbox_inches="tight")
+    # plt.close('all')
+
+    # CHARACTERIZE
     # plot features of all sites
     significant['length'] = significant.apply(lambda x: x['end'] - x['start'], axis=1)
 
@@ -1398,10 +1525,6 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
         fig.tight_layout()
         fig.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.%s.svg" % (method, variable)), bbox_inches="tight")
 
-    # save as bed
-    bed_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.bed" % method)
-    significant[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
-
     # Lola
     # use all cll sites as universe
     universe_file = os.path.join(data_dir, "cll_peaks.bed")
@@ -1412,6 +1535,16 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     lola(bed_file, universe_file, output_folder)
 
     # seq2pathway
+    # export file with ID, chrom, start, end
+    tsv_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.tsv" % method)
+    export = significant[['chrom', 'start', 'end']]
+    export['index'] = export.index
+    export[['index', 'chrom', 'start', 'end']].to_csv(tsv_file, sep="\t", header=False, index=False)
+
+    results = seq2pathway(tsv_file)
+
+    results_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.csv" % method)
+    results.to_csv(results_file, header=False, index=False)
 
     # GO Terms
     # write gene names to file
@@ -1429,8 +1562,15 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
 
     # Motifs
     # de novo motif finding - enrichment
+    bed_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.bed" % method)
+    fasta_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.fa" % method)
+    fasta = bed_to_fasta(bed_file, fasta_file)
+    output_folder = os.path.join(data_dir, "meme", "cll_peaks.%s_significant" % method)
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    meme(fasta, output_folder)
 
-    # VARIABLE SITE SUBSET CARACTERIZATION (CLUSTERS)
+    # SIGNIFICANT SITE SUBSET CARACTERIZATION (CLUSTERS)
     # get dendrogram data and plot it,
     # determine height to separate clusters
     # this must be done empirically for each feature type
@@ -1452,9 +1592,15 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
         if cluster is None:
             continue
 
+        # GET DATA FROM CLUSTER
         # grab data only from this cluster
         cluster_data = significant[significant['cluster'] == cluster]
 
+        # SAVE AS BED
+        bed_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.bed" % (method, cluster_name))
+        cluster_data[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
+
+        # TEST DIFFERENCES IN PEAK CARACTERISTICS FROM WHOLE SET
         # continuous variables, test difference of means
         for variable in ['length', 'support']:
             # test and append to df
@@ -1474,34 +1620,24 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
                 df['variable'] = variable
                 counts = counts.append(df)
 
-    # plot enrichments
-    df = df.rename(columns={0: "counts"})
-    g = sns.FacetGrid(counts, col="cluster", row="variable", hue="data", sharex=False, margin_titles=True)
-    g.map(sns.barplot, "values", 0)
-    plt.legend(loc="best")
-    g.set_axis_labels(x_var="cluster #", y_var="count")
-    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.clusters.enrichments.svg" % method), bbox_inches="tight")
+        # plot enrichments
+        df = df.rename(columns={0: "counts"})
+        g = sns.FacetGrid(counts, col="cluster", row="variable", hue="data", sharex=False, margin_titles=True)
+        g.map(sns.barplot, "values", 0)
+        plt.legend(loc="best")
+        g.set_axis_labels(x_var="cluster #", y_var="count")
+        plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.clusters.enrichments.svg" % method), bbox_inches="tight")
 
-    # plot p-values
-    p_values['p-value'] = -np.log10(p_values['p-value'])
-    p_values.sort('p-value', ascending=False, inplace=True)
-    g = sns.FacetGrid(p_values, col="variable", margin_titles=True)
-    g.map(sns.barplot, "cluster", "p-value")
-    # add sig line
-    for axis in g.axes[0]:
-        axis.axhline(-np.log10(0.05), linestyle='- -', color='black')
-    g.set_axis_labels(x_var="cluster #", y_var="-log10(pvalue)")
-    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.clusters.length_support_p-values.svg" % method), bbox_inches="tight")
-
-    # for each cluster make bed file, save, run lola, etc...
-    # consider joining clusters in a feature-specific way in the future
-    for cluster_name, cluster in enumerate(significant['cluster'].unique()):
-        if cluster is None:
-            continue
-
-        # make bed file, save
-        bed_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.sites.cluster_%i.bed" % (method, cluster_name))
-        cluster_data[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
+        # plot p-values
+        p_values['p-value'] = -np.log10(p_values['p-value'])
+        p_values.sort('p-value', ascending=False, inplace=True)
+        g = sns.FacetGrid(p_values, col="variable", margin_titles=True)
+        g.map(sns.barplot, "cluster", "p-value")
+        # add sig line
+        for axis in g.axes[0]:
+            axis.axhline(-np.log10(0.05), linestyle='- -', color='black')
+        g.set_axis_labels(x_var="cluster #", y_var="-log10(pvalue)")
+        plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.clusters.length_support_p-values.svg" % method), bbox_inches="tight")
 
         # Lola
         # use all cll sites as universe
@@ -1512,36 +1648,57 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
         # run
         lola(bed_file, universe_file, output_folder)
 
+        # seq2pathway
+        # export file with ID, chrom, start, end
+        tsv_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.tsv" % (method, cluster_name))
+        export = significant[['chrom', 'start', 'end']]
+        export['index'] = export.index
+        export[['index', 'chrom', 'start', 'end']].to_csv(tsv_file, sep="\t", header=False, index=False)
+
+        results = seq2pathway(tsv_file)
+
+        results_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.csv" % (method, cluster_name))
+        results.to_csv(results_file, header=False, index=False)
+
         # GO Terms
         # write gene names to file
-        feature_genes_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.txt" % method)
-        cluster_genes_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.cluster_%i.txt" % (method, cluster_name))
-        with open(cluster_genes_file, 'w') as handle:
+        all_cll_genes_file = os.path.join(data_dir, "cll_peaks.closest_genes.txt")
+        with open(all_cll_genes_file, 'w') as handle:
+            for gene in analysis.coverage_qnorm_annotated['gene_name']:
+                handle.write(gene + "\n")
+        feature_genes_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.cluster_%i.txt" % (method, cluster_name))
+        with open(feature_genes_file, 'w') as handle:
             for gene in significant['gene_name']:
                 handle.write(gene + "\n")
-        output_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.cluster_%i.go_enrichment.tsv" % (method, cluster_name))
+        output_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.go_enrichment.cluster_%i.tsv" % (method, cluster_name))
         # test enrichements of closest gene function: GO, KEGG, OMIM
-        goverlap(feature_genes_file, feature_genes_file, output_file)
+        cmd = goverlap(feature_genes_file, all_cll_genes_file, output_file)
 
-        # MOTIFS
+        # Motifs
         # de novo motif finding - enrichment
+        bed_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.bed" % (method, cluster_name))
+        fasta_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.fa" % (method, cluster_name))
+        fasta = bed_to_fasta(bed_file, fasta_file)
+        output_folder = os.path.join(data_dir, "meme", "cll_peaks.%s_significant.cluster_%i" % (method, cluster_name))
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+        meme(fasta, output_folder)
 
 
-# FURTHER SAMPLE CARACTERIZATION (divide in more clusters)
+# iCLL ANALYSIS
 # get cluster assignments from linkage matrix
 # select 'intermediate' cluster
 
 # Repeat again independence test and
 # get all differential sites (from 3 comparisons)
 
-# Subset data in Enhancers/Promoters
-# stratify again
 
-# INTER-SAMPLE VARIABILITY ANALYSIS
+# MINIMUM ELEMENT ANALYSIS
 # Subsample peaks or reads and see the minimum required to form the clusters previously
 # See which regions explain most of variability for each cluster
 
-# CLASSIFICATION
+
+# SAMPLE CLASSIFICATION
 # Stratify patients on:
 # - treated vs untreated
 # - ...
