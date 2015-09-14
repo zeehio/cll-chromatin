@@ -99,3 +99,32 @@ os.system("mv E032_15_coreMarks_mnemonics.bed ../data/E032_15_coreMarks_mnemonic
 # download data from Biomart (for some reason the GOterm name cannot be get automatically)
 # http://www.ensembl.org/biomart/martview/6451fcd5296302994382deee7bd9c8eb?VIRTUALSCHEMANAME=default&ATTRIBUTES=hsapiens_gene_ensembl.default.feature_page.name_1006|hsapiens_gene_ensembl.default.feature_page.go_id&FILTERS=&VISIBLEPANEL=resultspanel
 "mv x data/goID_goName.csv"
+
+
+# Puente 2015
+# Get WGS variants
+cmds = list()
+cmds.append("wget http://www.nature.com/nature/journal/vaop/ncurrent/extref/nature14666-s3.zip")
+cmds.append("unzip nature14666-s3.zip")
+supFile = "data/Puente2015.supplementaryTable2.csv"
+cmds.append("mv supplementaryTable2.tsv %s" % supFile)
+for cmd in cmds:
+    os.system(cmd)
+
+# Read in data
+df = pd.read_csv(supFile)
+df.rename(columns={"#CHROM": "CHROM"}, inplace=True)
+df.drop(["WG", "ID"], inplace=True, axis=1)  # this are uninformative columns -> unique(col) == 1
+
+# Filter for SNPs
+df2 = df[
+    (np.array([len(x) for x in df['REF']]) == 1) &
+    (np.array([len(x) for x in df['ALT']]) == 1)
+]
+
+# Collapse across patients
+colapsed = df2.groupby(['CHROM', 'POS', 'REF', 'ALT']).aggregate(lambda x: ",".join([str(i) for i in x]))
+
+# Filter for recurrent genes
+# get extended data table 2
+# interesect
