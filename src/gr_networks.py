@@ -111,12 +111,12 @@ def piq_prepare_bams(bams, output_cache):
     return cmd
 
 
-def piq_footprint(bam_cache, n_motifs, tmp_dir, results_dir):
+def piq_footprint(bam_cache, motif_numbers, tmp_dir, results_dir):
     """
     Footprint using PIQ.
     """
     cmds = list()
-    for motif in range(1, n_motifs + 1):
+    for motif in motif_numbers:
         cmd = """
     Rscript ~/workspace/piq-single/pertf.r"""
         cmd += " ~/workspace/piq-single/common.r"
@@ -132,7 +132,7 @@ def piq_footprint(bam_cache, n_motifs, tmp_dir, results_dir):
     return cmds
 
 
-def piq_to_network(results_dir, n_motifs):
+def piq_to_network(results_dir, motif_numbers):
     """
     Parse PIQ output, filter footprints.
     Returns matrix with likelyhood score of each TF regulating each gene.
@@ -146,11 +146,10 @@ def piq_to_network(results_dir, n_motifs):
     tsss.columns = ["chrom", "start", "end", "id"]
 
     # prepare TF vs Gene matrix
-    scores = pd.DataFrame(index=tsss["id"], columns=range(1, n_motifs + 1))
+    scores = pd.DataFrame(index=tsss["id"], columns=motif_numbers)
 
     # loop through motifs/TFs, filter and establish relationship between TF and gene
-    for motif in range(1, n_motifs + 1):
-        print(motif)
+    for motif in motif_numbers:
         # get both forward and reverse complement PIQ output files
         result_files = list()
         for f in files:
@@ -179,8 +178,7 @@ def piq_to_network(results_dir, n_motifs):
         footprints = df2[df2["purity"] > 0.7]
 
         # If empty give 0 to every gene for this TF
-        if len(footprints) < 1:
-            print "continuing 1"
+        if len(footprints) < 500:
             continue
 
         footprints[['chr', 'start', 'end', 'pwm', 'shape', 'score', 'purity']].to_csv(os.path.join("tmp.bed"), sep="\t", index=False, header=False)
@@ -190,9 +188,9 @@ def piq_to_network(results_dir, n_motifs):
         footprints.columns = ["chrom", "start", "end", "pwm", "shape", "score", "purity"]
 
         # If empty give 0 to every gene for this TF
-        if len(footprints) < 1:
-            print "continuing 2"
+        if len(footprints) < 500:
             continue
+        print("footprint number", len(footprints))
 
         # CONNECT
         # Now assign a score between this TF and every gene:
@@ -200,11 +198,11 @@ def piq_to_network(results_dir, n_motifs):
         for chrom in footprints["chrom"].unique():
             # calculate the distance between each footprint and every gene in the chromosome
             for i in tsss[tsss["chrom"] == chrom].index:
-                gene_scores = list()
+                gene_scores = 0
                 for j in footprints[footprints["chrom"] == chrom].index:
                     dist = abs(footprints.ix[j]["start"] - tsss.ix[i]["start"])
-                    gene_scores.append(2 * (footprints.ix[j]["purity"] - 0.5) * 10 ** -(dist / 1e6))
-                scores.loc[tsss.ix[i]["id"], motif] = sum(gene_scores)
+                    gene_scores += 2 * (footprints.ix[j]["purity"] - 0.5) * 10 ** -(dist / 1e6)
+                scores.loc[tsss.ix[i]["id"], motif] = gene_scores
 
     # everything else gets 0
     return scores.fillna(0)
@@ -236,6 +234,9 @@ to_exclude_sample_id = ['1-5-45960']
 # FOOTPRINTING
 motifs_file = "~/workspace/piq-single/pwms/jasparfix.txt"
 n_motifs = 1316
+
+df = pd.read_csv("data/tf_gene_matching.txt", sep="\t", header=None)
+motif_numbers = df[0]
 
 # prepare motifs for footprinting (done once)
 # cmds = piq_prepare_motifs(motifs_file, n_motifs)
@@ -272,7 +273,7 @@ for sample in prj.samples:
     cmd += piq_prepare_bams([sample.filteredshifted], r_data)
 
     # footprint
-    cmd_list = piq_footprint(r_data, n_motifs, tmp_dir, results_dir=foots_dir)
+    cmd_list = piq_footprint(r_data, motif_numbers, tmp_dir, results_dir=foots_dir)
     cmd += "\n".join(cmd_list)
 
     # slurm footer
@@ -401,7 +402,7 @@ for cmd in cmds:
 # connect each motif to a gene
 for sample in prj.samples[1:5]:
     print sample
-    scores = piq_to_network(os.path.join(sample.dirs.sampleRoot, "footprints"), n_motifs)
+    scores = piq_to_network(os.path.join(sample.dirs.sampleRoot, "footprints"), motif_numbers)
     scores.to_csv(os.path.join(sample.dirs.sampleRoot, "footprints", "piq.TF-gene_scores.csv"))
 
     # Investigate the distribution of scores.
