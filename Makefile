@@ -17,9 +17,11 @@ analysis: preprocess external_files
 	python src/call_variants.py
 
 manuscript:
-	cd manuscript
-	make pdf
+	cd manuscript && $(MAKE) pdf
 
 all: requirements preprocess external_files analysis manuscript
+
+clean:
+	cd manuscript && $(MAKE) clean
 
 .PHONY: requirements preprocess external_files analysis manuscript all
