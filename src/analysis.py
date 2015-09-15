@@ -1056,25 +1056,23 @@ def lola(bed_files, universe_file, output_folder):
 
     run = robj.r("""
         function(bedFiles, universeFile, outputFolder) {
-            library("bedr")
             library("LOLA")
 
-            userUniverse  <- bedr::bed_to_granges(universeFile)
+            userUniverse  <- LOLA::readBed(universeFile)
 
-            dbPath = "/data/groups/lab_bock/shared/resources/regions/LOLACore/hg19/"
-
-            #dbPath = "/data/groups/lab_bock/shared/resources/regions/customRegionDB/hg19/"
-            regionDB = loadRegionDB(dbPath)
+            dbPath1 = "/data/groups/lab_bock/shared/resources/regions/LOLACore/hg19/"
+            dbPath2 = "/data/groups/lab_bock/shared/resources/regions/customRegionDB/hg19/"
+            regionDB = loadRegionDB(c(dbPath1, dbPath2))
 
             if (typeof(bedFiles) == "character") {
-                userSet <- bedr::bed_to_granges(bedFiles)
-                lolaResults = runLOLA(userSet, userUniverse, regionDB, cores=12)
+                userSet <- LOLA::readBed(bedFiles)
+                lolaResults = runLOLA(list(userSet), userUniverse, regionDB, cores=12)
                 lolaResults[order(support, decreasing=TRUE), ]
                 writeCombinedEnrichment(lolaResults, outFolder=outputFolder)
             } else if (typeof(bedFiles) == "double") {
                 for (bedFile in bedFiles) {
-                    userSet <- bedr::bed_to_granges(bedFile)
-                    lolaResults = runLOLA(userSet, userUniverse, regionDB, cores=12)
+                    userSet <- LOLA::readBed(bedFile)
+                    lolaResults = runLOLA(list(userSet), userUniverse, regionDB, cores=12)
                     lolaResults[order(support, decreasing=TRUE), ]
                     writeCombinedEnrichment(lolaResults, outFolder=outputFolder)
                 }
@@ -1150,6 +1148,7 @@ def meme(input_fasta, output_dir):
     """
     cmd = """meme-chip \\
     -meme-p 12 \\
+    -ccut 147 \\
     -meme-minw 6 -meme-maxw 30 -meme-nmotifs 20 \\
     -dreme-e 0.05 \\
     -centrimo-score 5.0 \\
