@@ -1,3 +1,5 @@
+.DEFAULT_GOAL := all
+
 requirements:
 	pip install https://github.com/epigen/pipelines.git
 
@@ -17,3 +19,7 @@ analysis: external_files preprocess
 manuscript: analysis
 	cd manuscript
 	make pdf
+
+all: requirements preprocess external_files analysis manuscript
+
+.PHONY: requirements preprocess external_files analysis manuscript all
