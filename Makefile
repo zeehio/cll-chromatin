@@ -9,14 +9,14 @@ preprocess: requirements
 external_files:
 	python src/prepare_external_files.py
 
-analysis: external_files preprocess
+analysis: preprocess external_files
 	python src/cohort_description.py
 	python src/seq_stats.py
 	python src/analysis.py
 	python src/grn_analysis.py
 	python src/call_variants.py
 
-manuscript: analysis
+manuscript:
 	cd manuscript
 	make pdf
 
