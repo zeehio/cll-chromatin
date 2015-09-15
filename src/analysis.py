@@ -17,7 +17,6 @@ import parmap
 import pysam
 import pandas as pd
 import numpy as np
-from sklearn import preprocessing
 from sklearn.preprocessing import normalize
 from sklearn.decomposition import RandomizedPCA
 from sklearn.manifold import MDS
@@ -27,7 +26,8 @@ from statsmodels.sandbox.stats.multicomp import multipletests
 import cPickle as pickle
 from collections import Counter
 
-
+# Set settings
+pd.set_option("date_dayfirst", True)
 sns.set_style("whitegrid")
 sns.set_context("paper")
 
@@ -882,11 +882,16 @@ def name_to_repr(name):
 
 
 def name_to_id(name):
+    """This returns joined patient and sample IDs"""
     return "_".join([name.split("_")[2]] + name.split("_")[3:4])
 
 
+def name_to_patient_id(name):
+    return name.split("_")[2]
+
+
 def name_to_sample_id(name):
-    return name.split("_")[3:4][0]
+    return name.split("_")[3]
 
 
 def samples_to_color(samples, method="mutation"):
@@ -957,34 +962,53 @@ def annotate_treatments(samples, clinical):
 
     for sample in samples:
         if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
+            # Get ids to match sample with others
+            patient_id = name_to_patient_id(sample.name)
             # get sample id
-            _id = name_to_sample_id(sample.name)
+            sample_id = name_to_sample_id(sample.name)
+
             # get corresponding series from "clinical"
-            sample_c = clinical[clinical['sample_id'] == _id].squeeze()
+            sample_c = clinical[clinical['sample_id'] == sample_id].squeeze()
             # add timepoint
             sample.timepoint = sample_c.timepoint
             # add time since diagnosis
-            sample.time_since_diagnosis = pd.to_datetime(sample_c['treatment_%i_date' % sample.timepoint]) - pd.to_datetime(sample_c['diagnosis_date'])
+            sample.time_since_diagnosis = pd.to_datetime(sample_c['sample_collection_date'], format="%d/%m/%Y") - pd.to_datetime(sample_c['diagnosis_date'], format="%d/%m/%Y")
+
+            # if sample is being treated
             if sample_c['treated'] == "Y":
+                # Annotate treatment
                 sample.treatment_active = True
                 # if sample is treated, find out which treatment based on timepoint
                 sample.treatment_type = sample_c['treatment_%i_regimen' % sample.timepoint]
                 # CR, GR, PR, NR in this order of 'goodness'
                 sample.treatment_response = sample_c['treatment_%i_response' % sample.timepoint]
+
+                # Annotate relapses
+                # are there previous timepoints with good response?
+                if sample.timepoint >= 2:
+                    # get prior timepoint of the sample patient
+                    sample_p = clinical[(clinical['patient_id'] == int(patient_id)) & (clinical['timepoint'] == sample.timepoint - 1)]
+
+                    # if prior had bad response, mark current as relapse
+                    if sample_p['treatment_response'] in ["CR", "GR"]:
+                        sample.relapse = True
+                    else:
+                        sample.relapse = False
+                else:
+                    sample.relapse = False
             elif sample_c['treated'] == "N":
                 sample.treatment_active = False
-                sample.treatment_type = None
-                sample.treatment_response = None
-            elif pd.isnull(sample_c.treated):
-                sample.treatment_active = None
-                sample.treatment_type = None
-                sample.treatment_response = None
+                sample.relapse = False
+                for attr in ['treatment_type', 'treatment_response']:
+                    setattr(sample, attr, None)
+            else:
+                sample.relapse = False
+                for attr in ['treatment_active', 'treatment_type', 'treatment_response']:
+                    setattr(sample, attr, None)
         else:
-            sample.timepoint = None
-            sample.treatment_active = None
-            sample.treatment_type = None
-            sample.treatment_response = None
-            sample.time_since_diagnosis = None
+            sample.relapse = False
+            for attr in ['timepoint', 'treatment_active', 'treatment_type', 'treatment_response', 'time_since_diagnosis']:
+                setattr(sample, attr, None)
         new_samples.append(sample)
     return new_samples
 
@@ -1330,10 +1354,11 @@ features = {
     "mutated": (True, False),  # igvh mutation
     "patient_gender": ("F", "M"),  # gender
     # "", ("", ""),  # treat/untreated
-    # "relapse", ("True", "False") # relapse or before relapse
-    # "treatment_1st", ("untreated", "Chlor")  # untreated vs 1st line chemotherapy
-    # "treatment_2nd", ("untreated", "Ibrut")  # untreated vs ibrutinib
-    # possible other groups:
+    # "relapse", ("True", "False"), # relapse or before relapse
+    # "treatment_1st", ("untreated", "Chlor"),  # untreated vs 1st line chemotherapy
+    # "treatment_2nd", ("untreated", "Ibrut"),  # untreated vs ibrutinib
+    # "diagnosis_start", ("CLL", "MBL"),
+    # possibly other groups:
     # ['SF3B1', 'ATM', 'del13', 'del11q', 'tri12', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
 }
 
@@ -1386,10 +1411,15 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
 
     # get significant sites
     # TODO: perhaps filter by fold-change too
-    significant = analysis.coverage_qnorm_annotated[
-        (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.0001) &
-        (abs(analysis.coverage_qnorm_annotated["_".join(["fold_change", feature])]) > 1)
-    ]
+    if feature == "mutated":
+        significant = analysis.coverage_qnorm_annotated[
+            (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.0001) &
+            (abs(analysis.coverage_qnorm_annotated["_".join(["fold_change", feature])]) > 1)
+        ]
+    elif feature == "patient_gender":
+        significant = analysis.coverage_qnorm_annotated[
+            (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.0001)
+        ]
 
     # SAVE AS BED
     bed_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.bed" % method)
