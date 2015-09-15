@@ -14,6 +14,26 @@ def get_tss(entry):
     return entry
 
 
+def sra2bam(sra_acession, output_bam):
+    from pipelines import toolkit as tk
+    import textwrap
+    # Slurm header
+    cmd = tk.slurmHeader("_".join(["sra2bam", sra_acession]), "/scratch/users/arendeiro/%s_sra2bam.log" % sra_acession, cpusPerTask=4)
+
+    # SRA to BAM
+    cmd += "\n    sam-dump {0} | sambamba view -t 4 -S -f bam /dev/stdin > /home/arendeiro/cll-patients/data/external/{0}.bam\n".format(sra_acession)
+    # Slurm footer
+    cmd += tk.slurmFooter() + "\n"
+
+    # Write job to file
+    job_file = "/scratch/users/arendeiro/%s_sra2bam.sh" % sra_acession
+    with open(job_file, "w") as handle:
+        handle.write(textwrap.dedent(cmd))
+
+    # Submit
+    tk.slurmSubmitJob(job_file)
+
+
 # Get encode blacklisted regions
 blacklist = "wgEncodeDacMapabilityConsensusExcludable.bed.gz"
 
@@ -128,3 +148,29 @@ colapsed = df2.groupby(['CHROM', 'POS', 'REF', 'ALT']).aggregate(lambda x: ",".j
 # Filter for recurrent genes
 # get extended data table 2
 # interesect
+
+
+# External samples, SRA to unaligned bam
+
+samples = {
+    "GM12878": "SRR891268",  # rep1
+    "CD4_T_day1": "SRR891275",  # 1hour - rep1
+    "CD4_T_day2": "SRR891277",  # 2hour - rep1
+    "CD4_T_day3": "SRR891279",  # 3hour - rep1
+    "Raji": "SRR1787814",
+    "RJ2.2.5": "SRR1787816",
+    "SKNMC": "SRR1594026",
+    "Monocyte-derived_dendritic_cells": "SRR1725732",
+    "Monocyte-derived_dendritic_cells_infected": "SRR1725731",
+    # "IMR90": [
+    #     "SRR1448792",
+    #     "SRR1448793"
+    # ],
+    # "IMR90_Nutlin-3a": [
+    #     "SRR1448794",
+    #     "SRR1448795"
+    # ]
+}
+
+for accession in samples.values():
+    sra2bam(accession, os.path.join("data/external/%s.bam" % accession))
