@@ -5,7 +5,9 @@ This is the main script of the cll-patients project.
 """
 
 import recipy
+from argparse import ArgumentParser
 import os
+import sys
 from pipelines.models import Project, ATACseqSample
 import pybedtools
 import matplotlib.pyplot as plt
@@ -671,7 +673,7 @@ class Analysis(object):
         plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.qv2_vs_mean.fit_residuals.svg"), bbox_inches="tight")
 
     def plot_sample_correlations(self):
-        # get colors depending on IGVH mut
+        # get colors depending on IGHV mut
         df = pd.DataFrame([sample.asSeries() for sample in self.samples])
 
         df = pd.merge(df, self.clinical, left_on="sample_id", right_on="sample_id")
@@ -705,7 +707,7 @@ class Analysis(object):
         # get variance explained by each component
         variance = [np.round(i * 100, 0) for i in self.pca.explained_variance_ratio_]
 
-        # dependent on igvh status
+        # dependent on ighv status
         colors = samples_to_color(self.samples)
 
         # plot
@@ -797,6 +799,17 @@ class Analysis(object):
         plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
         plot_path = os.path.join(self.plots_dir, "cll_peaks.MDS_{0}.pdf".format(suffix))
         fig.savefig(plot_path, bbox_inches="tight")
+
+
+def add_args(parser):
+    """
+    Options for project and pipelines.
+    """
+    # Behaviour
+    parser.add_argument("-g", "--generate", dest="stats", action="store_true",
+                        help="Should we generate data and plots? Default=False")
+
+    return parser
 
 
 def count_reads_in_intervals(bam, intervals):
@@ -895,7 +908,7 @@ def name_to_sample_id(name):
 
 
 def samples_to_color(samples, method="mutation"):
-    # dependent on igvh status
+    # dependent on ighv status
     if method == "mutation":
         colors = list()
         for sample in samples:
@@ -931,6 +944,27 @@ def samples_to_color(samples, method="mutation"):
                     colors.append('gray')
                 else:
                     colors.append('black')
+        return colors
+    elif method == "treatment":
+        drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR', 'Alemtuz']
+        colors = list()
+        for sample in samples:
+            if sample.treatment_active is False and sample.relapse is False:
+                colors.append('dodgerblue')
+            elif sample.treatment_active is True and sample.treatment_type in drugs:
+                colors.append('peru')
+            else:
+                colors.append('grey')
+        return colors
+    elif method == "disease":
+        colors = list()
+        for sample in samples:
+            if sample.diagnosis_disease == "CLL":
+                colors.append('#A6CEE3')
+            elif sample.diagnosis_disease == "MBL":
+                colors.append('#F17047')
+            else:
+                colors.append('grey')
         return colors
     else:
         raise ValueError("Method %s is not valid" % method)
@@ -982,6 +1016,8 @@ def annotate_treatments(samples, clinical):
             sample.collection_date = string_to_date(sample_c['sample_collection_date'])
             # Get diagnosis date
             sample.diagnosis_date = string_to_date(sample_c['diagnosis_date'])
+            # Get diagnosis disease
+            sample.diagnosis_disease = sample_c['diagnosis_disease'] if type(sample_c['diagnosis_disease']) is str else None
             # Get time since diagnosis
             sample.time_since_diagnosis = sample.collection_date - sample.diagnosis_date
 
@@ -1041,24 +1077,24 @@ def annotate_treatments(samples, clinical):
                 closest_timepoint = [tp for tp in range(1, 5) if closest_date == sample_c["treatment_%i_date" % tp]][0]
 
                 # Annotate with previous known response
+                sample.previous_response = sample_c['treatment_%i_response' % closest_timepoint]
+
                 # if prior had bad response, mark current as relapse
                 if sample_c['treatment_%i_response' % closest_timepoint] in ["CR", "GR"]:
-                    sample.previous_response = sample_c['treatment_%i_response' % closest_timepoint]
                     sample.relapse = True
                 else:
-                    sample.previous_response = sample_c['treatment_%i_response' % closest_timepoint]
                     sample.relapse = False
             else:
                 sample.relapse = False
 
-            # If any attribute is not set, set to None
-            for attr in ['diagnosis_collection', 'time_since_treatment', 'treatment_type',
-                         'treatment_response', "treatment_active", "previous_treatment_date", "previous_response"]:
-                if not hasattr(sample, attr):
-                    setattr(sample, attr, None)
+        # If any attribute is not set, set to None
+        for attr in ['diagnosis_collection', 'diagnosis_date', 'diagnosis_disease', 'time_since_treatment', 'treatment_type',
+                     'treatment_response', "treatment_active", "previous_treatment_date", "previous_response", 'relapse']:
+            if not hasattr(sample, attr):
+                setattr(sample, attr, None)
 
-            # Append sample
-            new_samples.append(sample)
+        # Append sample
+        new_samples.append(sample)
     return new_samples
 
 
@@ -1157,7 +1193,7 @@ def lola(bed_files, universe_file, output_folder):
     run(bed_files, universe_file, output_folder)
 
 
-def seq2pathway(bed_file):
+def seq2pathway(bed_file, go_term_mapping):
     """
     Performs seq2pathway analysis on a bedfile with a region set.
     """
@@ -1198,7 +1234,7 @@ def seq2pathway(bed_file):
         df2 = pd.concat([df2, df], ignore_index=True)
 
     # intersect with GO term ID and name
-    names = pd.read_csv(os.path.join(data_dir, "goID_goName.csv"))
+    names = pd.read_csv()
     names.columns = ["Name", "GOID"]
 
     df2 = df2.merge(names)
@@ -1212,7 +1248,11 @@ def goverlap(genes_file, universe_file, output_file):
     """
     cmd = """goverlap -a {0} -s hsap -n 12 -l 0.10 -x {1} > {2}
     """.format(genes_file, universe_file, output_file)
-    return cmd
+
+    try:
+        os.system(cmd)
+    except ImportError:
+        pass
 
 
 def meme(input_fasta, output_dir):
@@ -1234,190 +1274,28 @@ def meme(input_fasta, output_dir):
     return cmd
 
 
-to_exclude_sample_id = ['1-5-45960']
+def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
+    """
+    Analysis between two groups of samples.
+    :param analysis: an Analysis object.
+    :param sel_samples: a list of selected samples to perform analysis on.
+    :param g1: a pandas.DataFrame with openness values.
+    :param g2: a pandas.DataFrame with openness values.
+    :param group1: a string representing the g1 group.
+    :param group2: a string representing the g2 group.
+    """
+    go_term_mapping = os.path.join(analysis.prj.data_dir, "goID_goName.csv")
 
-# Should we regenerate the data?
-generate = False
-
-# Get path configuration
-data_dir = os.path.join('.', "data")
-results_dir = os.path.join('.', "results")
-plots_dir = os.path.join(results_dir, "plots")
-
-# Get clinical info
-clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation.csv"))
-
-# Start project
-# prj = pickle.load(open("prj.pickle", 'rb'))
-prj = Project("cll-patients")
-prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
-
-# Annotate with clinical data
-prj.samples = annotate_igvh_mutations(prj.samples, clinical)
-prj.samples = annotate_treatments(prj.samples, clinical)
-prj.samples = annotate_mutations(prj.samples, clinical)
-prj.samples = annotate_gender(prj.samples, clinical)
-
-# Start analysis object
-# only with ATAC-seq samples
-analysis = Analysis(
-    data_dir, plots_dir, [sample for sample in prj.samples if sample.technique == "ATAC-seq"],
-    pickle_file=os.path.join(data_dir, "analysis.pickle")
-)
-analysis.prj = prj
-analysis.clinical = clinical
-
-
-# GET CONSENSUS PEAK SET, ANNOTATE IT, PLOT FEATURES
-# Get consensus peak set from all samples
-if generate:
-    analysis.get_consensus_sites()
-else:
-    analysis.sites = pybedtools.BedTool(os.path.join(data_dir, "cll_peaks.bed"))
-    analysis.peak_count = pickle.load(open(os.path.join(data_dir, "cll_peaks.cum_peak_count.pickle"), 'rb'))
-
-# estimate peak saturation among all samples
-if generate:
-    analysis.estimate_peak_saturation(n=10)
-else:
-    peak_count = pd.read_csv(os.path.join("cll_peaks.cum_peak_count.csv"))
-
-# Calculate peak support
-if generate:
-    analysis.calculate_peak_support()
-else:
-    analysis.support = pd.read_csv(os.path.join(data_dir, "cll_peaks.support.csv"))
-
-# Annotate peaks with closest gene
-if generate:
-    analysis.get_peak_gene_annotation()
-else:
-    analysis.gene_annotation = pd.read_csv(os.path.join(data_dir, "cll_peaks.gene_annotation.csv"))
-    analysis.closest_tss_distances = pickle.load(open(os.path.join(data_dir, "cll_peaks.closest_tss_distances.pickle"), 'rb'))
-
-# Annotate peaks with genomic regions
-if generate:
-    analysis.get_peak_genomic_location()
-else:
-    analysis.region_annotation = pd.read_csv(os.path.join(data_dir, "cll_peaks.region_annotation.csv"))
-    analysis.region_annotation_b = pd.read_csv(os.path.join(data_dir, "cll_peaks.region_annotation_background.csv"))
-
-# Annotate peaks with ChromHMM state from CD19+ cells
-if generate:
-    analysis.get_peak_chromatin_state()
-else:
-    analysis.chrom_state_annotation = pd.read_csv(os.path.join(data_dir, "cll_peaks.chromatin_state.csv"))
-    analysis.chrom_state_annotation_b = pd.read_csv(os.path.join(data_dir, "cll_peaks.chromatin_state_background.csv"))
-
-# WORK WITH "OPENNESS"
-# Get coverage values for each peak in each sample
-if generate:
-    analysis.measure_coverage()
-else:
-    analysis.coverage = pd.read_csv(os.path.join(data_dir, "cll_peaks.raw_coverage.tsv"), sep="\t", index_col=0)
-
-# normalize coverage values
-if generate:
-    analysis.normalize_coverage()
-    analysis.normalize_coverage_quantiles()
-else:
-    # analysis.rpkm = pd.read_csv(os.path.join(data_dir, "cll_peaks.rpkm.tsv"), sep="\t")
-    analysis.coverage_qnorm = pd.read_csv(os.path.join(data_dir, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t")
-
-
-# Annotate peaks with closest gene, chromatin state,
-# genomic location, mean and variance measurements across samples
-if generate:
-    analysis.annotate()
-else:
-    analysis.coverage_qnorm_annotated = pd.read_csv(os.path.join(data_dir, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
-    # analysis.rpkm_annotated = pd.read_csv(os.path.join(data_dir, "cll_peaks.rpkm.annotated.tsv"), sep="\t")
-
-
-# plot general peak set features
-if generate:
-    analysis.plot_peak_characteristics()
-
-# Plot rpkm features across peaks/samples
-if generate:
-    analysis.plot_rpkm()
-    analysis.plot_variance()
-    analysis.plot_sample_correlations()
-
-# Observe exponential fit to the coeficient of variation
-if generate:
-    analysis.plot_qv2_fit()
-
-
-# Try to separate samples in 2D space
-if generate:
-    # PCA
-
-    # try different filtering strategies:
-    # - based on rpkm cut-off (decide on low-end threshold based on the elbow method)
-    # - based on peak support
-    filters = [
-        ("rpkm", 1.25), ("rpkm", 1.87), ("rpkm", 3),
-        ("support", 2), ("support", 5), ("support", 10), ("support", 20),
-        ("std", 1)]
-
-    for method, threshold in filters:
-        analysis.filter_rpkm(threshold, method=method)
-
-        filtering_name = ">".join([method, str(threshold)])
-
-        # Plot
-        analysis.pca_analysis(analysis.rpkm_filtered[[sample.name for sample in analysis.samples]])
-        analysis.plot_pca(suffix="%s_all" % filtering_name)
-
-        # Get n most variable peaks (based on dispersion)
-        n = 1000
-        most_variable_data = analysis.rpkm_filtered.sort(["dispersion"], ascending=False).head(n)
-        analysis.pca_analysis(most_variable_data[[sample.name for sample in analysis.samples]])
-        analysis.plot_pca(suffix="%s_mostdispersion" % filtering_name)
-        # Get n most variable peaks (based on qv2)
-        most_variable_data = analysis.rpkm_filtered.sort(["qv2"], ascending=False).head(n)
-        analysis.pca_analysis(most_variable_data[[sample.name for sample in analysis.samples]])
-        analysis.plot_pca(suffix="%s_mostqv2" % filtering_name)
-
-        # All data
-        # use only Promoters
-        promoter_data = analysis.rpkm_filtered.ix[analysis.rpkm_filtered['chromatin_state'].str.contains("Tss")]
-        analysis.pca_analysis(promoter_data[[sample.name for sample in analysis.samples]])
-        analysis.plot_pca(suffix="%s_promoters" % filtering_name)
-
-        # use only Enhancers
-        enhancer_data = analysis.rpkm_filtered.ix[analysis.rpkm_filtered['chromatin_state'].str.contains("Enh")]
-        analysis.pca_analysis(enhancer_data[[sample.name for sample in analysis.samples]])
-        analysis.plot_pca(suffix="%s_enhancers" % filtering_name)
-
-        # MDS
-        # n most variable sites
-        analysis.mds_analysis(most_variable_data[[sample.name for sample in analysis.samples]])
-        analysis.plot_mds(n, suffix="%s" % filtering_name)
-
-
-# TRAIT-SPECIFIC SITES
-# test if sites come from same population based on normalized, loged2, coverage values
-features = {
-    "mutated": (True, False),  # igvh mutation
-    "patient_gender": ("F", "M"),  # gender
-    # "", ("", ""),  # treat/untreated
-    # "relapse", ("True", "False"), # relapse or before relapse
-    # "treatment_1st", ("untreated", "Chlor"),  # untreated vs 1st line chemotherapy
-    # "treatment_2nd", ("untreated", "Ibrut"),  # untreated vs ibrutinib
-    # "diagnosis_start", ("CLL", "MBL"),
-    # possibly other groups:
-    # ['SF3B1', 'ATM', 'del13', 'del11q', 'tri12', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
-}
-
-# get differential sites per type of feature
-# to overide:
-# i, (feature, (group1, group2)) = (0, (features.items()[0]))
-for i, (feature, (group1, group2)) in enumerate(features.items()):
-    # get groups
-    g1 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group1]]
-    g2 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group2]]
+    # get colors depending on feature (gender, mutation, drugs, etc...)
+    if feature == "mutated":
+        method = "mutation"
+    elif feature == "patient_gender":
+        method = "gender"
+    elif feature == "untreated_vs_1stline":
+        method = "treatment"
+    elif feature == "CLL_vs_MBL":
+        method = "disease"
+    sample_colors = samples_to_color(sel_samples, method=method)
 
     # ANNOTATE
     # compute p-value, add to annotation
@@ -1448,14 +1326,14 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     # visualize distribution of fold-change, p-values
     # A vs B
     sns.jointplot(np.log2(1 + np.array(mean_a)), np.log2(1 + np.array(mean_b)))
-    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_fold_change.svg" % method), bbox_inches="tight")
+    plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_fold_change.svg" % method), bbox_inches="tight")
     plt.close('all')
     # volcano plot (logfoldchange vs logpvalue)
     sns.jointplot(
         np.array(fold_change), -np.log10(np.array(p_values)),
         stat_func=None, space=0, xlim=(-2.5, 2.5)
     )
-    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_volcano.svg" % method), bbox_inches="tight")
+    plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_volcano.svg" % method), bbox_inches="tight")
     plt.close('all')
 
     # get significant sites
@@ -1471,23 +1349,15 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
         ]
 
     # SAVE AS BED
-    bed_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.bed" % method)
+    bed_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.bed" % method)
     significant[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
 
     # EXPLORE
     # get normalized counts in significant sites only for CLL samples
-    sel_samples = [sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.sampleID != to_exclude_sample_id]
     significant_values = significant[[sample.name for sample in sel_samples]]
 
     # get nice sample IDs
     significant_values.columns = map(name_to_repr, significant_values.columns)
-
-    # get colors depending on feature (gender, )
-    if feature == "mutated":
-        method = "mutation"
-    elif feature == "patient_gender":
-        method = "gender"
-    sample_colors = samples_to_color(sel_samples, method=method)
 
     # correlate samples on significantly different sites
     corr_cluster = sns.clustermap(
@@ -1497,7 +1367,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
         col_colors=sample_colors,
         row_colors=sample_colors
     )
-    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_correlation.svg" % method), bbox_inches="tight")
+    plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_correlation.svg" % method), bbox_inches="tight")
     plt.close('all')
 
     # cluster samples and sites
@@ -1510,7 +1380,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
         yticklabels=False,
         col_colors=sample_colors
     )
-    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.svg" % method), bbox_inches="tight")
+    plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_sites.svg" % method), bbox_inches="tight")
     plt.close('all')
 
     # # pca
@@ -1525,7 +1395,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     # # plot
     # variance = [np.round(i * 100, 0) for i in pca.explained_variance_ratio_]
 
-    # # dependent on igvh status
+    # # dependent on ighv status
     # colors = samples_to_color(sel_samples)
 
     # # plot
@@ -1540,7 +1410,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     #     )
     # axis.set_xlabel("PC1 - {0}% variance".format(variance[0]))
     # axis.set_ylabel("PC2 - {0}% variance".format(variance[1]))
-    # fig.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.pca.svg" % method), bbox_inches="tight")
+    # fig.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.pca.svg" % method), bbox_inches="tight")
 
     # # 3 components
     # fig = plt.figure()
@@ -1557,7 +1427,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     # ax.set_ylabel("PC2 - {0}% variance".format(variance[1]))
     # ax.set_zlabel("PC3 - {0}% variance".format(variance[2]))
     # plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-    # fig.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.pca.svg" % method), bbox_inches="tight")
+    # fig.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.pca.svg" % method), bbox_inches="tight")
     # plt.close('all')
 
     # # mds
@@ -1574,7 +1444,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     #         s=50
     #     )
     # plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-    # plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.mds.svg" % method), bbox_inches="tight")
+    # plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.mds.svg" % method), bbox_inches="tight")
     # plt.close('all')
 
     # CHARACTERIZE
@@ -1585,12 +1455,12 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     for variable in ['length', 'support']:
         fig, axis = plt.subplots()
         sns.distplot(significant[variable], bins=300, kde=False, ax=axis)
-        fig.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.peak_%s.svg" % (method, variable)), bbox_inches="tight")
+        fig.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_sites.peak_%s.svg" % (method, variable)), bbox_inches="tight")
 
     # # Plot distance to nearest TSS
     # fig, axis = plt.subplots()
     # sns.distplot(significant['closest_tss_distances'], bins=200, ax=axis)
-    # fig.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.closest_tss_distances.svg" % method), bbox_inches="tight")
+    # fig.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_sites.closest_tss_distances.svg" % method), bbox_inches="tight")
 
     # plot genomic location and chromatin state
     for variable in ['genomic_region', 'chromatin_state']:
@@ -1601,7 +1471,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
         sns.barplot(x=0, y=1, data=data, ax=axis)
         fig.autofmt_xdate()
         fig.tight_layout()
-        fig.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.%s.svg" % (method, variable)), bbox_inches="tight")
+        fig.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_sites.%s.svg" % (method, variable)), bbox_inches="tight")
 
     # TODO:
     # Get CLL expression data
@@ -1610,8 +1480,8 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
 
     # Lola
     # use all cll sites as universe
-    universe_file = os.path.join(data_dir, "cll_peaks.bed")
-    output_folder = os.path.join(data_dir, "lola", "cll_peaks.%s_significant.clustering_sites" % method)
+    universe_file = os.path.join(analysis.prj.data_dir, "cll_peaks.bed")
+    output_folder = os.path.join(analysis.prj.data_dir, "lola", "cll_peaks.%s_significant.clustering_sites" % method)
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
     # run
@@ -1619,36 +1489,36 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
 
     # seq2pathway
     # export file with ID, chrom, start, end
-    tsv_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.tsv" % method)
+    tsv_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.tsv" % method)
     export = significant[['chrom', 'start', 'end']]
     export['index'] = export.index
     export[['index', 'chrom', 'start', 'end']].to_csv(tsv_file, sep="\t", header=False, index=False)
 
-    results = seq2pathway(tsv_file)
+    results = seq2pathway(tsv_file, go_term_mapping)
 
-    results_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.csv" % method)
+    results_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.csv" % method)
     results.to_csv(results_file, header=False, index=False)
 
     # GO Terms
     # write gene names to file
-    all_cll_genes_file = os.path.join(data_dir, "cll_peaks.closest_genes.txt")
+    all_cll_genes_file = os.path.join(analysis.prj.data_dir, "cll_peaks.closest_genes.txt")
     with open(all_cll_genes_file, 'w') as handle:
         for gene in analysis.coverage_qnorm_annotated['gene_name']:
             handle.write(gene + "\n")
-    feature_genes_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.txt" % method)
+    feature_genes_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.txt" % method)
     with open(feature_genes_file, 'w') as handle:
         for gene in significant['gene_name']:
             handle.write(gene + "\n")
-    output_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.go_enrichment.tsv" % method)
+    output_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.go_enrichment.tsv" % method)
     # test enrichements of closest gene function: GO, KEGG, OMIM
-    cmd = goverlap(feature_genes_file, all_cll_genes_file, output_file)
+    goverlap(feature_genes_file, all_cll_genes_file, output_file)
 
     # Motifs
     # de novo motif finding - enrichment
-    bed_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.bed" % method)
-    fasta_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.fa" % method)
+    bed_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.bed" % method)
+    fasta_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.fa" % method)
     fasta = bed_to_fasta(bed_file, fasta_file)
-    output_folder = os.path.join(data_dir, "meme", "cll_peaks.%s_significant" % method)
+    output_folder = os.path.join(analysis.prj.data_dir, "meme", "cll_peaks.%s_significant" % method)
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
     meme(fasta, output_folder)
@@ -1660,7 +1530,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     thresholds = {"mutation": 28, "patient_gender": 8}
 
     dendr = dendrogram(sites_cluster.dendrogram_row.linkage, color_threshold=thresholds[feature], labels=significant_values.index)  # labels have to be reset for some reason... grrrr!
-    plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.dendrogram.svg" % method), bbox_inches="tight")
+    plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_sites.dendrogram.svg" % method), bbox_inches="tight")
 
     # assign a cluster to each peak
     site_cluster_dict = dict(zip(dendr['ivl'], dendr['color_list']))
@@ -1670,7 +1540,6 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     # or count genomic regions/chromatin states
     p_values = pd.DataFrame()
     counts = pd.DataFrame()
-    cluster_counts = pd.DataFrame()
     for cluster_name, cluster in enumerate(significant['cluster'].unique()):
         if cluster is None:
             continue
@@ -1680,7 +1549,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
         cluster_data = significant[significant['cluster'] == cluster]
 
         # SAVE AS BED
-        bed_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.bed" % (method, cluster_name))
+        bed_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.bed" % (method, cluster_name))
         cluster_data[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
 
         # TEST DIFFERENCES IN PEAK CARACTERISTICS FROM WHOLE SET
@@ -1709,7 +1578,7 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
         g.map(sns.barplot, "values", 0)
         plt.legend(loc="best")
         g.set_axis_labels(x_var="cluster #", y_var="count")
-        plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.clusters.enrichments.svg" % method), bbox_inches="tight")
+        plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_sites.clusters.enrichments.svg" % method), bbox_inches="tight")
 
         # plot p-values
         p_values['p-value'] = -np.log10(p_values['p-value'])
@@ -1720,12 +1589,12 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
         for axis in g.axes[0]:
             axis.axhline(-np.log10(0.05), linestyle='- -', color='black')
         g.set_axis_labels(x_var="cluster #", y_var="-log10(pvalue)")
-        plt.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.clusters.length_support_p-values.svg" % method), bbox_inches="tight")
+        plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_sites.clusters.length_support_p-values.svg" % method), bbox_inches="tight")
 
         # Lola
         # use all cll sites as universe
-        universe_file = os.path.join(data_dir, "cll_peaks.bed")
-        output_folder = os.path.join(data_dir, "lola", "cll_peaks.%s_significant.clustering_sites.cluster_%i" % (method, cluster_name))
+        universe_file = os.path.join(analysis.prj.data_dir, "cll_peaks.bed")
+        output_folder = os.path.join(analysis.prj.data_dir, "lola", "cll_peaks.%s_significant.clustering_sites.cluster_%i" % (method, cluster_name))
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
         # run
@@ -1733,73 +1602,224 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
 
         # seq2pathway
         # export file with ID, chrom, start, end
-        tsv_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.tsv" % (method, cluster_name))
+        tsv_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.tsv" % (method, cluster_name))
         export = significant[['chrom', 'start', 'end']]
         export['index'] = export.index
         export[['index', 'chrom', 'start', 'end']].to_csv(tsv_file, sep="\t", header=False, index=False)
 
-        results = seq2pathway(tsv_file)
+        results = seq2pathway(tsv_file, go_term_mapping)
 
-        results_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.csv" % (method, cluster_name))
+        results_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.csv" % (method, cluster_name))
         results.to_csv(results_file, header=False, index=False)
 
         # GO Terms
         # write gene names to file
-        all_cll_genes_file = os.path.join(data_dir, "cll_peaks.closest_genes.txt")
+        all_cll_genes_file = os.path.join(analysis.prj.data_dir, "cll_peaks.closest_genes.txt")
         with open(all_cll_genes_file, 'w') as handle:
             for gene in analysis.coverage_qnorm_annotated['gene_name']:
                 handle.write(gene + "\n")
-        feature_genes_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.cluster_%i.txt" % (method, cluster_name))
+        feature_genes_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.cluster_%i.txt" % (method, cluster_name))
         with open(feature_genes_file, 'w') as handle:
             for gene in significant['gene_name']:
                 handle.write(gene + "\n")
-        output_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.go_enrichment.cluster_%i.tsv" % (method, cluster_name))
+        output_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.go_enrichment.cluster_%i.tsv" % (method, cluster_name))
         # test enrichements of closest gene function: GO, KEGG, OMIM
-        cmd = goverlap(feature_genes_file, all_cll_genes_file, output_file)
+        goverlap(feature_genes_file, all_cll_genes_file, output_file)
 
         # Motifs
         # de novo motif finding - enrichment
-        bed_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.bed" % (method, cluster_name))
-        fasta_file = os.path.join(data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.fa" % (method, cluster_name))
+        bed_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.bed" % (method, cluster_name))
+        fasta_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.fa" % (method, cluster_name))
         fasta = bed_to_fasta(bed_file, fasta_file)
-        output_folder = os.path.join(data_dir, "meme", "cll_peaks.%s_significant.cluster_%i" % (method, cluster_name))
+        output_folder = os.path.join(analysis.prj.data_dir, "meme", "cll_peaks.%s_significant.cluster_%i" % (method, cluster_name))
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
         meme(fasta, output_folder)
 
 
-# iCLL ANALYSIS
-# get cluster assignments from linkage matrix
-# select 'intermediate' cluster
+def main():
+    # Parse arguments
+    parser = ArgumentParser(
+        prog="pipelines",
+        description="pipelines. Project management and sample loop."
+    )
+    parser = add_args(parser)
 
-# Repeat again independence test and
-# get all differential sites (from 3 comparisons)
+    # Parse
+    args = parser.parse_args()
+
+    to_exclude_sample_id = ['1-5-45960']
+
+    # Should we regenerate the data?
+
+    # Get path configuration
+    data_dir = os.path.join('.', "data")
+    results_dir = os.path.join('.', "results")
+    plots_dir = os.path.join(results_dir, "plots")
+
+    # Get clinical info
+    clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation.csv"))
+
+    # Start project
+    # prj = pickle.load(open("prj.pickle", 'rb'))
+    prj = Project("cll-patients")
+    prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
+
+    # Annotate with clinical data
+    prj.samples = annotate_igvh_mutations(prj.samples, clinical)
+    prj.samples = annotate_treatments(prj.samples, clinical)
+    prj.samples = annotate_mutations(prj.samples, clinical)
+    prj.samples = annotate_gender(prj.samples, clinical)
+
+    # save "digested" clinical sheet to disk
+    if args.generate:
+        fields = ['sampleName', 'diagnosis_disease', 'diagnosis_date', 'collection_date', 'time_since_diagnosis', 'diagnosis_collection', "treatment_active", 'previous_treatment_date', 'time_since_treatment', 'treatment_type', 'treatment_response', 'relapse']
+        prj.sheet.asDataFrame()[fields].to_csv("clinical_annotation_digested.csv", index=False)
+
+    # Start analysis object
+    # only with ATAC-seq samples
+    analysis = Analysis(
+        data_dir, plots_dir, [sample for sample in prj.samples if sample.technique == "ATAC-seq"],
+        pickle_file=os.path.join(data_dir, "analysis.pickle")
+    )
+    analysis.prj = prj
+    analysis.clinical = clinical
+
+    # GET CONSENSUS PEAK SET, ANNOTATE IT, PLOT FEATURES
+    # GET CHROMATIN OPENNESS MEASUREMENTS
+    # PLOT STUFF
+    if args.generate:
+        # Get consensus peak set from all samples
+        analysis.get_consensus_sites()
+        # estimate peak saturation among all samples
+        analysis.estimate_peak_saturation(n=10)
+        # Calculate peak support
+        analysis.calculate_peak_support()
+        # Annotate peaks with closest gene
+        analysis.get_peak_gene_annotation()
+        # Annotate peaks with genomic regions
+        analysis.get_peak_genomic_location()
+        # Annotate peaks with ChromHMM state from CD19+ cells
+        analysis.get_peak_chromatin_state()
+
+        # WORK WITH "OPENNESS"
+        # Get coverage values for each peak in each sample
+        analysis.measure_coverage()
+        # normalize coverage values
+        analysis.normalize_coverage()
+        analysis.normalize_coverage_quantiles()
+        # Annotate peaks with closest gene, chromatin state,
+        # genomic location, mean and variance measurements across samples
+        analysis.annotate()
+
+        # Plots
+        # plot general peak set features
+        analysis.plot_peak_characteristics()
+        # Plot rpkm features across peaks/samples
+        analysis.plot_rpkm()
+        analysis.plot_variance()
+        analysis.plot_sample_correlations()
+        # Observe exponential fit to the coeficient of variation
+        analysis.plot_qv2_fit()
+        # PCA & MDS analysis:
+        # currently not working
+    else:
+        analysis.sites = pybedtools.BedTool(os.path.join(analysis.prj.data_dir, "cll_peaks.bed"))
+        analysis.peak_count = pickle.load(open(os.path.join(analysis.prj.data_dir, "cll_peaks.cum_peak_count.pickle"), 'rb'))
+        analysis.peak_count = pd.read_csv(os.path.join("cll_peaks.cum_peak_count.csv"))
+
+        analysis.support = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.support.csv"))
+
+        analysis.gene_annotation = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.gene_annotation.csv"))
+        analysis.closest_tss_distances = pickle.load(open(os.path.join(analysis.prj.data_dir, "cll_peaks.closest_tss_distances.pickle"), 'rb'))
+
+        analysis.region_annotation = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.region_annotation.csv"))
+        analysis.region_annotation_b = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.region_annotation_background.csv"))
+
+        analysis.chrom_state_annotation = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.chromatin_state.csv"))
+        analysis.chrom_state_annotation_b = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.chromatin_state_background.csv"))
+
+        analysis.coverage = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.raw_coverage.tsv"), sep="\t", index_col=0)
+        # analysis.rpkm = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.rpkm.tsv"), sep="\t")
+        analysis.coverage_qnorm = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t")
+
+        analysis.coverage_qnorm_annotated = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
+        # analysis.rpkm_annotated = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.rpkm.annotated.tsv"), sep="\t")
+
+    # TRAIT-SPECIFIC ANALYSIS
+    # Use these samples only
+    sel_samples = [sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.sampleID != to_exclude_sample_id and sample.technique == "ATAC-seq"]
+
+    # "gender" and "mutated"
+    features = {
+        "patient_gender": ("F", "M"),  # gender
+        "mutated": (True, False),  # ighv mutation
+    }
+    for i, (feature, (group1, group2)) in enumerate(features.items()):
+        # example : i, (feature, (group1, group2)) = (0, (features.items()[0]))
+        # get dataframe subset with groups
+        g1 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group1]]
+        g2 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group2]]
+        group_analysis(analysis, sel_samples, feature, g1, g2)
+
+    # untreated vs 1st line chemotherapy +~ B cell antibodies
+    g1 = analysis.coverage_qnorm_annotated[
+        [sample.name for sample in sel_samples if not sample.treatment_active and not sample.relapse]
+    ]
+    drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR', 'Alemtuz']
+    g2 = analysis.coverage_qnorm_annotated[
+        [sample.name for sample in sel_samples if sample.treatment_active and sample.treatment_type in drugs]
+    ]
+    group_analysis(analysis, sel_samples, "untreated_vs_1stline", g1, g2)
+
+    # Disease at Diagnosis - comparison in untreated samples
+    # CLL vs MBL
+    g1 = analysis.coverage_qnorm_annotated[
+        [sample.name for sample in sel_samples if sample.diagnosis_disease == "CLL" and not sample.treatment_active and not sample.relapse]
+    ]
+    g2 = analysis.coverage_qnorm_annotated[
+        [sample.name for sample in sel_samples if sample.diagnosis_disease == "MBL" and not sample.treatment_active and not sample.relapse]
+    ]
+    group_analysis(analysis, sel_samples, "CLL_vs_MBL", g1, g2)
+
+    # "relapse", ("True", "False"), # relapse or before relapse
+    # "treatment_1st", ("untreated", "Chlor"),  # untreated vs 1st line chemotherapy
+    # "treatment_2nd", ("untreated", "Ibrut"),  # untreated vs ibrutinib
+    # "diagnosis_start", ("CLL", "MBL"),
+    # possibly other groups:
+    # ['SF3B1', 'ATM', 'del13', 'del11q', 'tri12', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
+
+    # iCLL ANALYSIS
+    # get cluster assignments from linkage matrix
+    # select 'intermediate' cluster
+    # Repeat again independence test and
+    # get all differential sites (from 3 comparisons)
+
+    # MINIMUM ELEMENT ANALYSIS
+    # Subsample peaks or reads and see the minimum required to form the clusters previously
+    # See which regions explain most of variability for each cluster
+
+    # SAMPLE CLASSIFICATION
+    # Stratify patients on above groups
+    # Train classifiers on groups
+    # Predict for all samples
+    # Assess: ROC, AUC
+
+    # COMPARE CLL WITH NORMAL CELLS
+    # we'll have matched B-cells from the patients as well
+
+    # DE NOVO/CLL-SPECIFIC ENHANCERS
+    # Find unique enhancers across CLL samples compared with normal B-cells
+    # Search other cell types for overlaping enhancers:
+    # - if possitive -> enhancer activation
+    # - if negative -> de novo enhancer -> explore mechanism
+    # validate with H3K27ac ChIP-seq
+    # validate with RNA expression
 
 
-# MINIMUM ELEMENT ANALYSIS
-# Subsample peaks or reads and see the minimum required to form the clusters previously
-# See which regions explain most of variability for each cluster
-
-
-# SAMPLE CLASSIFICATION
-# Stratify patients on:
-# - treated vs untreated
-# - ...
-# Train classifiers on groups
-# Predict for all samples
-# Assess: ROC, AUC
-
-
-# from comparison.py:
-
-# COMPARE CLL WITH NORMAL CELLS
-# we'll have matched B-cells from the patients as well
-
-
-# DE NOVO/CLL-SPECIFIC ENHANCERS
-# Find unique enhancers across CLL samples compared with normal B-cells
-# Search other cell types for overlaping enhancers:
-# - if possitive -> enhancer activation
-# - if negative -> de novo enhancer -> explore mechanism
-# validate with H3K27ac ChIP-seq
-# validate with RNA expression
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("Program canceled by user!")
+        sys.exit(1)
