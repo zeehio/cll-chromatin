@@ -959,12 +959,19 @@ def annotate_treatments(samples, clinical):
     Annotate samples with timepoint, treatment_status, treatment_type
     """
     def string_to_date(string):
-        return pd.to_datetime(string, format="%d/%m/%Y") if type(string) is str else pd.NaT
+        if type(string) is str:
+            if len(string) == 10:
+                return pd.to_datetime(string, format="%d/%m/%Y")
+            if len(string) == 7:
+                return pd.to_datetime(string, format="%m/%Y")
+            if len(string) == 4:
+                return pd.to_datetime(string, format="%Y")
+        return pd.NaT
 
     new_samples = list()
 
     for sample in samples:
-        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
+        if sample.cellLine == "CLL":
             # get sample id
             sample_id = name_to_sample_id(sample.name)
 
@@ -979,7 +986,7 @@ def annotate_treatments(samples, clinical):
             sample.time_since_diagnosis = sample.collection_date - sample.diagnosis_date
 
             # Get all treatment dates
-            treatment_dates = [string_to_date(date) for date in clinical[(clinical['sample_id'] == sample_id)][["treatment_%i_date" % (x) for x in range(1, 5)]].squeeze()]
+            treatment_dates = [string_to_date(date) for date in sample_c[["treatment_%i_date" % (x) for x in range(1, 5)]].squeeze()]
             # Get treatment end date
             treatment_end_date = string_to_date(clinical[(clinical['sample_id'] == sample_id)][["treatment_end_date"]])
             # Check if there are earlier "timepoints"
@@ -997,15 +1004,17 @@ def annotate_treatments(samples, clinical):
                     else:
                         if treatment_date < treatment_end_date < sample.collection_date:
                             sample.treatment_active = False
-                        else:
+                        elif treatment_date < sample.collection_date < treatment_end_date:
                             sample.treatment_active = True
-            # if none of the treatments was before collection
+            # if there were no treatments before collection, consider untreated
             if not hasattr(sample, "treatment_active"):
                 sample.treatment_active = False
-                # collected at diagnosis?
+                # if there were no treatments before collection, and collection was within 30 days of diagnosis, tag as collected at diagnosis
                 if sample.time_since_diagnosis is not pd.NaT:
-                    if pd.to_timedelta(0, unit="days") < sample.time_since_diagnosis < pd.to_timedelta(30, unit="days"):
+                    if abs(sample.time_since_diagnosis) < pd.to_timedelta(30, unit="days"):
                         sample.diagnosis_collection = True
+            if not hasattr(sample, "diagnosis_collection"):
+                sample.diagnosis_collection = False
 
             # Annotate treatment type, time since treatment
             if sample.treatment_active:
@@ -1013,15 +1022,17 @@ def annotate_treatments(samples, clinical):
                     # Find out which earlier "timepoint" is closest and annotate treatment and response
                     previous_dates = [date for date in clinical[(clinical['sample_id'] == sample_id)][["treatment_%i_date" % (x) for x in range(1, 5)]].squeeze()]
                     closest_date = previous_dates[np.argmin([abs(date - sample.collection_date) for date in earlier_dates])]
-                    if type(closest_date) is pd.Timestamp:
-                        # Annotate time since treatment
-                        sample.time_since_treatment = sample.collection_date - closest_date
 
-                        # Get closest clinical "timepoint", annotate response
-                        closest_timepoint = [tp for tp in range(1, 5) if closest_date == sample_c["treatment_%i_date" % tp]][0]
+                    # Annotate previous treatment date
+                    sample.previous_treatment_date = string_to_date(closest_date)
+                    # Annotate time since treatment
+                    sample.time_since_treatment = sample.collection_date - string_to_date(closest_date)
 
-                        sample.treatment_type = sample_c["treatment_%i_date" % closest_timepoint]['treatment_%i_regimen' % closest_timepoint]
-                        sample.treatment_response = sample_c["treatment_%i_date" % closest_timepoint]['treatment_%i_response' % closest_timepoint]
+                    # Get closest clinical "timepoint", annotate response
+                    closest_timepoint = [tp for tp in range(1, 5) if closest_date == sample_c["treatment_%i_date" % tp]][0]
+
+                    sample.treatment_type = sample_c['treatment_%i_regimen' % closest_timepoint]
+                    sample.treatment_response = sample_c['treatment_%i_response' % closest_timepoint]
 
             # Annotate relapses
             # are there previous timepoints with good response?
@@ -1029,16 +1040,20 @@ def annotate_treatments(samples, clinical):
             if len(earlier_dates) > 0:
                 closest_timepoint = [tp for tp in range(1, 5) if closest_date == sample_c["treatment_%i_date" % tp]][0]
 
+                # Annotate with previous known response
                 # if prior had bad response, mark current as relapse
                 if sample_c['treatment_%i_response' % closest_timepoint] in ["CR", "GR"]:
+                    sample.previous_response = sample_c['treatment_%i_response' % closest_timepoint]
                     sample.relapse = True
                 else:
+                    sample.previous_response = sample_c['treatment_%i_response' % closest_timepoint]
                     sample.relapse = False
             else:
                 sample.relapse = False
 
             # If any attribute is not set, set to None
-            for attr in ['diagnosis_collection', 'time_since_treatment', 'treatment_type', 'treatment_response', "treatment_active"]:
+            for attr in ['diagnosis_collection', 'time_since_treatment', 'treatment_type',
+                         'treatment_response', "treatment_active", "previous_treatment_date", "previous_response"]:
                 if not hasattr(sample, attr):
                     setattr(sample, attr, None)
 
@@ -1587,6 +1602,11 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
         fig.autofmt_xdate()
         fig.tight_layout()
         fig.savefig(os.path.join(plots_dir, "cll_peaks.%s_significant.clustering_sites.%s.svg" % (method, variable)), bbox_inches="tight")
+
+    # TODO:
+    # Get CLL expression data
+    # Divide significant in <0 and >0 fold_change
+    # Correlate with expression
 
     # Lola
     # use all cll sites as universe
