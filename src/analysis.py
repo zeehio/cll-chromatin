@@ -1234,7 +1234,7 @@ def seq2pathway(bed_file, go_term_mapping):
         df2 = pd.concat([df2, df], ignore_index=True)
 
     # intersect with GO term ID and name
-    names = pd.read_csv()
+    names = pd.read_csv(go_term_mapping)
     names.columns = ["Name", "GOID"]
 
     df2 = df2.merge(names)
