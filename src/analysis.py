@@ -1251,7 +1251,7 @@ def goverlap(genes_file, universe_file, output_file):
 
     try:
         os.system(cmd)
-    except ImportError:
+    except:
         pass
 
 
@@ -1284,7 +1284,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
     :param group1: a string representing the g1 group.
     :param group2: a string representing the g2 group.
     """
-    go_term_mapping = os.path.join(analysis.prj.data_dir, "goID_goName.csv")
+    go_term_mapping = os.path.join(analysis.prj.dirs.data, "goID_goName.csv")
 
     # get colors depending on feature (gender, mutation, drugs, etc...)
     if feature == "mutated":
@@ -1322,22 +1322,23 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
     analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] = p_values
     analysis.coverage_qnorm_annotated["_".join(["q_value", feature])] = q_values
 
+    analysis.to_pickle()
+
     # VISUALIZE
     # visualize distribution of fold-change, p-values
     # A vs B
     sns.jointplot(np.log2(1 + np.array(mean_a)), np.log2(1 + np.array(mean_b)))
-    plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_fold_change.svg" % method), bbox_inches="tight")
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_fold_change.svg" % method), bbox_inches="tight")
     plt.close('all')
     # volcano plot (logfoldchange vs logpvalue)
     sns.jointplot(
         np.array(fold_change), -np.log10(np.array(p_values)),
         stat_func=None, space=0, xlim=(-2.5, 2.5)
     )
-    plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_volcano.svg" % method), bbox_inches="tight")
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_volcano.svg" % method), bbox_inches="tight")
     plt.close('all')
 
     # get significant sites
-    # TODO: perhaps filter by fold-change too
     if feature == "mutated":
         significant = analysis.coverage_qnorm_annotated[
             (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.0001) &
@@ -1347,9 +1348,13 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
         significant = analysis.coverage_qnorm_annotated[
             (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.0001)
         ]
+    else:
+        significant = analysis.coverage_qnorm_annotated[
+            (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.0001)
+        ]
 
     # SAVE AS BED
-    bed_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.bed" % method)
+    bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.bed" % method)
     significant[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
 
     # EXPLORE
@@ -1358,17 +1363,6 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
 
     # get nice sample IDs
     significant_values.columns = map(name_to_repr, significant_values.columns)
-
-    # correlate samples on significantly different sites
-    corr_cluster = sns.clustermap(
-        significant_values.corr(),
-        method="complete",
-        annot=False,
-        col_colors=sample_colors,
-        row_colors=sample_colors
-    )
-    plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_correlation.svg" % method), bbox_inches="tight")
-    plt.close('all')
 
     # cluster samples and sites
     # plot heatmap of differentialy open sites
@@ -1380,7 +1374,18 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
         yticklabels=False,
         col_colors=sample_colors
     )
-    plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_sites.svg" % method), bbox_inches="tight")
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.svg" % method), bbox_inches="tight")
+    plt.close('all')
+
+    # correlate samples on significantly different sites
+    corr_cluster = sns.clustermap(
+        significant_values.corr(),
+        method="complete",
+        annot=False,
+        col_colors=sample_colors,
+        row_colors=sample_colors
+    )
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_correlation.svg" % method), bbox_inches="tight")
     plt.close('all')
 
     # # pca
@@ -1410,7 +1415,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
     #     )
     # axis.set_xlabel("PC1 - {0}% variance".format(variance[0]))
     # axis.set_ylabel("PC2 - {0}% variance".format(variance[1]))
-    # fig.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.pca.svg" % method), bbox_inches="tight")
+    # fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.pca.svg" % method), bbox_inches="tight")
 
     # # 3 components
     # fig = plt.figure()
@@ -1427,7 +1432,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
     # ax.set_ylabel("PC2 - {0}% variance".format(variance[1]))
     # ax.set_zlabel("PC3 - {0}% variance".format(variance[2]))
     # plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-    # fig.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.pca.svg" % method), bbox_inches="tight")
+    # fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.pca.svg" % method), bbox_inches="tight")
     # plt.close('all')
 
     # # mds
@@ -1444,7 +1449,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
     #         s=50
     #     )
     # plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-    # plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.mds.svg" % method), bbox_inches="tight")
+    # plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.mds.svg" % method), bbox_inches="tight")
     # plt.close('all')
 
     # CHARACTERIZE
@@ -1455,12 +1460,12 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
     for variable in ['length', 'support']:
         fig, axis = plt.subplots()
         sns.distplot(significant[variable], bins=300, kde=False, ax=axis)
-        fig.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_sites.peak_%s.svg" % (method, variable)), bbox_inches="tight")
+        fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.peak_%s.svg" % (method, variable)), bbox_inches="tight")
 
     # # Plot distance to nearest TSS
     # fig, axis = plt.subplots()
     # sns.distplot(significant['closest_tss_distances'], bins=200, ax=axis)
-    # fig.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_sites.closest_tss_distances.svg" % method), bbox_inches="tight")
+    # fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.closest_tss_distances.svg" % method), bbox_inches="tight")
 
     # plot genomic location and chromatin state
     for variable in ['genomic_region', 'chromatin_state']:
@@ -1471,7 +1476,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
         sns.barplot(x=0, y=1, data=data, ax=axis)
         fig.autofmt_xdate()
         fig.tight_layout()
-        fig.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_sites.%s.svg" % (method, variable)), bbox_inches="tight")
+        fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.%s.svg" % (method, variable)), bbox_inches="tight")
 
     # TODO:
     # Get CLL expression data
@@ -1480,8 +1485,8 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
 
     # Lola
     # use all cll sites as universe
-    universe_file = os.path.join(analysis.prj.data_dir, "cll_peaks.bed")
-    output_folder = os.path.join(analysis.prj.data_dir, "lola", "cll_peaks.%s_significant.clustering_sites" % method)
+    universe_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.bed")
+    output_folder = os.path.join(analysis.prj.dirs.data, "lola", "cll_peaks.%s_significant.clustering_sites" % method)
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
     # run
@@ -1489,36 +1494,36 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
 
     # seq2pathway
     # export file with ID, chrom, start, end
-    tsv_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.tsv" % method)
+    tsv_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.tsv" % method)
     export = significant[['chrom', 'start', 'end']]
     export['index'] = export.index
     export[['index', 'chrom', 'start', 'end']].to_csv(tsv_file, sep="\t", header=False, index=False)
 
     results = seq2pathway(tsv_file, go_term_mapping)
 
-    results_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.csv" % method)
+    results_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.csv" % method)
     results.to_csv(results_file, header=False, index=False)
 
     # GO Terms
     # write gene names to file
-    all_cll_genes_file = os.path.join(analysis.prj.data_dir, "cll_peaks.closest_genes.txt")
+    all_cll_genes_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.closest_genes.txt")
     with open(all_cll_genes_file, 'w') as handle:
         for gene in analysis.coverage_qnorm_annotated['gene_name']:
             handle.write(gene + "\n")
-    feature_genes_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.txt" % method)
+    feature_genes_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.closest_genes.txt" % method)
     with open(feature_genes_file, 'w') as handle:
         for gene in significant['gene_name']:
             handle.write(gene + "\n")
-    output_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.go_enrichment.tsv" % method)
+    output_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.closest_genes.go_enrichment.tsv" % method)
     # test enrichements of closest gene function: GO, KEGG, OMIM
     goverlap(feature_genes_file, all_cll_genes_file, output_file)
 
     # Motifs
     # de novo motif finding - enrichment
-    bed_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.bed" % method)
-    fasta_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.fa" % method)
+    bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.bed" % method)
+    fasta_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.fa" % method)
     fasta = bed_to_fasta(bed_file, fasta_file)
-    output_folder = os.path.join(analysis.prj.data_dir, "meme", "cll_peaks.%s_significant" % method)
+    output_folder = os.path.join(analysis.prj.dirs.data, "meme", "cll_peaks.%s_significant" % method)
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
     meme(fasta, output_folder)
@@ -1527,10 +1532,10 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
     # get dendrogram data and plot it,
     # determine height to separate clusters
     # this must be done empirically for each feature type
-    thresholds = {"mutation": 28, "patient_gender": 8}
+    thresholds = {"mutation": 28, "patient_gender": 8, "untreated_vs_1stline": 8, "CLL_vs_MBL": 8}
 
     dendr = dendrogram(sites_cluster.dendrogram_row.linkage, color_threshold=thresholds[feature], labels=significant_values.index)  # labels have to be reset for some reason... grrrr!
-    plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_sites.dendrogram.svg" % method), bbox_inches="tight")
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.dendrogram.svg" % method), bbox_inches="tight")
 
     # assign a cluster to each peak
     site_cluster_dict = dict(zip(dendr['ivl'], dendr['color_list']))
@@ -1549,7 +1554,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
         cluster_data = significant[significant['cluster'] == cluster]
 
         # SAVE AS BED
-        bed_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.bed" % (method, cluster_name))
+        bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.cluster_%i.bed" % (method, cluster_name))
         cluster_data[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
 
         # TEST DIFFERENCES IN PEAK CARACTERISTICS FROM WHOLE SET
@@ -1578,7 +1583,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
         g.map(sns.barplot, "values", 0)
         plt.legend(loc="best")
         g.set_axis_labels(x_var="cluster #", y_var="count")
-        plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_sites.clusters.enrichments.svg" % method), bbox_inches="tight")
+        plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.clusters.enrichments.svg" % method), bbox_inches="tight")
 
         # plot p-values
         p_values['p-value'] = -np.log10(p_values['p-value'])
@@ -1589,12 +1594,12 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
         for axis in g.axes[0]:
             axis.axhline(-np.log10(0.05), linestyle='- -', color='black')
         g.set_axis_labels(x_var="cluster #", y_var="-log10(pvalue)")
-        plt.savefig(os.path.join(analysis.prj.plots_dir, "cll_peaks.%s_significant.clustering_sites.clusters.length_support_p-values.svg" % method), bbox_inches="tight")
+        plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.clusters.length_support_p-values.svg" % method), bbox_inches="tight")
 
         # Lola
         # use all cll sites as universe
-        universe_file = os.path.join(analysis.prj.data_dir, "cll_peaks.bed")
-        output_folder = os.path.join(analysis.prj.data_dir, "lola", "cll_peaks.%s_significant.clustering_sites.cluster_%i" % (method, cluster_name))
+        universe_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.bed")
+        output_folder = os.path.join(analysis.prj.dirs.data, "lola", "cll_peaks.%s_significant.clustering_sites.cluster_%i" % (method, cluster_name))
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
         # run
@@ -1602,36 +1607,36 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
 
         # seq2pathway
         # export file with ID, chrom, start, end
-        tsv_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.tsv" % (method, cluster_name))
+        tsv_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.cluster_%i.tsv" % (method, cluster_name))
         export = significant[['chrom', 'start', 'end']]
         export['index'] = export.index
         export[['index', 'chrom', 'start', 'end']].to_csv(tsv_file, sep="\t", header=False, index=False)
 
         results = seq2pathway(tsv_file, go_term_mapping)
 
-        results_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.csv" % (method, cluster_name))
+        results_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.cluster_%i.csv" % (method, cluster_name))
         results.to_csv(results_file, header=False, index=False)
 
         # GO Terms
         # write gene names to file
-        all_cll_genes_file = os.path.join(analysis.prj.data_dir, "cll_peaks.closest_genes.txt")
+        all_cll_genes_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.closest_genes.txt")
         with open(all_cll_genes_file, 'w') as handle:
             for gene in analysis.coverage_qnorm_annotated['gene_name']:
                 handle.write(gene + "\n")
-        feature_genes_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.cluster_%i.txt" % (method, cluster_name))
+        feature_genes_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.closest_genes.cluster_%i.txt" % (method, cluster_name))
         with open(feature_genes_file, 'w') as handle:
             for gene in significant['gene_name']:
                 handle.write(gene + "\n")
-        output_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.closest_genes.go_enrichment.cluster_%i.tsv" % (method, cluster_name))
+        output_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.closest_genes.go_enrichment.cluster_%i.tsv" % (method, cluster_name))
         # test enrichements of closest gene function: GO, KEGG, OMIM
         goverlap(feature_genes_file, all_cll_genes_file, output_file)
 
         # Motifs
         # de novo motif finding - enrichment
-        bed_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.bed" % (method, cluster_name))
-        fasta_file = os.path.join(analysis.prj.data_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.fa" % (method, cluster_name))
+        bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.cluster_%i.bed" % (method, cluster_name))
+        fasta_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.cluster_%i.fa" % (method, cluster_name))
         fasta = bed_to_fasta(bed_file, fasta_file)
-        output_folder = os.path.join(analysis.prj.data_dir, "meme", "cll_peaks.%s_significant.cluster_%i" % (method, cluster_name))
+        output_folder = os.path.join(analysis.prj.dirs.data, "meme", "cll_peaks.%s_significant.cluster_%i" % (method, cluster_name))
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
         meme(fasta, output_folder)
@@ -1649,8 +1654,6 @@ def main():
     args = parser.parse_args()
 
     to_exclude_sample_id = ['1-5-45960']
-
-    # Should we regenerate the data?
 
     # Get path configuration
     data_dir = os.path.join('.', "data")
@@ -1724,27 +1727,27 @@ def main():
         # PCA & MDS analysis:
         # currently not working
     else:
-        analysis.sites = pybedtools.BedTool(os.path.join(analysis.prj.data_dir, "cll_peaks.bed"))
-        analysis.peak_count = pickle.load(open(os.path.join(analysis.prj.data_dir, "cll_peaks.cum_peak_count.pickle"), 'rb'))
+        analysis.sites = pybedtools.BedTool(os.path.join(analysis.prj.dirs.data, "cll_peaks.bed"))
+        analysis.peak_count = pickle.load(open(os.path.join(analysis.prj.dirs.data, "cll_peaks.cum_peak_count.pickle"), 'rb'))
         analysis.peak_count = pd.read_csv(os.path.join("cll_peaks.cum_peak_count.csv"))
 
-        analysis.support = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.support.csv"))
+        analysis.support = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.support.csv"))
 
-        analysis.gene_annotation = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.gene_annotation.csv"))
-        analysis.closest_tss_distances = pickle.load(open(os.path.join(analysis.prj.data_dir, "cll_peaks.closest_tss_distances.pickle"), 'rb'))
+        analysis.gene_annotation = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.gene_annotation.csv"))
+        analysis.closest_tss_distances = pickle.load(open(os.path.join(analysis.prj.dirs.data, "cll_peaks.closest_tss_distances.pickle"), 'rb'))
 
-        analysis.region_annotation = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.region_annotation.csv"))
-        analysis.region_annotation_b = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.region_annotation_background.csv"))
+        analysis.region_annotation = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.region_annotation.csv"))
+        analysis.region_annotation_b = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.region_annotation_background.csv"))
 
-        analysis.chrom_state_annotation = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.chromatin_state.csv"))
-        analysis.chrom_state_annotation_b = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.chromatin_state_background.csv"))
+        analysis.chrom_state_annotation = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.chromatin_state.csv"))
+        analysis.chrom_state_annotation_b = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.chromatin_state_background.csv"))
 
-        analysis.coverage = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.raw_coverage.tsv"), sep="\t", index_col=0)
-        # analysis.rpkm = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.rpkm.tsv"), sep="\t")
-        analysis.coverage_qnorm = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t")
+        analysis.coverage = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.raw_coverage.tsv"), sep="\t", index_col=0)
+        # analysis.rpkm = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.rpkm.tsv"), sep="\t")
+        analysis.coverage_qnorm = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t")
 
-        analysis.coverage_qnorm_annotated = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
-        # analysis.rpkm_annotated = pd.read_csv(os.path.join(analysis.prj.data_dir, "cll_peaks.rpkm.annotated.tsv"), sep="\t")
+        analysis.coverage_qnorm_annotated = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
+        # analysis.rpkm_annotated = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.rpkm.annotated.tsv"), sep="\t")
 
     # TRAIT-SPECIFIC ANALYSIS
     # Use these samples only
@@ -1760,7 +1763,7 @@ def main():
         # get dataframe subset with groups
         g1 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group1]]
         g2 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group2]]
-        group_analysis(analysis, sel_samples, feature, g1, g2)
+        group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2)
 
     # untreated vs 1st line chemotherapy +~ B cell antibodies
     g1 = analysis.coverage_qnorm_annotated[
@@ -1770,7 +1773,7 @@ def main():
     g2 = analysis.coverage_qnorm_annotated[
         [sample.name for sample in sel_samples if sample.treatment_active and sample.treatment_type in drugs]
     ]
-    group_analysis(analysis, sel_samples, "untreated_vs_1stline", g1, g2)
+    group_analysis(analysis, sel_samples, "untreated_vs_1stline", g1, g2, "untreated", "1stlinetreatment")
 
     # Disease at Diagnosis - comparison in untreated samples
     # CLL vs MBL
@@ -1780,7 +1783,7 @@ def main():
     g2 = analysis.coverage_qnorm_annotated[
         [sample.name for sample in sel_samples if sample.diagnosis_disease == "MBL" and not sample.treatment_active and not sample.relapse]
     ]
-    group_analysis(analysis, sel_samples, "CLL_vs_MBL", g1, g2)
+    group_analysis(analysis, sel_samples, "CLL_vs_MBL", g1, g2, "CLL", "MBL")
 
     # "relapse", ("True", "False"), # relapse or before relapse
     # "treatment_1st", ("untreated", "Chlor"),  # untreated vs 1st line chemotherapy
