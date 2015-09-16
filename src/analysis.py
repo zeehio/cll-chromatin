@@ -958,58 +958,92 @@ def annotate_treatments(samples, clinical):
     """
     Annotate samples with timepoint, treatment_status, treatment_type
     """
+    def string_to_date(string):
+        return pd.to_datetime(string, format="%d/%m/%Y") if type(string) is str else pd.NaT
+
     new_samples = list()
 
     for sample in samples:
         if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
-            # Get ids to match sample with others
-            patient_id = name_to_patient_id(sample.name)
             # get sample id
             sample_id = name_to_sample_id(sample.name)
 
             # get corresponding series from "clinical"
             sample_c = clinical[clinical['sample_id'] == sample_id].squeeze()
-            # add timepoint
-            sample.timepoint = sample_c.timepoint
-            # add time since diagnosis
-            sample.time_since_diagnosis = pd.to_datetime(sample_c['sample_collection_date'], format="%d/%m/%Y") - pd.to_datetime(sample_c['diagnosis_date'], format="%d/%m/%Y")
 
-            # if sample is being treated
-            if sample_c['treated'] == "Y":
-                # Annotate treatment
-                sample.treatment_active = True
-                # if sample is treated, find out which treatment based on timepoint
-                sample.treatment_type = sample_c['treatment_%i_regimen' % sample.timepoint]
-                # CR, GR, PR, NR in this order of 'goodness'
-                sample.treatment_response = sample_c['treatment_%i_response' % sample.timepoint]
+            # Get sample collection date
+            sample.collection_date = string_to_date(sample_c['sample_collection_date'])
+            # Get diagnosis date
+            sample.diagnosis_date = string_to_date(sample_c['diagnosis_date'])
+            # Get time since diagnosis
+            sample.time_since_diagnosis = sample.collection_date - sample.diagnosis_date
 
-                # Annotate relapses
-                # are there previous timepoints with good response?
-                if sample.timepoint >= 2:
-                    # get prior timepoint of the sample patient
-                    sample_p = clinical[(clinical['patient_id'] == int(patient_id)) & (clinical['timepoint'] == sample.timepoint - 1)]
+            # Get all treatment dates
+            treatment_dates = [string_to_date(date) for date in clinical[(clinical['sample_id'] == sample_id)][["treatment_%i_date" % (x) for x in range(1, 5)]].squeeze()]
+            # Get treatment end date
+            treatment_end_date = string_to_date(clinical[(clinical['sample_id'] == sample_id)][["treatment_end_date"]])
+            # Check if there are earlier "timepoints"
+            earlier_dates = [treatment_date for treatment_date in treatment_dates if treatment_date < sample.collection_date]
 
-                    # if prior had bad response, mark current as relapse
-                    if sample_p['treatment_response'] in ["CR", "GR"]:
-                        sample.relapse = True
+            # Annotate samples with active treatment
+            for treatment_date in treatment_dates:
+                # if one of the treatment dates is earlier
+                if treatment_date < sample.collection_date:
+                    # this sample was not collected at diagnosis time
+                    sample.diagnosis_collection = False
+                    # and no treatment end date in between, mark as under treatment
+                    if treatment_end_date is pd.NaT:
+                        sample.treatment_active = True
                     else:
-                        sample.relapse = False
+                        if treatment_date < treatment_end_date < sample.collection_date:
+                            sample.treatment_active = False
+                        else:
+                            sample.treatment_active = True
+            # if none of the treatments was before collection
+            if not hasattr(sample, "treatment_active"):
+                sample.treatment_active = False
+                # collected at diagnosis?
+                if sample.time_since_diagnosis is not pd.NaT:
+                    if pd.to_timedelta(0, unit="days") < sample.time_since_diagnosis < pd.to_timedelta(30, unit="days"):
+                        sample.diagnosis_collection = True
+
+            # Annotate treatment type, time since treatment
+            if sample.treatment_active:
+                if len(earlier_dates) > 0:
+                    # Find out which earlier "timepoint" is closest and annotate treatment and response
+                    previous_dates = [date for date in clinical[(clinical['sample_id'] == sample_id)][["treatment_%i_date" % (x) for x in range(1, 5)]].squeeze()]
+                    closest_date = previous_dates[np.argmin([abs(date - sample.collection_date) for date in earlier_dates])]
+                    if type(closest_date) is pd.Timestamp:
+                        # Annotate time since treatment
+                        sample.time_since_treatment = sample.collection_date - closest_date
+
+                        # Get closest clinical "timepoint", annotate response
+                        closest_timepoint = [tp for tp in range(1, 5) if closest_date == sample_c["treatment_%i_date" % tp]][0]
+
+                        sample.treatment_type = sample_c["treatment_%i_date" % closest_timepoint]['treatment_%i_regimen' % closest_timepoint]
+                        sample.treatment_response = sample_c["treatment_%i_date" % closest_timepoint]['treatment_%i_response' % closest_timepoint]
+
+            # Annotate relapses
+            # are there previous timepoints with good response?
+            # Get previous clinical "timepoints", annotate response
+            if len(earlier_dates) > 0:
+                closest_timepoint = [tp for tp in range(1, 5) if closest_date == sample_c["treatment_%i_date" % tp]][0]
+
+                # if prior had bad response, mark current as relapse
+                if sample_c['treatment_%i_response' % closest_timepoint] in ["CR", "GR"]:
+                    sample.relapse = True
                 else:
                     sample.relapse = False
-            elif sample_c['treated'] == "N":
-                sample.treatment_active = False
-                sample.relapse = False
-                for attr in ['treatment_type', 'treatment_response']:
-                    setattr(sample, attr, None)
             else:
                 sample.relapse = False
-                for attr in ['treatment_active', 'treatment_type', 'treatment_response']:
+
+            # If any attribute is not set, set to None
+            for attr in ['diagnosis_collection', 'time_since_treatment', 'treatment_type', 'treatment_response', "treatment_active"]:
+                if not hasattr(sample, attr):
                     setattr(sample, attr, None)
-        else:
-            sample.relapse = False
-            for attr in ['timepoint', 'treatment_active', 'treatment_type', 'treatment_response', 'time_since_diagnosis']:
-                setattr(sample, attr, None)
-        new_samples.append(sample)
+
+            # Append sample
+            new_samples.append(sample)
     return new_samples
 
 
