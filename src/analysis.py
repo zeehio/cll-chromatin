@@ -1322,7 +1322,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
     analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] = p_values
     analysis.coverage_qnorm_annotated["_".join(["q_value", feature])] = q_values
 
-    analysis.to_pickle()
+    # analysis.to_pickle()
 
     # VISUALIZE
     # visualize distribution of fold-change, p-values
@@ -1502,7 +1502,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
     results = seq2pathway(tsv_file, go_term_mapping)
 
     results_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.csv" % method)
-    results.to_csv(results_file, header=False, index=False)
+    results.to_csv(results_file, index=False)
 
     # GO Terms
     # write gene names to file
@@ -1615,7 +1615,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
         results = seq2pathway(tsv_file, go_term_mapping)
 
         results_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.cluster_%i.csv" % (method, cluster_name))
-        results.to_csv(results_file, header=False, index=False)
+        results.to_csv(results_file, index=False)
 
         # GO Terms
         # write gene names to file

@@ -142,7 +142,7 @@ def piq_to_network(results_dir, motif_numbers):
     # get all cll peaks to filter data
     all_peaks = pybedtools.BedTool("data/cll_peaks.bed")
     # read in gene info
-    refseq_mRNA_tss = pybedtools.BedTool("data/hg19.refSeq.TSS.mRNA.bed")
+    refseq_mrna_tss = pybedtools.BedTool("data/hg19.refSeq.TSS.mRNA.bed")
 
     # dict to store TF->gene interactions
     interactions = dict()
@@ -188,7 +188,7 @@ def piq_to_network(results_dir, motif_numbers):
         footprints.to_csv(os.path.join("tmp.bed"), sep="\t", index=False, header=False)
 
         # Get closest gene
-        closest_tss = pybedtools.BedTool(os.path.join("tmp.bed")).closest(refseq_mRNA_tss, d=True).to_dataframe()
+        closest_tss = pybedtools.BedTool(os.path.join("tmp.bed")).closest(refseq_mrna_tss, d=True).to_dataframe()
         closest_tss.columns = ["chrom", "start", "end", "pwm", "shape", "score", "purity", "chrom_gene", "start_gene", "end_gene", "gene", "distance"]
 
         # CONNECT
@@ -353,8 +353,21 @@ for sample in prj.samples[1:5]:
     interactions = {number2tf[key]: refseq2gene[gene] for key, value in interactions.items() for gene in value}
 
     interactions = pd.DataFrame([interactions.keys(), interactions.values()]).T
+    interactions.columns = ['TF', 'gene']
+
+    interactions = interactions.groupby(['TF', 'gene']).apply(len)
+    interactions = interactions.reset_index(name="count")
+
+    interactions['interaction_type'] = "pd"
     interactions.to_csv(os.path.join(sample.dirs.sampleRoot, "footprints", "piq.TF-gene_interactions.tsv"), sep="\t", header=False, index=False)
 
+    # Filter TF-> TF interactions
+    interactions_TF = interactions[interactions['gene'].isin(interactions['TF'])]
+    interactions_TF.to_csv(os.path.join(sample.dirs.sampleRoot, "footprints", sample.name + ".piq.TF-TF_interactions.tsv"), sep="\t", index=False)
+
+    # Filter TFs- with less than 2 interactions
+    interactions_TF_filtered = interactions_TF[interactions_TF['count'] > 2]
+    interactions_TF_filtered.to_csv(os.path.join(sample.dirs.sampleRoot, "footprints", sample.name + ".piq.TF-TF_interactions.filtered.tsv"), sep="\t", index=False)
 
 # Network types:
 # patient-specific:
