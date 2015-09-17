@@ -142,11 +142,10 @@ def piq_to_network(results_dir, motif_numbers):
     # get all cll peaks to filter data
     all_peaks = pybedtools.BedTool("data/cll_peaks.bed")
     # read in gene info
-    tsss = pd.read_csv("data/hg19.refSeq.TSS.mRNA.bed", sep="\t", header=None)
-    tsss.columns = ["chrom", "start", "end", "id"]
+    refseq_mRNA_tss = pybedtools.BedTool("data/hg19.refSeq.TSS.mRNA.bed")
 
-    # prepare TF vs Gene matrix
-    scores = pd.DataFrame(index=tsss["id"], columns=motif_numbers)
+    # dict to store TF->gene interactions
+    interactions = dict()
 
     # loop through motifs/TFs, filter and establish relationship between TF and gene
     for motif in motif_numbers:
@@ -186,26 +185,17 @@ def piq_to_network(results_dir, motif_numbers):
         # filter for motifs overlapping CLL peaks
         footprints = pybedtools.BedTool(os.path.join("tmp.bed")).intersect(all_peaks, wa=True).to_dataframe()
         footprints.columns = ["chrom", "start", "end", "pwm", "shape", "score", "purity"]
+        footprints.to_csv(os.path.join("tmp.bed"), sep="\t", index=False, header=False)
 
-        # If empty give 0 to every gene for this TF
-        if len(footprints) < 500:
-            continue
-        print("footprint number", len(footprints))
+        # Get closest gene
+        closest_tss = pybedtools.BedTool(os.path.join("tmp.bed")).closest(refseq_mRNA_tss, d=True).to_dataframe()
+        closest_tss.columns = ["chrom", "start", "end", "pwm", "shape", "score", "purity", "chrom_gene", "start_gene", "end_gene", "gene", "distance"]
 
         # CONNECT
         # Now assign a score between this TF and every gene:
-        # get distance to nearest gene TSS in the same chromosome as footprint
-        for chrom in footprints["chrom"].unique():
-            # calculate the distance between each footprint and every gene in the chromosome
-            for i in tsss[tsss["chrom"] == chrom].index:
-                gene_scores = 0
-                for j in footprints[footprints["chrom"] == chrom].index:
-                    dist = abs(footprints.ix[j]["start"] - tsss.ix[i]["start"])
-                    gene_scores += 2 * (footprints.ix[j]["purity"] - 0.5) * 10 ** -(dist / 1e6)
-                scores.loc[tsss.ix[i]["id"], motif] = gene_scores
+        interactions[motif] = closest_tss["gene"].tolist()
 
-    # everything else gets 0
-    return scores.fillna(0)
+    return interactions
 
 
 # Get path configuration
@@ -235,8 +225,15 @@ to_exclude_sample_id = ['1-5-45960']
 motifs_file = "~/workspace/piq-single/pwms/jasparfix.txt"
 n_motifs = 1316
 
+# read list of tfs to do
 df = pd.read_csv("data/tf_gene_matching.txt", sep="\t", header=None)
+number2tf = dict(zip(df[0], df[2]))
 motif_numbers = df[0]
+
+# get refseq -> gene symbol mapping
+os.system("""mysql --user=genome -N --host=genome-mysql.cse.ucsc.edu -A -D hg19 -e "select name,name2 from refGene" > data/Refseq2Gene.txt""")
+refseq2gene = pd.read_csv("data/Refseq2Gene.txt", sep="\t", header=None)
+refseq2gene = dict(zip(refseq2gene[0], refseq2gene[1]))
 
 # prepare motifs for footprinting (done once)
 # cmds = piq_prepare_motifs(motifs_file, n_motifs)
@@ -348,74 +345,16 @@ for job in jobs:
     tk.slurmSubmitJob(job)
 
 
-# FOOTPRINT GROUPS UNMUTATED/MUTATED
-
-# get unmutated/mutated samples
-muts = list()
-unmuts = list()
-for sample in prj.samples:
-    if sample.sampleID in to_exclude_sample_id or sample.technique != "ATAC-seq" or sample.cellLine != "CLL" or sample.readType == "SE":
-        continue
-    if sample.mutated is True:
-        muts.append(sample.filteredshifted)
-    elif sample.mutated is False:
-        unmuts.append(sample.filteredshifted)
-
-# merge bam files manually
-muts_bam = os.path.join(data_dir, "CLL_all_igvhmutated_samples.filteredshifted.bam")
-muts_cache = os.path.join(data_dir, "CLL_all_igvhmutated_samples.filteredshifted.RData")
-unmuts_bam = os.path.join(data_dir, "CLL_all_igvhunmutated_samples.filteredshifted.bam")
-unmuts_cache = os.path.join(data_dir, "CLL_all_igvhunmutated_samples.filteredshifted.RData")
-
-os.system("sambamba merge -t 12 -p %s " % muts_bam + " ".join(muts))
-os.system("sambamba merge -t 12 -p %s " % unmuts_bam + " ".join(unmuts))
-
-# prepare merged bam files from IGVH mutated and unmutated samples
-cmd = piq_prepare_bams(muts, muts_cache)
-os.system(cmd)
-cmd = piq_prepare_bams(unmuts, unmuts_cache)
-os.system(cmd)
-
-# prepare also Nextera background
-nextera_dir = "/scratch/users/arendeiro/PGA1Nextera"
-nextera_bam = os.path.join(nextera_dir, "PGA_0001_Nextera-2.bam")
-nextera_cache = os.path.join(nextera_dir, "PGA_0001_Nextera-2.RData")
-
-cmd = piq_prepare_bams([nextera_bam], nextera_cache)
-os.system(cmd)
-
-# run footprinting
-os.mkdir(os.path.join(scratch_dir, "mutated"))
-cmds = piq_footprint(
-    os.path.join(data_dir, "CLL_all_igvhmutated_samples.filteredshifted.RData"), n_motifs, scratch_dir,
-    results_dir=os.path.join(scratch_dir, "mutated")
-)
-for cmd in cmds:
-    os.system(cmd)
-os.mkdir(os.path.join(scratch_dir, "unmutated"))
-cmds = piq_footprint(os.path.join(data_dir, "CLL_all_igvhunmutated_samples.filteredshifted.RData"), n_motifs, scratch_dir, os.path.join(scratch_dir, "unmutated"))
-for cmd in cmds:
-    os.system(cmd)
-
-
 # parse output,
 # connect each motif to a gene
 for sample in prj.samples[1:5]:
     print sample
-    scores = piq_to_network(os.path.join(sample.dirs.sampleRoot, "footprints"), motif_numbers)
-    scores.to_csv(os.path.join(sample.dirs.sampleRoot, "footprints", "piq.TF-gene_scores.csv"))
+    interactions = piq_to_network(os.path.join(sample.dirs.sampleRoot, "footprints"), motif_numbers)
+    interactions = {number2tf[key]: refseq2gene[gene] for key, value in interactions.items() for gene in value}
 
-    # Investigate the distribution of scores.
+    interactions = pd.DataFrame([interactions.keys(), interactions.values()]).T
+    interactions.to_csv(os.path.join(sample.dirs.sampleRoot, "footprints", "piq.TF-gene_interactions.tsv"), sep="\t", header=False, index=False)
 
-
-# Compare regulation across patients:
-# - for each TF, correlate the scores with the scores of all other transcription factors in the other patient.
-
-# Additionally
-# - build network of TF -> gene based on:
-#   - binding at the promoter or at known enhancers for the gene
-#   OR
-#   - consider regulation only if score is above threshold
 
 # Network types:
 # patient-specific:
