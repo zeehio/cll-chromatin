@@ -145,14 +145,14 @@ def piq_to_network(results_dir, motif_numbers):
     refseq_mrna_tss = pybedtools.BedTool("data/hg19.refSeq.TSS.mRNA.bed")
 
     # dict to store TF->gene interactions
-    interactions = dict()
+    interactions = pd.DataFrame()
 
     # loop through motifs/TFs, filter and establish relationship between TF and gene
     for motif in motif_numbers:
         # get both forward and reverse complement PIQ output files
         result_files = list()
         for f in files:
-            m = re.match(r'%i-.*\.csv$' % motif, f)
+            m = re.match(r'%i-.*-calls\.csv$' % motif, f)
             if hasattr(m, "string"):
                 result_files.append(m.string)
 
@@ -191,9 +191,16 @@ def piq_to_network(results_dir, motif_numbers):
         closest_tss = pybedtools.BedTool(os.path.join("tmp.bed")).closest(refseq_mrna_tss, d=True).to_dataframe()
         closest_tss.columns = ["chrom", "start", "end", "pwm", "shape", "score", "purity", "chrom_gene", "start_gene", "end_gene", "gene", "distance"]
 
-        # CONNECT
-        # Now assign a score between this TF and every gene:
-        interactions[motif] = closest_tss["gene"].tolist()
+        # Get weighted values
+        # weigh with footprint purity and distance to tss
+        scores = closest_tss
+        scores['interaction_score'] = scores.apply(lambda x: 2 * (x['purity'] - 0.5) * 10 ** -(x['distance'] / 1000000.), axis=1)
+        # sum scores for each gene
+        scores = scores.groupby(['gene'])['interaction_score'].apply(sum).reset_index()
+
+        scores["TF"] = motif
+
+        interactions = pd.concat([interactions, scores])
 
     return interactions
 
@@ -350,24 +357,21 @@ for job in jobs:
 for sample in prj.samples[1:5]:
     print sample
     interactions = piq_to_network(os.path.join(sample.dirs.sampleRoot, "footprints"), motif_numbers)
-    interactions = {number2tf[key]: refseq2gene[gene] for key, value in interactions.items() for gene in value}
 
-    interactions = pd.DataFrame([interactions.keys(), interactions.values()]).T
-    interactions.columns = ['TF', 'gene']
-
-    interactions = interactions.groupby(['TF', 'gene']).apply(len)
-    interactions = interactions.reset_index(name="count")
+    # Get original TF name and gene symbol
+    interactions['TF'] = [number2tf[tf] for tf in interactions['TF']]
+    interactions['gene'] = [refseq2gene[gene] for gene in interactions['gene']]
 
     interactions['interaction_type'] = "pd"
-    interactions.to_csv(os.path.join(sample.dirs.sampleRoot, "footprints", "piq.TF-gene_interactions.tsv"), sep="\t", header=False, index=False)
+    interactions.to_csv(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-gene_interactions.tsv"), sep="\t", header=False, index=False)
 
-    # Filter TF-> TF interactions
+    # Filter for TF-> TF interactions
     interactions_TF = interactions[interactions['gene'].isin(interactions['TF'])]
-    interactions_TF.to_csv(os.path.join(sample.dirs.sampleRoot, "footprints", sample.name + ".piq.TF-TF_interactions.tsv"), sep="\t", index=False)
+    interactions_TF.to_csv(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-TF_interactions.tsv"), sep="\t", index=False)
 
-    # Filter TFs- with less than 2 interactions
-    interactions_TF_filtered = interactions_TF[interactions_TF['count'] > 2]
-    interactions_TF_filtered.to_csv(os.path.join(sample.dirs.sampleRoot, "footprints", sample.name + ".piq.TF-TF_interactions.filtered.tsv"), sep="\t", index=False)
+    # Filter for nodes with more than 2 edges
+    interactions_TF_filtered = interactions_TF[interactions_TF['interaction_score'] >= 1]
+    interactions_TF_filtered.to_csv(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-TF_interactions.filtered.tsv"), sep="\t", index=False)
 
 # Network types:
 # patient-specific:
@@ -378,6 +382,13 @@ for sample in prj.samples[1:5]:
 # for groups of patients:
 # - come up with a way of combining signal from several patients from one group
 # - build networks specific to groups
+
+
+# Describe networks
+
+
+#
+
 
 # Compare Networks
 
