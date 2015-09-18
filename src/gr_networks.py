@@ -15,6 +15,7 @@ import re
 import cPickle as pickle
 import pandas as pd
 import pybedtools
+import networkx as nx
 
 
 def save_pandas(data, fname):
@@ -86,12 +87,14 @@ def piq_prepare_motifs(motif_file="~/workspace/piq-single/pwms/jasparfix.txt", n
     """
     """
     cmds = list()
-    for motif in range(n_motifs):
-        cmd = "Rscript ~/workspace/piq-single/pwmmatch.exact.r"
+    for motif in range(1, n_motifs + 1):
+        cmd = """
+    Rscript ~/workspace/piq-single/pwmmatch.exact.r"""
         cmd += " ~/workspace/piq-single/common.r"
         cmd += " {0}".format(motif_file)
         cmd += " " + str(motif)
-        cmd += " /scratch/users/arendeiro/piq/motif.matches/"
+        cmd += """ /scratch/users/arendeiro/piq/motif.matches/
+    """
         cmds.append(cmd)
     return cmds
 
@@ -132,6 +135,23 @@ def piq_footprint(bam_cache, motif_numbers, tmp_dir, results_dir):
     return cmds
 
 
+def piq_footprint_single(bam_cache, motif_number, tmp_dir, results_dir):
+    """
+    Footprint using PIQ.
+    """
+    cmd = """
+    Rscript ~/workspace/piq-single/pertf.r"""
+    cmd += " ~/workspace/piq-single/common.r"
+    cmd += " /scratch/users/arendeiro/piq/motif.matches/"
+    cmd += " " + tmp_dir
+    cmd += " " + results_dir
+    cmd += " " + bam_cache
+    cmd += " " + str(motif_number)
+    cmd += """
+"""
+    return cmd
+
+
 def piq_to_network(results_dir, motif_numbers):
     """
     Parse PIQ output, filter footprints.
@@ -142,7 +162,7 @@ def piq_to_network(results_dir, motif_numbers):
     # get all cll peaks to filter data
     all_peaks = pybedtools.BedTool("data/cll_peaks.bed")
     # read in gene info
-    refseq_mrna_tss = pybedtools.BedTool("data/hg19.refSeq.TSS.mRNA.bed")
+    refseq_mrna_tss = pybedtools.BedTool("data/hg19.refSeq.TSS.mRNA.deduplicated.bed")
 
     # dict to store TF->gene interactions
     interactions = pd.DataFrame()
@@ -234,7 +254,8 @@ n_motifs = 1316
 
 # read list of tfs to do
 df = pd.read_csv("data/tf_gene_matching.txt", sep="\t", header=None)
-number2tf = dict(zip(df[0], df[2]))
+df[1] = [x.upper() for x in df[1]]
+number2tf = dict(zip(df[0], df[1]))
 motif_numbers = df[0]
 
 # get refseq -> gene symbol mapping
@@ -242,13 +263,23 @@ os.system("""mysql --user=genome -N --host=genome-mysql.cse.ucsc.edu -A -D hg19 
 refseq2gene = pd.read_csv("data/Refseq2Gene.txt", sep="\t", header=None)
 refseq2gene = dict(zip(refseq2gene[0], refseq2gene[1]))
 
+# stupid PIQ hard-coded links
+os.chdir("/home/arendeiro/workspace/piq-single/")
+
 # prepare motifs for footprinting (done once)
 # cmds = piq_prepare_motifs(motifs_file, n_motifs)
 # for cmd in cmds:
-#     os.system(cmd)
+#     cmd2 = tk.slurmHeader("PIQ_preparemotifs", os.path.join("/home/arendeiro/", "piq_preparemotifs.slurm.log"), cpusPerTask=1, queue="shortq")
 
-# stupid PIQ hard-coded links
-os.chdir("/home/arendeiro/workspace/piq-single/")
+#     # stupid PIQ hard-coded links
+#     cmd2 += cmd
+
+#     # write job to file
+#     with open("/home/arendeiro/tmp.sh", 'w') as handle:
+#         handle.writelines(textwrap.dedent(cmd2))
+
+#     tk.slurmSubmitJob("/home/arendeiro/tmp.sh")
+
 
 # for each sample create R cache with bam file
 jobs = list()
@@ -266,7 +297,7 @@ for sample in prj.samples:
     job_file = os.path.join(foots_dir, "slurm_job.sh")
 
     # prepare slurm job header
-    cmd = tk.slurmHeader(sample.name + "_PIQ_footprinting", os.path.join(foots_dir, "slurm.log"), cpusPerTask=2, queue="shortq")
+    cmd = tk.slurmHeader(sample.name + "_PIQ_prepareBam", os.path.join(foots_dir, "slurm.log"), cpusPerTask=2, queue="shortq")
 
     # stupid PIQ hard-coded links
     cmd += """
@@ -275,10 +306,6 @@ for sample in prj.samples:
 
     # prepare bams
     cmd += piq_prepare_bams([sample.filteredshifted], r_data)
-
-    # footprint
-    cmd_list = piq_footprint(r_data, motif_numbers, tmp_dir, results_dir=foots_dir)
-    cmd += "\n".join(cmd_list)
 
     # slurm footer
     cmd += tk.slurmFooter()
@@ -290,15 +317,14 @@ for sample in prj.samples:
     # append file to jobs
     jobs.append(job_file)
 
-
 # submit jobs (to create bam file caches)
 for job in jobs:
     tk.slurmSubmitJob(job)
 
 
-# for each sample launch several jobs (>1000) to footprint
+# for each sample launch several jobs (>500) to footprint
 jobs = list()
-for sample in prj.samples[1:5]:
+for sample in prj.samples:
     if sample.sampleID in to_exclude_sample_id or sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
         continue
 
@@ -306,35 +332,30 @@ for sample in prj.samples[1:5]:
     if not os.path.exists(foots_dir):
         os.mkdir(foots_dir)
     r_data = os.path.join(foots_dir, sample.name + ".filteredshifted.RData")
-    tmp_dir = os.path.join(scratch_dir, sample.name)
-    if not os.path.exists(tmp_dir):
-        os.mkdir(tmp_dir)
 
-    cmd_list = piq_footprint(r_data, n_motifs, tmp_dir, results_dir=foots_dir)
+    for motif in motif_numbers:
+        if not os.path.exists("/scratch/users/arendeiro/piq/motif.matches/%i.pwmout.RData" % motif):
+            continue
 
-    for motif, foot_cmd in enumerate(cmd_list):
-        motif += 1
+        t_dir = os.path.join(scratch_dir, sample.name)
+        if not os.path.exists(t_dir):
+            os.mkdir(t_dir)
+        tmp_dir = os.path.join(scratch_dir, sample.name, str(motif))
+        # if not os.path.exists(tmp_dir):
+        #     os.mkdir(tmp_dir)
         job_file = os.path.join(foots_dir, "slurm_job_motif%i.sh" % motif)
         slurm_log = os.path.join(foots_dir, "slurm_motif%i.log" % motif)
 
         # prepare slurm job header
-        cmd = tk.slurmHeader(sample.name + "_PIQ_footprinting_motif%i" % motif, slurm_log, cpusPerTask=2, queue="shortq")
+        cmd = tk.slurmHeader(sample.name + "_PIQ_footprinting_motif%i" % motif, slurm_log, cpusPerTask=2, queue="shortq", memPerCpu=8000)
 
         # stupid PIQ hard-coded links
         cmd += """
-        cd /home/arendeiro/workspace/piq-single/
+    cd /home/arendeiro/workspace/piq-single/
         """
 
         # footprint
-        cmd += """
-        {0}
-        """.format(foot_cmd)
-
-        # delete its own slurm files
-        cmd += """
-        rm {0}
-        rm {1}
-        """.format(job_file, slurm_log)
+        cmd += piq_footprint_single(r_data, motif, tmp_dir, results_dir=foots_dir)
 
         # slurm footer
         cmd += tk.slurmFooter()
@@ -354,7 +375,7 @@ for job in jobs:
 
 # parse output,
 # connect each motif to a gene
-for sample in prj.samples[1:5]:
+for sample in prj.samples:
     print sample
     interactions = piq_to_network(os.path.join(sample.dirs.sampleRoot, "footprints"), motif_numbers)
 
@@ -363,7 +384,7 @@ for sample in prj.samples[1:5]:
     interactions['gene'] = [refseq2gene[gene] for gene in interactions['gene']]
 
     interactions['interaction_type'] = "pd"
-    interactions.to_csv(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-gene_interactions.tsv"), sep="\t", header=False, index=False)
+    interactions.to_csv(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-gene_interactions.tsv"), sep="\t", index=False)
 
     # Filter for TF-> TF interactions
     interactions_TF = interactions[interactions['gene'].isin(interactions['TF'])]
@@ -385,6 +406,14 @@ for sample in prj.samples[1:5]:
 
 
 # Describe networks
+for sample in prj.samples[1:5]:
+    df = pd.read_csv(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-gene_interactions.tsv"), sep="\t")
+
+    net = nx.Graph()
+    for i in df.index:
+        net.add_edge(df.ix[i]['TF'], df.ix[i]['gene'], weight=df.ix[i]['interaction_score'])
+
+    nx.shortest_path(net, 'PAX5', 'NFKB1', weight='weight')
 
 
 #
