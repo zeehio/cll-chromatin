@@ -267,18 +267,18 @@ refseq2gene = dict(zip(refseq2gene[0], refseq2gene[1]))
 os.chdir("/home/arendeiro/workspace/piq-single/")
 
 # prepare motifs for footprinting (done once)
-# cmds = piq_prepare_motifs(motifs_file, n_motifs)
-# for cmd in cmds:
-#     cmd2 = tk.slurmHeader("PIQ_preparemotifs", os.path.join("/home/arendeiro/", "piq_preparemotifs.slurm.log"), cpusPerTask=1, queue="shortq")
+cmds = piq_prepare_motifs(motifs_file, n_motifs)
+for cmd in cmds:
+    cmd2 = tk.slurmHeader("PIQ_preparemotifs", os.path.join("/home/arendeiro/", "piq_preparemotifs.slurm.log"), cpusPerTask=1, queue="shortq")
 
-#     # stupid PIQ hard-coded links
-#     cmd2 += cmd
+    # stupid PIQ hard-coded links
+    cmd2 += cmd
 
-#     # write job to file
-#     with open("/home/arendeiro/tmp.sh", 'w') as handle:
-#         handle.writelines(textwrap.dedent(cmd2))
+    # write job to file
+    with open("/home/arendeiro/tmp.sh", 'w') as handle:
+        handle.writelines(textwrap.dedent(cmd2))
 
-#     tk.slurmSubmitJob("/home/arendeiro/tmp.sh")
+    tk.slurmSubmitJob("/home/arendeiro/tmp.sh")
 
 
 # for each sample create R cache with bam file
@@ -378,6 +378,9 @@ for job in jobs:
 for sample in prj.samples:
     print sample
     interactions = piq_to_network(os.path.join(sample.dirs.sampleRoot, "footprints"), motif_numbers)
+
+    # Drop TFBS with no gene in the same chromosome (random chroms) - very rare cases
+    interactions = interactions[interactions['gene'] != '.']
 
     # Get original TF name and gene symbol
     interactions['TF'] = [number2tf[tf] for tf in interactions['TF']]
