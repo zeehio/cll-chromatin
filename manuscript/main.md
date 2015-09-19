@@ -3,13 +3,15 @@ title: The chromatin accessibility landscape of chronic lymphocytic leukemia
 author:
         - André F. Rendeiro^1^^,^^\*^
         - Christian Schmidl^1^^,^^\*^
-        - Jonathan Strefford^2^
-        - Christoph Bock^1^^,^^3^^,^^4^^,^^5^
+        - David Oscier^2^
+        - Jonathan Strefford^3^
+        - Christoph Bock^1^^,^^4^^,^^5^^,^^6^
         - ^1^CeMM Research Center for Molecular Medicine of the Austrian Academy of Sciences, Vienna, Austria
-        - ^2^Cancer Genomics, Cancer Sciences, University of Southampton, Southampton, United Kingdom.
-        - ^3^Department of Laboratory Medicine, Medical University of Vienna, Vienna, Austria
-        - ^4^Max Planck Institute for Informatics, Saarbrücken, Germany
-        - ^5^Correspondence should be addressed to C.B. (<cbock@cemm.oeaw.ac.at>)
+        - ^2^Department of Haematology, Royal Bournemouth Hospital, Bournemouth, United Kingdom
+        - ^3^Cancer Genomics, Cancer Sciences, University of Southampton, Southampton, United Kingdom
+        - ^4^Department of Laboratory Medicine, Medical University of Vienna, Vienna, Austria
+        - ^5^Max Planck Institute for Informatics, Saarbrücken, Germany
+        - ^6^Correspondence should be addressed to C.B. (<cbock@cemm.oeaw.ac.at>)
         - ^\*^equal contribution
 tags: [chronic lymphocytic leukaemia, chromatin, ATAC-seq]
 bibliography: /home/afr/Documents/library.bib
