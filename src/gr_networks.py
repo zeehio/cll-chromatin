@@ -255,6 +255,7 @@ n_motifs = 1316
 # read list of tfs to do
 df = pd.read_csv("data/tf_gene_matching.txt", sep="\t", header=None)
 df[1] = [x.upper() for x in df[1]]
+tfs = df[1]
 number2tf = dict(zip(df[0], df[1]))
 motif_numbers = df[0]
 
@@ -390,7 +391,7 @@ for sample in prj.samples:
     interactions.to_csv(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-gene_interactions.tsv"), sep="\t", index=False)
 
     # Filter for TF-> TF interactions
-    interactions_TF = interactions[interactions['gene'].isin(interactions['TF'])]
+    interactions_TF = interactions[interactions['gene'].isin(tfs)]
     interactions_TF.to_csv(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-TF_interactions.tsv"), sep="\t", index=False)
 
     # Filter for nodes with more than 2 edges
@@ -409,7 +410,7 @@ for sample in prj.samples:
 
 
 # Describe networks
-for sample in prj.samples[1:5]:
+for sample in prj.samples:
     df = pd.read_csv(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-gene_interactions.tsv"), sep="\t")
 
     net = nx.Graph()
@@ -419,7 +420,8 @@ for sample in prj.samples[1:5]:
     nx.shortest_path(net, 'PAX5', 'NFKB1', weight='weight')
 
 
-#
+# classify nodes into regulator/regulated
+# color in visualization
 
 
 # Compare Networks
