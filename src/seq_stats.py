@@ -29,7 +29,7 @@ prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
 
 # Select ATAC-seq samples
-samples = [s for s in prj.samples if type(s) == ATACseqSample]
+samples = [s for s in prj.samples if type(s) == ATACseqSample and s.cellLine == "CLL"]
 
 
 # GET DUPLICATES IN MITOCHONDRIAL GENOME ONLY
@@ -69,12 +69,17 @@ for sample in samples:
     s["% MT"] = (s["total MT"] / s["total"]) * 100 if not mtE else None
     s["%dups MT"] = (float(mtDups["duplicates"]) / float(allDups["duplicates"])) * 100 if not mtE else None
     s["%dups nuclear"] = ((float(allDups["duplicates"]) - float(mtDups["duplicates"])) / s["total"]) * 100 if not mtE else None
+    s['usable'] = s['total'] * (s['%duplicates'] / 100)
+    s['%usable'] = (s['usable'] / s["total"]) * 100
 
     df = df.append(s, ignore_index=True)
 
+#
+df = df.replace(to_replace="None", value=np.nan)
+
 # PLOT
 # stripplot on a grid
-g = sns.PairGrid(df.sort(["total"], ascending=False), x_vars=df.columns[1:], y_vars=["name"], size=10, aspect=.25)
+g = sns.PairGrid(df.sort(["total"], ascending=False), x_vars=df.columns[1:], y_vars=["name"], size=15, aspect=.15)
 g.map(sns.stripplot, size=10, orient="h", palette="Reds_r", edgecolor="gray")
 
 for i, ax in enumerate(g.axes.flat):
@@ -83,10 +88,8 @@ for i, ax in enumerate(g.axes.flat):
     ax.yaxis.grid(True)
 
     # fix scales
-    if i in [1, 3, 4, 5]:
+    if i in [1, 3, 4, 5, 6]:
         ax.set_xlim(0, 100)
-    else:
-        ax.set_xlim(0, 7e7)
 
 sns.despine(left=True, bottom=True)
 
