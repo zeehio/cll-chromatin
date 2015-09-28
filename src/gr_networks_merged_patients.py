@@ -5,6 +5,8 @@ from pipelines import toolkit as tk
 import pandas as pd
 import numpy as np
 import textwrap
+import re
+import pybedtools
 
 
 def name_to_repr(name):
@@ -300,6 +302,101 @@ def footprint(feature, group_label, motif_numbers):
     return jobs
 
 
+def piq_to_network(results_dir, motif_numbers):
+    """
+    Parse PIQ output, filter footprints.
+    Returns matrix with likelyhood score of each TF regulating each gene.
+    """
+    # list results_dir
+    files = os.listdir(results_dir)
+    # get all cll peaks to filter data
+    all_peaks = pybedtools.BedTool("data/cll_peaks.bed")
+    # read in gene info
+    refseq_mrna_tss = pybedtools.BedTool("data/hg19.refSeq.TSS.mRNA.deduplicated.bed")
+
+    # dict to store TF->gene interactions
+    interactions = pd.DataFrame()
+
+    # loop through motifs/TFs, filter and establish relationship between TF and gene
+    for motif in motif_numbers:
+        # get both forward and reverse complement PIQ output files
+        result_files = list()
+        for f in files:
+            m = re.match(r'%i-.*-calls\.csv$' % motif, f)
+            if hasattr(m, "string"):
+                result_files.append(m.string)
+
+        # make bed file from it
+        # concatenate files (forward and reverse complement are treated differently by PIQ)
+        for i, result_file in enumerate(result_files):
+            df = pd.read_csv(os.path.join(results_dir, result_file), index_col=0)
+            df.rename(columns={"coord": "start"}, inplace=True)
+            # fix coordinates
+            if "RC-calls.csv" not in result_file:
+                df["end"] = df["start"] + 1
+            else:
+                df["end"] = df["start"]
+                df["start"] = df["start"] - 1
+            # concatenate
+            if i == 0:
+                df2 = df
+            else:
+                df2 = pd.concat([df, df2])
+
+        # Filter for purity
+        footprints = df2[df2["purity"] > 0.7]
+
+        # If empty give 0 to every gene for this TF
+        if len(footprints) < 500:
+            continue
+
+        footprints[['chr', 'start', 'end', 'pwm', 'shape', 'score', 'purity']].to_csv(os.path.join("tmp.bed"), sep="\t", index=False, header=False)
+
+        # filter for motifs overlapping CLL peaks
+        footprints = pybedtools.BedTool(os.path.join("tmp.bed")).intersect(all_peaks, wa=True).to_dataframe()
+        footprints.columns = ["chrom", "start", "end", "pwm", "shape", "score", "purity"]
+        footprints.to_csv(os.path.join("tmp.bed"), sep="\t", index=False, header=False)
+
+        # Get closest gene
+        closest_tss = pybedtools.BedTool(os.path.join("tmp.bed")).closest(refseq_mrna_tss, d=True).to_dataframe()
+        closest_tss.columns = ["chrom", "start", "end", "pwm", "shape", "score", "purity", "chrom_gene", "start_gene", "end_gene", "gene", "distance"]
+
+        # Get weighted values
+        # weigh with footprint purity and distance to tss
+        scores = closest_tss
+        scores['interaction_score'] = scores.apply(lambda x: 2 * (x['purity'] - 0.5) * 10 ** -(x['distance'] / 1000000.), axis=1)
+        # sum scores for each gene
+        scores = scores.groupby(['gene'])['interaction_score'].apply(sum).reset_index()
+
+        scores["TF"] = motif
+
+        interactions = pd.concat([interactions, scores])
+
+    return interactions
+
+
+def collect_networks(foots_dir, motif_numbers, label):
+    interactions = piq_to_network(foots_dir, motif_numbers)
+
+    # Drop TFBS with no gene in the same chromosome (random chroms) - very rare cases
+    interactions = interactions[interactions['gene'] != '.']
+
+    # Get original TF name and gene symbol
+    interactions['TF'] = [number2tf[tf] for tf in interactions['TF']]
+    interactions['gene'] = [refseq2gene[gene] for gene in interactions['gene']]
+
+    interactions['interaction_type'] = "pd"
+    interactions.to_csv(os.path.join(foots_dir, label + ".piq.TF-gene_interactions.tsv"), sep="\t", index=False)
+
+    # Filter for TF-> TF interactions
+    interactions_TF = interactions[interactions['gene'].isin(tfs)]
+    interactions_TF.to_csv(os.path.join(foots_dir, label + ".piq.TF-TF_interactions.tsv"), sep="\t", index=False)
+
+    # Filter for nodes with more than 2 edges
+    interactions_TF_filtered = interactions_TF[interactions_TF['interaction_score'] >= 1]
+    interactions_TF_filtered.to_csv(os.path.join(foots_dir, label + ".piq.TF-TF_interactions.filtered.tsv"), sep="\t", index=False)
+
+
 # Get path configuration
 data_dir = os.path.join('.', "data")
 results_dir = os.path.join('.', "results")
@@ -383,33 +480,44 @@ motif_numbers = df[0]
 # send out jobs
 jobs = list()
 # "gender" and "mutated"
-features = {
-    "patient_gender": ("F", "M"),  # gender
-    "mutated": (True, False),  # ighv mutation
-}
 for i, (feature, (group1, group2)) in enumerate(features.items()):
-    # get dataframe subset with groups
-    g1 = [sample.filtered for sample in samples if getattr(sample, feature) == group1]
-    g2 = [sample.filtered for sample in samples if getattr(sample, feature) == group2]
-
     # append file to jobs
     jobs += footprint(feature, str(group1), motif_numbers)
     jobs += footprint(feature, str(group2), motif_numbers)
 
-
 # untreated vs 1st line chemotherapy +~ B cell antibodies
-g1 = [sample.filtered for sample in samples if not sample.treatment_active and not sample.relapse]
-drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR', 'Alemtuz']
-g2 = [sample.filtered for sample in samples if sample.treatment_active and sample.treatment_type in drugs]
 jobs += footprint("untreated_vs_1stline", "untreated", motif_numbers)
 jobs += footprint("untreated_vs_1stline", "1stlinetreatment", motif_numbers)
 
 # Disease at Diagnosis - comparison in untreated samples
 # CLL vs MBL
-g1 = [sample.filtered for sample in samples if sample.diagnosis_disease == "CLL" and not sample.treatment_active and not sample.relapse]
-g2 = [sample.filtered for sample in samples if sample.diagnosis_disease == "MBL" and not sample.treatment_active and not sample.relapse]
 jobs += footprint("CLL_vs_MBL", "CLL", motif_numbers)
 jobs += footprint("CLL_vs_MBL", "MBL", motif_numbers)
 
 for job in jobs:
     tk.slurmSubmitJob(job)
+
+
+# BUILD NETWORKS
+refseq2gene = pd.read_csv("data/Refseq2Gene.txt", sep="\t", header=None)
+refseq2gene = dict(zip(refseq2gene[0], refseq2gene[1]))
+
+# parse PIQ output,
+# connect each motif to a gene
+
+# "gender" and "mutated"
+for i, (feature, (group1, group2)) in enumerate(features.items()):
+    # append file to jobs
+    foots_dir = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", feature, str(group1)]), "footprints"))
+    collect_networks(foots_dir, motif_numbers, "_".join(["merged-samples", feature, str(group1)]))
+    foots_dir = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", feature, str(group2)]), "footprints"))
+    collect_networks(foots_dir, motif_numbers, "_".join(["merged-samples", feature, str(group2)]))
+
+# untreated vs 1st line chemotherapy +~ B cell antibodies
+foots_dir = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", "untreated_vs_1stline", "untreated"]), "footprints"))
+collect_networks(foots_dir, motif_numbers, "_".join(["merged-samples", "untreated_vs_1stline", "1stlinetreatment"]))
+
+# Disease at Diagnosis - comparison in untreated samples
+# CLL vs MBL
+foots_dir = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", "CLL_vs_MBL", "CLL"]), "footprints"))
+collect_networks(foots_dir, motif_numbers, "_".join(["merged-samples", "CLL_vs_MBL", "MBL"]))
