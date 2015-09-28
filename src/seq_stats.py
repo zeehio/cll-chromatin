@@ -11,6 +11,7 @@ from pipelines.models import Project, ATACseqSample
 from pipelines import toolkit as tk
 import textwrap
 import pandas as pd
+import numpy as np
 import matplotlib.pylab as plt
 import seaborn as sns
 
