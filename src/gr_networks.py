@@ -292,6 +292,9 @@ for sample in prj.samples:
     if not os.path.exists(foots_dir):
         os.mkdir(foots_dir)
     r_data = os.path.join(foots_dir, sample.name + ".filteredshifted.RData")
+
+    if os.path.isfile(r_data):
+        continue
     tmp_dir = os.path.join(scratch_dir, sample.name)
     if not os.path.exists(tmp_dir):
         os.mkdir(tmp_dir)
@@ -413,11 +416,11 @@ for sample in prj.samples:
 for sample in prj.samples:
     df = pd.read_csv(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-gene_interactions.tsv"), sep="\t")
 
-    net = nx.Graph()
+    G = nx.Graph()
     for i in df.index:
-        net.add_edge(df.ix[i]['TF'], df.ix[i]['gene'], weight=df.ix[i]['interaction_score'])
+        G.add_edge(df.ix[i]['TF'], df.ix[i]['gene'], weight=df.ix[i]['interaction_score'])
 
-    nx.shortest_path(net, 'PAX5', 'NFKB1', weight='weight')
+    nx.shortest_path(G, 'PAX5', 'NFKB1', weight='weight')
 
 
 # classify nodes into regulator/regulated

@@ -88,7 +88,7 @@ class Analysis(object):
         # remove chrM peaks and save
         sites.intersect(v=True, b=blacklist).filter(lambda x: x.chrom != 'chrM').saveas(os.path.join(self.data_dir, "cll_peaks.bed"))
 
-        # Store
+        # Read up again
         self.sites = pybedtools.BedTool(os.path.join(self.data_dir, "cll_peaks.bed"))
 
     def estimate_peak_saturation(self, n=100):
@@ -137,8 +137,9 @@ class Analysis(object):
         df.to_csv(os.path.join(self.data_dir, "cll_peaks.cum_peak_count.csv"), index=False)
 
     def calculate_peak_support(self):
+        samples = [s for s in self.samples if s.technique == "ATAC-seq" and s.cellLine == "CLL"]
         # calculate support (number of samples overlaping each merged peak)
-        for i, sample in enumerate(self.samples):
+        for i, sample in enumerate(samples):
             print(sample.name)
             if i == 0:
                 support = self.sites.intersect(sample.peaks, wa=True, c=True)
@@ -146,9 +147,9 @@ class Analysis(object):
                 support = support.intersect(sample.peaks, wa=True, c=True)
         support = support.to_dataframe()
         support = support.reset_index()
-        support.columns = ["chrom", "start", "end"] + [sample.name for sample in self.samples]
+        support.columns = ["chrom", "start", "end"] + [sample.name for sample in samples]
         # divide sum (of unique overlaps) by total to get support value between 0 and 1
-        support["support"] = support[range(len(self.samples))].apply(lambda x: sum([i if i <= 1 else 1 for i in x]) / float(len(self.samples)), axis=1)
+        support["support"] = support[range(len(samples))].apply(lambda x: sum([i if i <= 1 else 1 for i in x]) / float(len(self.samples)), axis=1)
         # save
         support.to_csv(os.path.join(self.data_dir, "cll_peaks.support.csv"), index=False)
 
@@ -298,7 +299,7 @@ class Analysis(object):
         # save to disk
         self.coverage.to_csv(os.path.join(self.data_dir, "cll_peaks.raw_coverage.tsv"), sep="\t", index=True)
 
-    # @pickle_me
+    @pickle_me
     def normalize_coverage(self):
         # Normalize by feature length (Reads per kilobase)
         rpk = self.coverage.apply(normalize_by_interval_length, axis=1)
@@ -314,7 +315,11 @@ class Analysis(object):
 
         self.rpkm.to_csv(os.path.join(self.data_dir, "cll_peaks.rpkm.tsv"), sep="\t", index=False)
 
-    # @pickle_me
+    def log_rpkm(self):
+        # Log2 transform
+        self.rpkm[[sample.name for sample in self.samples]] = np.log2(1 + self.rpkm[[sample.name for sample in self.samples]])
+
+    @pickle_me
     def normalize_coverage_quantiles(self):
         # Normalize by quantiles
         to_norm = self.coverage[[sample.name for sample in self.samples]]
@@ -328,10 +333,6 @@ class Analysis(object):
 
         self.coverage_qnorm = self.coverage_qnorm.join(self.coverage[['chrom', 'start', 'end']])
         self.coverage_qnorm.to_csv(os.path.join(self.data_dir, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t", index=False)
-
-    def log_rpkm(self):
-        # Log2 transform
-        self.rpkm[[sample.name for sample in self.samples]] = np.log2(1 + self.rpkm[[sample.name for sample in self.samples]])
 
     @pickle_me
     def annotate(self):
@@ -403,15 +404,6 @@ class Analysis(object):
         self.mds_fit = self.mds.fit_transform(x)
 
     def plot_peak_characteristics(self):
-        # Plot cumulative number of peaks
-        fig, axis = plt.subplots()
-        axis.plot(self.peak_count.keys(), self.peak_count.values(), 'o')
-        axis.set_ylim(0, max(self.peak_count.values()) + 5000)
-        axis.set_title("Cumulative peaks per sample")
-        axis.set_xlabel("Number of samples")
-        axis.set_ylabel("Total number of peaks")
-        fig.savefig(os.path.join(self.plots_dir, "total_peak_count.per_patient.svg"), bbox_inches="tight")
-
         # Loop at summary statistics:
         # interval lengths
         fig, axis = plt.subplots()
