@@ -198,6 +198,23 @@ def piq_prepare_bams(bams, output_cache):
     return cmd
 
 
+def piq_footprint_single(bam_cache, motif_number, tmp_dir, results_dir):
+    """
+    Footprint using PIQ.
+    """
+    cmd = """
+    Rscript ~/workspace/piq-single/pertf.r"""
+    cmd += " ~/workspace/piq-single/common.r"
+    cmd += " /scratch/users/arendeiro/piq/motif.matches/"
+    cmd += " " + tmp_dir
+    cmd += " " + results_dir
+    cmd += " " + bam_cache
+    cmd += " " + str(motif_number)
+    cmd += """
+"""
+    return cmd
+
+
 def run_merged(feature, bam_files, group_label):
     merge_dir = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", feature, group_label])))
     if not os.path.exists(merge_dir):
@@ -211,11 +228,14 @@ def run_merged(feature, bam_files, group_label):
     job_file = os.path.join(merge_dir, "slurm.sh")
 
     # Build job
-    cmd = tk.slurmHeader("_".join(["CLL_merged-samples", feature, group_label]), os.path.join(merge_dir, "slurm.log"), cpusPerTask=12, queue="longq", time="7-12:00:00")
+    cmd = tk.slurmHeader(
+        "_".join(["CLL_merged-samples", feature, group_label]), os.path.join(merge_dir, "slurm.log"),
+        cpusPerTask=12, queue="longq", time="7-12:00:00", memPerCpu=8000
+    )
 
     # merge all bam files
     cmd += """
-    samtools merge {0} {1}"
+    sambamba merge -t 12 {0} {1}
     """.format(merged_bam, " ".join(bam_files))
 
     # stupid PIQ hard-coded links
@@ -234,6 +254,50 @@ def run_merged(feature, bam_files, group_label):
 
     # append file to jobs
     return job_file
+
+
+def footprint(feature, group_label, motif_numbers):
+    scratch_dir = os.path.join("/scratch/users/arendeiro/piq")
+    merge_dir = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", feature, group_label])))
+    foots_dir = os.path.join(merge_dir, "footprints")
+    merged_cache = os.path.join(merge_dir, "merged.RData")
+    label = "_".join(["merged-samples", feature, group_label])
+
+    jobs = list()
+    for motif in motif_numbers:
+        if not os.path.exists("/scratch/users/arendeiro/piq/motif.matches/%i.pwmout.RData" % motif):
+            continue
+
+        t_dir = os.path.join(scratch_dir, label)
+        if not os.path.exists(t_dir):
+            os.mkdir(t_dir)
+        tmp_dir = os.path.join(scratch_dir, label, str(motif))
+        # if not os.path.exists(tmp_dir):
+        #     os.mkdir(tmp_dir)
+        job_file = os.path.join(foots_dir, "slurm_job_motif%i.sh" % motif)
+        slurm_log = os.path.join(foots_dir, "slurm_motif%i.log" % motif)
+
+        # prepare slurm job header
+        cmd = tk.slurmHeader(label + "_PIQ_footprinting_motif%i" % motif, slurm_log, cpusPerTask=2, queue="shortq", memPerCpu=8000)
+
+        # stupid PIQ hard-coded links
+        cmd += """
+    cd /home/arendeiro/workspace/piq-single/
+        """
+
+        # footprint
+        cmd += piq_footprint_single(merged_cache, motif, tmp_dir, results_dir=foots_dir)
+
+        # slurm footer
+        cmd += tk.slurmFooter()
+
+        # write job to file
+        with open(job_file, 'w') as handle:
+            handle.writelines(textwrap.dedent(cmd))
+
+        # append file to jobs
+        jobs.append(job_file)
+    return jobs
 
 
 # Get path configuration
@@ -300,6 +364,52 @@ g2 = [sample.filtered for sample in samples if sample.diagnosis_disease == "MBL"
 jobs.append(run_merged("CLL_vs_MBL", g1, "CLL"))
 jobs.append(run_merged("CLL_vs_MBL", g2, "MBL"))
 
+for job in jobs:
+    tk.slurmSubmitJob(job)
+
+
+# FOOTPRINT
+# get motifs
+motifs_file = "~/workspace/piq-single/pwms/jasparfix.txt"
+n_motifs = 1316
+
+# read list of tfs to do
+df = pd.read_csv("data/tf_gene_matching.txt", sep="\t", header=None)
+df[1] = [x.upper() for x in df[1]]
+tfs = df[1]
+number2tf = dict(zip(df[0], df[1]))
+motif_numbers = df[0]
+
+# send out jobs
+jobs = list()
+# "gender" and "mutated"
+features = {
+    "patient_gender": ("F", "M"),  # gender
+    "mutated": (True, False),  # ighv mutation
+}
+for i, (feature, (group1, group2)) in enumerate(features.items()):
+    # get dataframe subset with groups
+    g1 = [sample.filtered for sample in samples if getattr(sample, feature) == group1]
+    g2 = [sample.filtered for sample in samples if getattr(sample, feature) == group2]
+
+    # append file to jobs
+    jobs += footprint(feature, str(group1), motif_numbers)
+    jobs += footprint(feature, str(group2), motif_numbers)
+
+
+# untreated vs 1st line chemotherapy +~ B cell antibodies
+g1 = [sample.filtered for sample in samples if not sample.treatment_active and not sample.relapse]
+drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR', 'Alemtuz']
+g2 = [sample.filtered for sample in samples if sample.treatment_active and sample.treatment_type in drugs]
+jobs += footprint("untreated_vs_1stline", "untreated", motif_numbers)
+jobs += footprint("untreated_vs_1stline", "1stlinetreatment", motif_numbers)
+
+# Disease at Diagnosis - comparison in untreated samples
+# CLL vs MBL
+g1 = [sample.filtered for sample in samples if sample.diagnosis_disease == "CLL" and not sample.treatment_active and not sample.relapse]
+g2 = [sample.filtered for sample in samples if sample.diagnosis_disease == "MBL" and not sample.treatment_active and not sample.relapse]
+jobs += footprint("CLL_vs_MBL", "CLL", motif_numbers)
+jobs += footprint("CLL_vs_MBL", "MBL", motif_numbers)
 
 for job in jobs:
     tk.slurmSubmitJob(job)
