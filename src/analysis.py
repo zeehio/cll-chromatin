@@ -322,7 +322,7 @@ class Analysis(object):
     @pickle_me
     def normalize_coverage_quantiles(self):
         # Normalize by quantiles
-        to_norm = self.coverage[[sample.name for sample in self.samples]]
+        to_norm = self.coverage.iloc[:, :len(self.samples)]
         self.coverage_qnorm = pd.DataFrame(
             normalize_quantiles_r(np.array(to_norm)),
             index=to_norm.index,
@@ -1645,8 +1645,6 @@ def main():
     # Parse
     args = parser.parse_args()
 
-    to_exclude_sample_id = ['1-5-45960']
-
     # Get path configuration
     data_dir = os.path.join('.', "data")
     results_dir = os.path.join('.', "results")
@@ -1668,13 +1666,27 @@ def main():
 
     # save "digested" clinical sheet to disk
     if args.generate:
-        fields = ['sampleName', 'diagnosis_disease', 'diagnosis_date', 'collection_date', 'time_since_diagnosis', 'diagnosis_collection', "treatment_active", 'previous_treatment_date', 'time_since_treatment', 'treatment_type', 'treatment_response', 'relapse']
-        prj.sheet.asDataFrame()[fields].to_csv("clinical_annotation_digested.csv", index=False)
+        fields = [
+            'sampleName', 'diagnosis_disease', 'diagnosis_date', 'collection_date', 'time_since_diagnosis',
+            'diagnosis_collection', "treatment_active", 'previous_treatment_date', 'time_since_treatment',
+            'treatment_type', 'treatment_response', 'relapse']
+        prj.sheet.asDataFrame()[fields].drop_duplicates().to_csv("clinical_annotation_digested.csv", index=False)
 
     # Start analysis object
-    # only with ATAC-seq samples
+    # only with ATAC-seq samples that passed QC
+    samples_to_exclude = [
+        'CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19',
+        'CLL_ATAC-seq_5186_1-5-57350_ATAC17-4_hg19',
+        'CLL_ATAC-seq_4784_1-5-52817_ATAC17-6_hg19',
+        'CLL_ATAC-seq_981_1-5-42480_ATAC16-6_hg19',
+        'CLL_ATAC-seq_5277_1-5-57269_ATAC17-8_hg19',
+        'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19',
+        'CLL_ATAC-seq_5147_1-5-48105_ATAC17-2_hg19',
+        'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19']  # 'CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19']
+    samples = [sample for sample in prj.samples if sample.technique == "ATAC-seq" and sample.name not in samples_to_exclude]
+
     analysis = Analysis(
-        data_dir, plots_dir, [sample for sample in prj.samples if sample.technique == "ATAC-seq"],
+        data_dir, plots_dir, samples,
         pickle_file=os.path.join(data_dir, "analysis.pickle")
     )
     analysis.prj = prj
@@ -1743,7 +1755,7 @@ def main():
 
     # TRAIT-SPECIFIC ANALYSIS
     # Use these samples only
-    sel_samples = [sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.sampleID != to_exclude_sample_id and sample.technique == "ATAC-seq"]
+    sel_samples = [sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.name in samples_to_exclude and sample.technique == "ATAC-seq"]
 
     # "gender" and "mutated"
     features = {

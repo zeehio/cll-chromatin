@@ -242,11 +242,18 @@ prj = Project("cll-patients")
 prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
 # Select ATAC-seq samples
-prj.samples = [s for s in prj.samples if type(s) == ATACseqSample]
+samples_to_exclude = [
+    'CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19',
+    'CLL_ATAC-seq_5186_1-5-57350_ATAC17-4_hg19',
+    'CLL_ATAC-seq_4784_1-5-52817_ATAC17-6_hg19',
+    'CLL_ATAC-seq_981_1-5-42480_ATAC16-6_hg19',
+    'CLL_ATAC-seq_5277_1-5-57269_ATAC17-8_hg19',
+    'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19',
+    'CLL_ATAC-seq_5147_1-5-48105_ATAC17-2_hg19',
+    'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19']  # 'CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19']
+samples = [s for s in prj.samples if type(s) == ATACseqSample and s.name not in samples_to_exclude]
 
-prj.samples = annotate_igvh_mutations(prj.samples, clinical)
-
-to_exclude_sample_id = ['1-5-45960']
+samples = annotate_igvh_mutations(samples, clinical)
 
 # FOOTPRINTING
 motifs_file = "~/workspace/piq-single/pwms/jasparfix.txt"
@@ -284,17 +291,17 @@ for cmd in cmds:
 
 # for each sample create R cache with bam file
 jobs = list()
-for sample in prj.samples:
-    if sample.sampleID in to_exclude_sample_id or sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
+for sample in samples:
+    if sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
         continue
 
     foots_dir = os.path.join(sample.dirs.sampleRoot, "footprints")
-    if not os.path.exists(foots_dir):
-        os.mkdir(foots_dir)
     r_data = os.path.join(foots_dir, sample.name + ".filteredshifted.RData")
-
     if os.path.isfile(r_data):
         continue
+    if not os.path.exists(foots_dir):
+        os.mkdir(foots_dir)
+
     tmp_dir = os.path.join(scratch_dir, sample.name)
     if not os.path.exists(tmp_dir):
         os.mkdir(tmp_dir)
@@ -328,14 +335,20 @@ for job in jobs:
 
 # for each sample launch several jobs (>500) to footprint
 jobs = list()
-for sample in prj.samples:
-    if sample.sampleID in to_exclude_sample_id or sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
+for sample in samples:
+    if sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
         continue
 
     foots_dir = os.path.join(sample.dirs.sampleRoot, "footprints")
     if not os.path.exists(foots_dir):
         os.mkdir(foots_dir)
     r_data = os.path.join(foots_dir, sample.name + ".filteredshifted.RData")
+
+    # if footprint files exist, skip sample:
+    if os.path.exists(os.path.join(foots_dir, "936-PB00421Mafk1-diag.pdf")):  # this is an example
+        continue
+    else:
+        print(sample.name)
 
     for motif in motif_numbers:
         if not os.path.exists("/scratch/users/arendeiro/piq/motif.matches/%i.pwmout.RData" % motif):
@@ -379,7 +392,7 @@ for job in jobs:
 
 # parse output,
 # connect each motif to a gene
-for sample in prj.samples:
+for sample in samples:
     print sample
     interactions = piq_to_network(os.path.join(sample.dirs.sampleRoot, "footprints"), motif_numbers)
 
@@ -413,7 +426,7 @@ for sample in prj.samples:
 
 
 # Describe networks
-for sample in prj.samples:
+for sample in samples:
     df = pd.read_csv(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-gene_interactions.tsv"), sep="\t")
 
     G = nx.Graph()
