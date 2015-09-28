@@ -1755,7 +1755,7 @@ def main():
 
     # TRAIT-SPECIFIC ANALYSIS
     # Use these samples only
-    sel_samples = [sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.name in samples_to_exclude and sample.technique == "ATAC-seq"]
+    sel_samples = [sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.name not in samples_to_exclude and sample.technique == "ATAC-seq"]
 
     # "gender" and "mutated"
     features = {
