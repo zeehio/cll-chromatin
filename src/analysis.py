@@ -1237,6 +1237,8 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
         method = "mutation"
     elif feature == "patient_gender":
         method = "gender"
+    elif feature == 'untreated_vs_treated':
+        method = "treatment"
     elif feature == "untreated_vs_1stline":
         method = "treatment"
     elif feature == "CLL_vs_MBL":
@@ -1301,6 +1303,10 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     elif feature == "patient_gender":
         significant = analysis.coverage_qnorm_annotated[
             (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.000001)
+        ]
+    elif feature == "untreated_vs_treated":
+        significant = analysis.coverage_qnorm_annotated[
+            (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.00001)
         ]
     else:
         significant = analysis.coverage_qnorm_annotated[
@@ -1676,6 +1682,15 @@ def main():
         g1 = analysis.coverage_qnorm_annotated[[sample.name for sample in sel_samples if getattr(sample, feature) == group1]]
         g2 = analysis.coverage_qnorm_annotated[[sample.name for sample in sel_samples if getattr(sample, feature) == group2]]
         group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2)
+
+    # untreated vs treated
+    g1 = analysis.coverage_qnorm_annotated[
+        [sample.name for sample in sel_samples if not sample.treatment_active and not sample.relapse]
+    ]
+    g2 = analysis.coverage_qnorm_annotated[
+        [sample.name for sample in sel_samples if sample.treatment_active]
+    ]
+    group_analysis(analysis, sel_samples, "untreated_vs_treated", g1, g2, "untreated", "treated")
 
     # untreated vs 1st line chemotherapy +~ B cell antibodies
     g1 = analysis.coverage_qnorm_annotated[
