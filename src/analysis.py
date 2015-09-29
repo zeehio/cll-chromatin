@@ -10,6 +10,8 @@ import os
 import sys
 from pipelines.models import Project, ATACseqSample
 import pybedtools
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.pyplot import cm
@@ -695,103 +697,6 @@ class Analysis(object):
         plt.savefig(os.path.join(self.plots_dir, "cll_peaks.correlation_clustering.svg"), bbox_inches="tight")
         plt.close('all')
 
-    def plot_pca(self, suffix=""):
-        # get variance explained by each component
-        variance = [np.round(i * 100, 0) for i in self.pca.explained_variance_ratio_]
-
-        # dependent on ighv status
-        colors = samples_to_color(self.samples)
-
-        # plot
-        fig, axis = plt.subplots(nrows=2, ncols=2)
-        fig.set_figheight(10)
-        fig.set_figwidth(10)
-        axis = axis.flatten()
-
-        # 1vs2 components
-        for i, sample in enumerate(self.samples):
-            axis[0].scatter(
-                self.pca.components_[i, 0], self.pca.components_[i, 1],
-                label=name_to_repr(sample.name),
-                color=colors[i],
-                s=50
-            )
-        axis[0].set_xlabel("PC1 - {0}% variance".format(variance[0]))
-        axis[0].set_ylabel("PC2 - {0}% variance".format(variance[1]))
-
-        # 2vs3 components
-        for i, sample in enumerate(self.samples):
-            axis[1].scatter(
-                self.pca.components_[i, 1], self.pca.components_[i, 2],
-                label=name_to_repr(sample.name),
-                color=colors[i],
-                s=50
-            )
-        axis[1].set_xlabel("PC2 - {0}% variance".format(variance[1]))
-        axis[1].set_ylabel("PC3 - {0}% variance".format(variance[2]))
-
-        # 3vs4 components
-        for i, sample in enumerate(self.samples):
-            axis[2].scatter(
-                self.pca.components_[i, 2], self.pca.components_[i, 3],
-                label=name_to_repr(sample.name),
-                color=colors[i],
-                s=50
-            )
-        axis[2].set_xlabel("PC3 - {0}% variance".format(variance[2]))
-        axis[2].set_ylabel("PC4 - {0}% variance".format(variance[3]))
-
-        # 4vs5 components
-        for i, sample in enumerate(self.samples):
-            axis[3].scatter(
-                self.pca.components_[i, 3], self.pca.components_[i, 4],
-                label=name_to_repr(sample.name),
-                color=colors[i],
-                s=50
-            )
-        axis[3].set_xlabel("PC4 - {0}% variance".format(variance[3]))
-        axis[3].set_ylabel("PC5 - {0}% variance".format(variance[4]))
-
-        plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-        plot_path = os.path.join(self.plots_dir, "cll_peaks.PCA_{0}.pdf".format(suffix))
-        fig.savefig(plot_path, bbox_inches="tight")
-
-        # 3 components
-        fig = plt.figure()
-        # plot each point
-        ax = fig.add_subplot(111, projection='3d')
-        for i, sample in enumerate(self.samples):
-            ax.scatter(
-                self.pca.components_[i, 0], self.pca.components_[i, 1], self.pca.components_[i, 2],
-                label=name_to_repr(sample.name),
-                color=colors[i],
-                s=50
-            )
-        ax.set_xlabel("PC1 - {0}% variance".format(variance[0]))
-        ax.set_ylabel("PC2 - {0}% variance".format(variance[1]))
-        ax.set_zlabel("PC3 - {0}% variance".format(variance[2]))
-        plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-        plot_path = os.path.join(self.plots_dir, "cll_peaks.PCA_{0}_3comp.pdf".format(suffix))
-        fig.savefig(plot_path, bbox_inches="tight")
-
-    def plot_mds(self, n, suffix=""):
-        # get unique colors
-        colors = samples_to_color(self.samples)
-
-        # plot
-        fig, axis = plt.subplots(1)
-        for i, sample in enumerate(self.samples):
-            axis.scatter(
-                self.mds_fit[i, 0], self.mds_fit[i, 1],
-                label=name_to_repr(sample.name),
-                color=colors[i],
-                s=50
-            )
-        axis.set_title("MDS on %i most variable regions" % n)
-        plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-        plot_path = os.path.join(self.plots_dir, "cll_peaks.MDS_{0}.pdf".format(suffix))
-        fig.savefig(plot_path, bbox_inches="tight")
-
 
 def add_args(parser):
     """
@@ -1149,6 +1054,55 @@ def bed_to_fasta(bed_file, fasta_file):
     os.system(cmd)
 
 
+def pca_r(x, colors, output_pdf):
+    import rpy2.robjects as robj
+    import pandas.rpy.common as com
+
+    # save csvs for pca
+    pd.DataFrame(x).T.to_csv('pca_file.csv', index=False)
+    pd.Series(colors).to_csv('colors.csv', index=False)
+
+    result = com.convert_robj(robj.r("""
+    df = read.csv('pca_file.csv')
+
+    colors = read.csv('colors.csv', header=FALSE)
+
+    df.pca <- prcomp(df,
+                     center = TRUE,
+                     scale. = TRUE)
+    return(df.pca)
+    """))
+    x = result['x']
+    variance = result['sdev']
+
+    # plot PC1 vs PC2
+    fig, axis = plt.subplots(nrows=1, ncols=2)
+    fig.set_figheight(10)
+    fig.set_figwidth(25)
+
+    # 1vs2 components
+    for i in range(1, x.shape[0] + 1):
+        axis[0].scatter(
+            x.loc[i, 'PC1'], x.loc[i, 'PC2'],
+            color=colors[i - 1],
+            s=50
+        )
+    axis[0].set_xlabel("PC1 - {0}% variance".format(variance[0]))
+    axis[0].set_ylabel("PC2 - {0}% variance".format(variance[1]))
+
+    # plot PC1 vs PC3
+    for i in range(1, x.shape[0] + 1):
+        axis[1].scatter(
+            x.loc[i, 'PC1'], x.loc[i, 'PC3'],
+            color=colors[i - 1],
+            s=50
+        )
+    axis[1].set_xlabel("PC1 - {0}% variance".format(variance[0]))
+    axis[1].set_ylabel("PC3 - {0}% variance".format(variance[2]))
+
+    fig.savefig(output_pdf, bbox_inches='tight')
+
+
 def lola(bed_files, universe_file, output_folder):
     """
     Performs location overlap analysis (LOLA) on bedfiles with regions sets.
@@ -1266,7 +1220,7 @@ def meme(input_fasta, output_dir):
     return cmd
 
 
-def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
+def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, generate=True):
     """
     Analysis between two groups of samples.
     :param analysis: an Analysis object.
@@ -1313,7 +1267,15 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
     q_values = pd.Series(multipletests(p_values)[1])
     analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] = p_values
     analysis.coverage_qnorm_annotated["_".join(["q_value", feature])] = q_values
-
+    # save as csv
+    csv = os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_mean_foldchange_pvalues.csv" % method)
+    analysis.coverage_qnorm_annotated[[
+        "_".join(["fold_change", feature]),
+        "_".join(["mean", feature, str(group1)]),
+        "_".join(["mean", feature, str(group2)]),
+        "_".join(["q_value", feature]),
+        "_".join(["p_value", feature])]].to_csv(csv, index=False)
+    # pickle
     # analysis.to_pickle()
 
     # VISUALIZE
@@ -1338,7 +1300,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
         ]
     elif feature == "patient_gender":
         significant = analysis.coverage_qnorm_annotated[
-            (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.0001)
+            (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.000001)
         ]
     else:
         significant = analysis.coverage_qnorm_annotated[
@@ -1380,69 +1342,13 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_correlation.svg" % method), bbox_inches="tight")
     plt.close('all')
 
-    # # pca
+    # pca
+    from sklearn.preprocessing import normalize
+    x = significant_values.values  # returns a numpy array
+    x_scaled = normalize(x)
 
-    # x = significant_values.values  # returns a numpy array
-    # min_max_scaler = preprocessing.Normalizer()
-    # x_scaled = min_max_scaler.fit_transform(x)
-    # x = pd.DataFrame(x_scaled)
-    # # random PCA
-    # pca = RandomizedPCA()
-    # pca_fit = pca.fit(x).transform(x)
-    # # plot
-    # variance = [np.round(i * 100, 0) for i in pca.explained_variance_ratio_]
-
-    # # dependent on ighv status
-    # colors = samples_to_color(sel_samples)
-
-    # # plot
-    # fig, axis = plt.subplots(1)
-    # # 1vs2 components
-    # for i, sample in enumerate(sel_samples):
-    #     axis.scatter(
-    #         pca.components_[i, 0], pca.components_[i, 1],
-    #         label=name_to_repr(sample.name),
-    #         color=colors[i],
-    #         s=50
-    #     )
-    # axis.set_xlabel("PC1 - {0}% variance".format(variance[0]))
-    # axis.set_ylabel("PC2 - {0}% variance".format(variance[1]))
-    # fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.pca.svg" % method), bbox_inches="tight")
-
-    # # 3 components
-    # fig = plt.figure()
-    # # plot each point
-    # ax = fig.add_subplot(111, projection='3d')
-    # for i, sample in enumerate(sel_samples):
-    #     ax.scatter(
-    #         pca.components_[i, 0], pca.components_[i, 1], pca.components_[i, 2],
-    #         label=name_to_repr(sample.name),
-    #         color=colors[i],
-    #         s=50
-    #     )
-    # ax.set_xlabel("PC1 - {0}% variance".format(variance[0]))
-    # ax.set_ylabel("PC2 - {0}% variance".format(variance[1]))
-    # ax.set_zlabel("PC3 - {0}% variance".format(variance[2]))
-    # plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-    # fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.pca.svg" % method), bbox_inches="tight")
-    # plt.close('all')
-
-    # # mds
-    # mds = MDS()  # n_components=2, dissimilarity="precomputed", random_state=1)
-    # mds_fit = mds.fit_transform(x)
-    # # plot
-    # colors = samples_to_color(sel_samples)
-    # fig, axis = plt.subplots(1)
-    # for i, sample in enumerate(sel_samples):
-    #     axis.scatter(
-    #         mds_fit[i, 0], mds_fit[i, 1],
-    #         label=name_to_repr(sample.name),
-    #         color=colors[i],
-    #         s=50
-    #     )
-    # plt.legend(loc='center left', ncol=3, bbox_to_anchor=(1, 0.5))
-    # plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.mds.svg" % method), bbox_inches="tight")
-    # plt.close('all')
+    output_pdf = os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.pca.svg" % method)
+    pca_r(x_scaled, sample_colors, output_pdf)
 
     # CHARACTERIZE
     # plot features of all sites
@@ -1514,17 +1420,17 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
     # de novo motif finding - enrichment
     bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.bed" % method)
     fasta_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.fa" % method)
-    fasta = bed_to_fasta(bed_file, fasta_file)
+    bed_to_fasta(bed_file, fasta_file)
     output_folder = os.path.join(analysis.prj.dirs.data, "meme", "cll_peaks.%s_significant" % method)
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
-    meme(fasta, output_folder)
+    meme(fasta_file, output_folder)
 
     # SIGNIFICANT SITE SUBSET CARACTERIZATION (CLUSTERS)
     # get dendrogram data and plot it,
     # determine height to separate clusters
     # this must be done empirically for each feature type
-    thresholds = {"mutation": 28, "patient_gender": 8, "untreated_vs_1stline": 8, "CLL_vs_MBL": 8}
+    thresholds = {"mutated": 12, "patient_gender": 8, "untreated_vs_1stline": 8, "CLL_vs_MBL": 8}
 
     dendr = dendrogram(sites_cluster.dendrogram_row.linkage, color_threshold=thresholds[feature], labels=significant_values.index)  # labels have to be reset for some reason... grrrr!
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.dendrogram.svg" % method), bbox_inches="tight")
@@ -1544,6 +1450,9 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
         # GET DATA FROM CLUSTER
         # grab data only from this cluster
         cluster_data = significant[significant['cluster'] == cluster]
+
+        if len(cluster_data) < 30:
+            continue
 
         # SAVE AS BED
         bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.cluster_%i.bed" % (method, cluster_name))
@@ -1568,25 +1477,6 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
                 df['cluster'] = cluster_name
                 df['variable'] = variable
                 counts = counts.append(df)
-
-        # plot enrichments
-        df = df.rename(columns={0: "counts"})
-        g = sns.FacetGrid(counts, col="cluster", row="variable", hue="data", sharex=False, margin_titles=True)
-        g.map(sns.barplot, "values", 0)
-        plt.legend(loc="best")
-        g.set_axis_labels(x_var="cluster #", y_var="count")
-        plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.clusters.enrichments.svg" % method), bbox_inches="tight")
-
-        # plot p-values
-        p_values['p-value'] = -np.log10(p_values['p-value'])
-        p_values.sort('p-value', ascending=False, inplace=True)
-        g = sns.FacetGrid(p_values, col="variable", margin_titles=True)
-        g.map(sns.barplot, "cluster", "p-value")
-        # add sig line
-        for axis in g.axes[0]:
-            axis.axhline(-np.log10(0.05), linestyle='- -', color='black')
-        g.set_axis_labels(x_var="cluster #", y_var="-log10(pvalue)")
-        plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.clusters.length_support_p-values.svg" % method), bbox_inches="tight")
 
         # Lola
         # use all cll sites as universe
@@ -1627,11 +1517,30 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2):
         # de novo motif finding - enrichment
         bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.cluster_%i.bed" % (method, cluster_name))
         fasta_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.cluster_%i.fa" % (method, cluster_name))
-        fasta = bed_to_fasta(bed_file, fasta_file)
+        bed_to_fasta(bed_file, fasta_file)
         output_folder = os.path.join(analysis.prj.dirs.data, "meme", "cll_peaks.%s_significant.cluster_%i" % (method, cluster_name))
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
-        meme(fasta, output_folder)
+        meme(fasta_file, output_folder)
+
+    # plot enrichments
+    df = df.rename(columns={0: "counts"})
+    g = sns.FacetGrid(counts, col="cluster", row="variable", hue="data", sharex=False, margin_titles=True)
+    g.map(sns.barplot, "values", 0)
+    plt.legend(loc="best")
+    g.set_axis_labels(x_var="cluster #", y_var="count")
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.clusters.enrichments.svg" % method), bbox_inches="tight")
+
+    # plot p-values
+    p_values['p-value'] = -np.log10(p_values['p-value'])
+    p_values.sort('p-value', ascending=False, inplace=True)
+    g = sns.FacetGrid(p_values, col="variable", margin_titles=True)
+    g.map(sns.barplot, "cluster", "p-value")
+    # add sig line
+    for axis in g.axes[0]:
+        axis.axhline(-np.log10(0.05), linestyle='- -', color='black')
+    g.set_axis_labels(x_var="cluster #", y_var="-log10(pvalue)")
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.clusters.length_support_p-values.svg" % method), bbox_inches="tight")
 
 
 def main():
@@ -1699,7 +1608,7 @@ def main():
         # Get consensus peak set from all samples
         analysis.get_consensus_sites()
         # estimate peak saturation among all samples
-        analysis.estimate_peak_saturation(n=10)
+        analysis.estimate_peak_saturation(n=25)
         # Calculate peak support
         analysis.calculate_peak_support()
         # Annotate peaks with closest gene
@@ -1733,7 +1642,6 @@ def main():
     else:
         analysis.sites = pybedtools.BedTool(os.path.join(analysis.prj.dirs.data, "cll_peaks.bed"))
         analysis.peak_count = pickle.load(open(os.path.join(analysis.prj.dirs.data, "cll_peaks.cum_peak_count.pickle"), 'rb'))
-        analysis.peak_count = pd.read_csv(os.path.join("cll_peaks.cum_peak_count.csv"))
 
         analysis.support = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.support.csv"))
 
@@ -1763,10 +1671,10 @@ def main():
         "mutated": (True, False),  # ighv mutation
     }
     for i, (feature, (group1, group2)) in enumerate(features.items()):
-        # example : i, (feature, (group1, group2)) = (0, (features.items()[0]))
+        # example : i, (feature, (group1, group2)) = (1, (features.items()[1]))
         # get dataframe subset with groups
-        g1 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group1]]
-        g2 = analysis.coverage_qnorm_annotated[[sample.name for sample in analysis.samples if getattr(sample, feature) == group2]]
+        g1 = analysis.coverage_qnorm_annotated[[sample.name for sample in sel_samples if getattr(sample, feature) == group1]]
+        g2 = analysis.coverage_qnorm_annotated[[sample.name for sample in sel_samples if getattr(sample, feature) == group2]]
         group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2)
 
     # untreated vs 1st line chemotherapy +~ B cell antibodies
