@@ -232,7 +232,7 @@ def run_merged(feature, bam_files, group_label):
     # Build job
     cmd = tk.slurmHeader(
         "_".join(["CLL_merged-samples", feature, group_label]), os.path.join(merge_dir, "slurm.log"),
-        cpusPerTask=12, queue="longq", time="7-12:00:00", memPerCpu=8000
+        cpusPerTask=12, queue="longq", time="7-12:00:00", memPerCpu=4000
     )
 
     # merge all bam files
@@ -507,6 +507,7 @@ refseq2gene = dict(zip(refseq2gene[0], refseq2gene[1]))
 
 # "gender" and "mutated"
 for i, (feature, (group1, group2)) in enumerate(features.items()):
+    print feature
     # append file to jobs
     foots_dir = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", feature, str(group1)]), "footprints"))
     collect_networks(foots_dir, motif_numbers, "_".join(["merged-samples", feature, str(group1)]))

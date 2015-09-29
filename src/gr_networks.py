@@ -348,6 +348,12 @@ for job in jobs:
 # parse output,
 # connect each motif to a gene
 for sample in samples:
+    if sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
+        continue
+
+    if os.path.exists(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-gene_interactions.tsv")):
+        continue
+
     print sample
     interactions = piq_to_network(os.path.join(sample.dirs.sampleRoot, "footprints"), motif_numbers)
 
@@ -365,7 +371,7 @@ for sample in samples:
     interactions_TF = interactions[interactions['gene'].isin(tfs)]
     interactions_TF.to_csv(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-TF_interactions.tsv"), sep="\t", index=False)
 
-    # Filter for nodes with more than 2 edges
+    # Filter for edges with score > 1
     interactions_TF_filtered = interactions_TF[interactions_TF['interaction_score'] >= 1]
     interactions_TF_filtered.to_csv(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-TF_interactions.filtered.tsv"), sep="\t", index=False)
 
