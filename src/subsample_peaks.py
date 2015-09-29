@@ -141,14 +141,22 @@ for sample in prj.samples:
                 threshold, count = line.strip().split("\t")
                 threshold = int(float(threshold))
                 count = int(count)
-                if threshold == '32.000000' and count == '0':
-                    continue
-                else:
-                    series = pd.Series([reads, threshold, count], index=['reads', 'threshold', 'peak_count'])
-                    counts = counts.append(series, ignore_index=True)
+                series = pd.Series([reads, threshold, count], index=['reads', 'threshold', 'peak_count'])
+                counts = counts.append(series, ignore_index=True)
+
+cc = counts[
+    (counts['peak_count'] > 0)
+]
+
+cc['reads'] = np.log2(cc['reads'])
+cc['peak_count'] = np.log2(cc['peak_count'])
+
+# save
+# cc.to_csv(os.path.join(results_dir, "read_subsampling_peak_number.csv"), index=False)
+
 
 # average over samples
-c = counts.groupby(['reads', 'threshold']).aggregate(max)
+c = cc.groupby(['reads', 'threshold']).aggregate(np.mean)
 c = c.reset_index()
 
 # plot
