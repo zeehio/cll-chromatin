@@ -1266,7 +1266,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     analysis.coverage_qnorm_annotated["_".join(["mean", feature, str(group1)])] = mean_a
     analysis.coverage_qnorm_annotated["_".join(["mean", feature, str(group2)])] = mean_b
     # compute q values
-    q_values = pd.Series(multipletests(p_values)[1])
+    q_values = pd.Series(multipletests(p_values, method='fdr_bh', alpha=0.05)[1])
     analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] = p_values
     analysis.coverage_qnorm_annotated["_".join(["q_value", feature])] = q_values
     # save as csv
@@ -1295,23 +1295,10 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     plt.close('all')
 
     # get significant sites
-    if feature == "mutated":
-        significant = analysis.coverage_qnorm_annotated[
-            (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.0001) &
-            (abs(analysis.coverage_qnorm_annotated["_".join(["fold_change", feature])]) > 1)
-        ]
-    elif feature == "patient_gender":
-        significant = analysis.coverage_qnorm_annotated[
-            (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.000001)
-        ]
-    elif feature == "untreated_vs_treated":
-        significant = analysis.coverage_qnorm_annotated[
-            (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.00001)
-        ]
-    else:
-        significant = analysis.coverage_qnorm_annotated[
-            (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.0001)
-        ]
+    significant = analysis.coverage_qnorm_annotated[
+        (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.05) &
+        (abs(analysis.coverage_qnorm_annotated["_".join(["fold_change", feature])]) > 1)
+    ]
 
     # SAVE AS BED
     bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.bed" % method)
@@ -1677,7 +1664,7 @@ def main():
         "mutated": (True, False),  # ighv mutation
     }
     for i, (feature, (group1, group2)) in enumerate(features.items()):
-        # example : i, (feature, (group1, group2)) = (1, (features.items()[1]))
+        # example : i, (feature, (group1, group2)) = (0, (features.items()[0]))
         # get dataframe subset with groups
         g1 = analysis.coverage_qnorm_annotated[[sample.name for sample in sel_samples if getattr(sample, feature) == group1]]
         g2 = analysis.coverage_qnorm_annotated[[sample.name for sample in sel_samples if getattr(sample, feature) == group2]]
