@@ -5,6 +5,10 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pipelines.models import Project
+import json
+
+
+sns.set(style="whitegrid")
 
 
 def name_to_repr(name):
@@ -244,67 +248,40 @@ def average_weights(G):
 
 
 def describe_graph(G):
-    # Graph description
-    ## centrality
-    nx.degree_centrality(G)
-    nx.in_degree_centrality(G)
-    nx.out_degree_centrality(G)
+    """Graph description"""
 
-    ### closest-path based
-    nx.closeness_centrality(G)
-    nx.betweenness_centrality(G)
-    nx.betweenness_centrality(G).items()[np.argmax(nx.betweenness_centrality(G).values())]  # get most central node
-    sorted(nx.katz_centrality_numpy(G).items(), key=lambda x: x[1])  # get results sorted by most central
+    desc = list()
+    # centrality
+    # degree based
+    desc.append(pd.Series(nx.degree_centrality(G), name="degree_centrality"))
+    desc.append(pd.Series(nx.in_degree_centrality(G), name="in_degree_centrality"))
+    desc.append(pd.Series(nx.out_degree_centrality(G), name="out_degree_centrality"))
+    # closest-path based
+    desc.append(pd.Series(nx.closeness_centrality(G), name="closeness_centrality"))
+    desc.append(pd.Series(nx.betweenness_centrality(G), name="betweenness_centrality"))
+    # eigenvector-based
+    desc.append(pd.Series(nx.eigenvector_centrality(G), name="eigenvector_centrality"))
+    desc.append(pd.Series(nx.katz_centrality_numpy(G), name="katz_centrality"))
+    # load-based
+    desc.append(pd.Series(nx.load_centrality(G), name="load_centrality"))
 
-    nx.edge_betweenness_centrality(G)
+    # nx.dispersion(G)  # find un/coordinated nodes
 
-    ### current flow-based
-    #### not possible for DiGraphs!
-
-    ### eigenvector-based
-    nx.eigenvector_centrality(G)
-    nx.eigenvector_centrality(G).items()[np.argmax(nx.eigenvector_centrality(G).values())]  # get most central node
-    sorted(nx.eigenvector_centrality(G).items(), key=lambda x: x[1])  # get results sorted by most central
-
-    nx.katz_centrality_numpy(G)
-    nx.katz_centrality_numpy(G).items()[np.argmax(nx.katz_centrality_numpy(G).values())]  # get most central node
-    sorted(nx.katz_centrality_numpy(G).items(), key=lambda x: x[1])  # get results sorted by most central
-
-    ### communicability-based
-    #### not possible for DiGraphs!
-
-    ### load-based
-    nx.load_centrality(G)
-    nx.load_centrality(G).items()[np.argmax(nx.load_centrality(G).values())]  # get most central node
-    sorted(nx.load_centrality(G).items(), key=lambda x: x[1])  # get results sorted by most central
-
-    nx.edge_load(G)
-    sorted(nx.edge_load(G).items(), key=lambda x: x[1])  # get results sorted by most central
-
-    nx.dispersion(G)  # find un/coordinated nodes
-    sorted([(i, x, y) for i, j in nx.dispersion(G).items() for x,y in j.items()], key=lambda x: x[2])  # get results sorted by more coordinated nodes (less is more coordination)
-
-    ### average shortest path length
-    nx.average_shortest_path_length(G)
-
+    # average shortest path length
+    # nx.average_shortest_path_length(G)
 
     # Connectivity
-    nx.degree_assortativity_coefficient(G)
-    nx.degree_pearson_correlation_coefficient(G)
-    nx.attribute_assortativity_coefficient(G, 'count')
-    nx.numeric_assortativity_coefficient(G, 'count')
+    # desc.append(pd.Series(nx.degree_assortativity_coefficient(G), name="degree_assortativity_coefficient"))
+    # desc.append(pd.Series(nx.degree_pearson_correlation_coefficient(G), name="degree_pearson_correlation_coefficient"))
+    # desc.append(pd.Series(nx.attribute_assortativity_coefficient(G, 'count'), name="attribute_assortativity_coefficient"))
+    # desc.append(pd.Series(nx.numeric_assortativity_coefficient(G, 'count'), name="numeric_assortativity_coefficient"))
 
-    nx.average_neighbor_degree(G)
+    desc.append(pd.Series(nx.average_neighbor_degree(G), name="average_neighbor_degree"))
 
-    nx.average_degree_connectivity(G)
+    # desc.append(pd.Series(nx.average_degree_connectivity(G), name="average_degree_connectivity"))
+    # desc.append(pd.Series(nx.k_nearest_neighbors(G), name="k_nearest_neighbors"))
 
-    # plot degree vs connectivity
-    res = nx.average_degree_connectivity(G)
-    plt.plot(res.keys(), res.values(), 'o')
-    sns.regplot(np.array(res.keys(), dtype=np.float64), np.array(res.values(), dtype=np.float64))  # linear regression
-
-    res = nx.k_nearest_neighbors(G)
-    sns.regplot(np.array(res.keys(), dtype=np.float64), np.array(res.values(), dtype=np.float64))  # linear regression
+    return pd.DataFrame(desc).T
 
 
 # Get path configuration
@@ -340,23 +317,33 @@ samples_to_exclude = [
 samples = [sample for sample in prj.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq" and sample.name not in samples_to_exclude]
 
 
-df = pd.DataFrame()
 for i, sample in enumerate(samples):
     print(sample)
     # Create sample graph
     graph_file = os.path.join(data_dir, "footprints", sample.name + ".piq.TF-TF_interactions.tsv")
     G = create_graph(graph_file)
 
-    # desc = describe_graph(G)
-    # df.append(desc)
+    # Describe network
+    df = describe_graph(G)
+    df["sample"] = sample.name
+    if i == 0:
+        desc = df
+    else:
+        desc = desc.append(df)
 
-    # intersect
+    # Intersect graphs, keeping weight from each
     if i == 0:
         master_graph = G
     else:
         master_graph = intersect_sum_weights(master_graph, G)
 
 G = average_weights(master_graph)
+
+# write network to disk
+# this can be visualized with D3.js
+json_data = nx.readwrite.json_graph.node_link_data(G)
+with open("/home/afr/data.json", "w") as handle:
+    json.dump(json_data, handle)
 
 
 # Drawing
@@ -367,6 +354,18 @@ nx.draw_networkx(
     edge_color=[G[u][v]['weight'] for u, v in G.edges()],
     edge_cmap=plt.get_cmap('gray_r')  # white to gray
 )
+
+# Plot network description
+desc['TF'] = desc.index
+df = pd.melt(desc, id_vars=['TF', 'sample'])
+ranks = desc.rank(numeric_only=True)
+ranks['TF'] = ranks.index
+ranks = pd.melt(ranks, id_vars=['TF'], value_name='rank')
+# merge values and ranks
+value_ranks = pd.merge(df, ranks)
+
+g = sns.FacetGrid(value_ranks, hue="sample", col="variable", col_wrap=3, margin_titles=True, size=4)
+g.map(plt.scatter, "rank", "value", color="#338844", edgecolor="white", s=50, lw=1)
 
 
 # network types:
