@@ -340,7 +340,7 @@ for i, sample in enumerate(samples):
 G = average_weights(master_graph)
 
 # write network to disk
-# this can be visualized with D3.js
+# this can be visualized with D3.js (e.g. http://bl.ocks.org/mbostock/4062045#index.html)
 json_data = nx.readwrite.json_graph.node_link_data(G)
 with open("/home/afr/data.json", "w") as handle:
     json.dump(json_data, handle)
