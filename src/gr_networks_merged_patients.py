@@ -7,6 +7,16 @@ import numpy as np
 import textwrap
 import re
 import pybedtools
+from scipy.stats import mannwhitneyu
+from statsmodels.sandbox.stats.multicomp import multipletests
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+
+# Set settings
+pd.set_option("date_dayfirst", True)
+sns.set_style("whitegrid")
+sns.set_context("paper")
 
 
 def name_to_repr(name):
@@ -375,6 +385,75 @@ def piq_to_network(results_dir, motif_numbers):
     return interactions
 
 
+def piq_to_change(results_dir1, results_dir2, motif_numbers):
+    """
+    Parse PIQ output, filter footprints.
+    Returns matrix with likelyhood score of each TF regulating each gene.
+    """
+
+    def get_purity(motif, results_dir, files):
+        # get all cll peaks to filter data
+        all_peaks = pybedtools.BedTool("data/cll_peaks.bed")
+        # get both forward and reverse complement PIQ output files
+        result_files = list()
+        for f in files:
+            m = re.match(r'%i-.*-calls\.all\.csv$' % motif, f)
+            if hasattr(m, "string"):
+                result_files.append(m.string)
+
+        if len(result_files) != 2:
+            return None
+        # make bed file from it
+        # concatenate files (forward and reverse complement are treated differently by PIQ)
+        for i, result_file in enumerate(result_files):
+            df = pd.read_csv(os.path.join(results_dir, result_file), index_col=0)
+            df.rename(columns={"coord": "start"}, inplace=True)
+            # fix coordinates
+            if "RC-calls.csv" not in result_file:
+                df["end"] = df["start"] + 1
+            else:
+                df["end"] = df["start"]
+                df["start"] = df["start"] - 1
+            # concatenate
+            if i == 0:
+                df2 = df
+            else:
+                df2 = pd.concat([df, df2])
+
+        # Filter for purity
+        df2[['chr', 'start', 'end', 'pwm', 'shape', 'score', 'purity']].to_csv(os.path.join("tmp.bed"), sep="\t", index=False, header=False)
+
+        # filter for motifs overlapping CLL peaks
+        footprints = pybedtools.BedTool(os.path.join("tmp.bed")).intersect(all_peaks, wa=True).to_dataframe()
+        footprints.columns = ["chrom", "start", "end", "pwm", "shape", "score", "purity"]
+
+        return footprints["purity"]
+
+    # list results_dir
+    files1 = os.listdir(results_dir1)
+    files2 = os.listdir(results_dir2)
+
+    # dict to store TF->gene interactions
+    fold_changes = list()
+
+    # loop through motifs/TFs, filter and establish relationship between TF and gene
+    for motif in motif_numbers:
+        print motif
+
+        pur1 = get_purity(motif, results_dir1, files1)
+        pur2 = get_purity(motif, results_dir2, files2)
+
+        if pur1 is None or pur2 is None:
+            continue
+
+        pur1 = pur1.apply(lambda x: x if x > 0.7 else 0)
+        pur2 = pur2.apply(lambda x: x if x > 0.7 else 0)
+
+        fold_changes.append((motif, pur1.mean(), pur2.mean(), mannwhitneyu(pur1, pur2)[1]))
+
+    return fold_changes
+
+
 def collect_networks(foots_dir, motif_numbers, label):
     interactions = piq_to_network(foots_dir, motif_numbers)
 
@@ -507,12 +586,13 @@ refseq2gene = dict(zip(refseq2gene[0], refseq2gene[1]))
 
 # "gender" and "mutated"
 for i, (feature, (group1, group2)) in enumerate(features.items()):
+    # i, (feature, (group1, group2)) = (0, (features.items()[0]))
     print feature
     # append file to jobs
-    foots_dir = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", feature, str(group1)]), "footprints"))
-    collect_networks(foots_dir, motif_numbers, "_".join(["merged-samples", feature, str(group1)]))
-    foots_dir = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", feature, str(group2)]), "footprints"))
-    collect_networks(foots_dir, motif_numbers, "_".join(["merged-samples", feature, str(group2)]))
+    foots_dir1 = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", feature, str(group1)]), "footprints"))
+    collect_networks(foots_dir1, motif_numbers, "_".join(["merged-samples", feature, str(group1)]))
+    foots_dir2 = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", feature, str(group2)]), "footprints"))
+    collect_networks(foots_dir2, motif_numbers, "_".join(["merged-samples", feature, str(group2)]))
 
 # untreated vs 1st line chemotherapy +~ B cell antibodies
 foots_dir = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", "untreated_vs_1stline", "untreated"]), "footprints"))
@@ -522,3 +602,60 @@ collect_networks(foots_dir, motif_numbers, "_".join(["merged-samples", "untreate
 # CLL vs MBL
 foots_dir = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", "CLL_vs_MBL", "CLL"]), "footprints"))
 collect_networks(foots_dir, motif_numbers, "_".join(["merged-samples", "CLL_vs_MBL", "MBL"]))
+
+
+# FOLD-CHANGE PLOT
+# u/mCLL
+i, (feature, (group1, group2)) = (0, (features.items()[0]))
+
+foots_dir1 = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", feature, str(group1)]), "footprints"))
+foots_dir2 = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", feature, str(group2)]), "footprints"))
+
+df = pd.DataFrame(piq_to_change(foots_dir1, foots_dir2, motif_numbers))
+df.columns = ['TF', 'mean1', 'mean2', 'pvalues']
+df['TF'] = [number2tf[tf] for tf in df['TF']]
+
+# sns.jointplot(df['mean1'], df['mean2'], xlim=(0.5, 1), ylim=(0.5, 1))
+
+# # zscore transform
+# df['mean1z'] = (df['mean1'] - df['mean1'].mean()) / df['mean1'].std(ddof=0)
+# df['mean2z'] = (df['mean2'] - df['mean2'].mean()) / df['mean2'].std(ddof=0)
+# sns.jointplot(df['mean1z'], df['mean2z'])
+
+# # volcano plot
+# df = pd.DataFrame(results)
+# df.columns = ['TF', 'mean1', 'mean2', 'pvalues']
+# df['TF'] = [number2tf[tf] for tf in df['TF']]
+# sns.jointplot(df['fold'], -np.log10(1 + df['pvalues']))
+
+# scatter
+df['fold'] = df['mean1'] - df['mean2']
+df['pvalues'] = multipletests(df.pvalues, method="fdr_bh", alpha=0.05)[1]
+
+for i in range(len(df)):
+    if df.ix[i]['fold'] < 0:
+        col = "#DEDB43"
+    elif df.ix[i]['fold'] > 0:
+        col = "#31CC7E"
+    else:
+        col = "gray"
+
+    plt.plot(
+        df.ix[i]['mean1'], df.ix[i]['mean2'], 'o',
+        alpha=1.0 if df.ix[i]['pvalues'] < 1e-80 else 0.2,
+        color=col,
+        label=df.ix[i]['TF'] if df.ix[i]['pvalues'] < 1e-80 else None
+    )
+    if df.ix[i]['pvalues'] < 1e-80:
+        plt.annotate(
+            df.ix[i]['TF'],
+            xy=(df.ix[i]['mean1'], df.ix[i]['mean2']), xytext = (-20, 20),
+            textcoords = 'offset points', ha = 'right', va = 'bottom',
+            bbox = dict(boxstyle='round,pad=0.5', fc='yellow', alpha=0.3),
+            arrowprops = dict(arrowstyle='->', connectionstyle='arc3,rad=0')
+        )
+plt.xlim((0.5, 1))
+plt.ylim((0.5, 1))
+plt.plot([0, 1], [0, 1], '--', color='black')
+
+plt.savefig(os.path.join(plots_dir, "_".join(["merged-samples", feature, str(group1), str(group2), "fold_change.svg"])))

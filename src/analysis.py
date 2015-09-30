@@ -1278,7 +1278,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
         "_".join(["q_value", feature]),
         "_".join(["p_value", feature])]].to_csv(csv, index=False)
     # pickle
-    # analysis.to_pickle()
+    analysis.to_pickle()
 
     # VISUALIZE
     # visualize distribution of fold-change, p-values
@@ -1584,7 +1584,7 @@ def main():
         'CLL_ATAC-seq_5277_1-5-57269_ATAC17-8_hg19',
         'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19',
         'CLL_ATAC-seq_5147_1-5-48105_ATAC17-2_hg19',
-        'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19']  # 'CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19']
+        'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19']
     samples = [sample for sample in prj.samples if sample.technique == "ATAC-seq" and sample.name not in samples_to_exclude]
 
     analysis = Analysis(

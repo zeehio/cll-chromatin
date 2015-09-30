@@ -375,37 +375,6 @@ for sample in samples:
     interactions_TF_filtered = interactions_TF[interactions_TF['interaction_score'] >= 1]
     interactions_TF_filtered.to_csv(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-TF_interactions.filtered.tsv"), sep="\t", index=False)
 
-# Network types:
-# patient-specific:
-# - build network specific to each patient
-# - compare networks
-# - cluster patients based on network connections
-
-# for groups of patients:
-# - come up with a way of combining signal from several patients from one group
-# - build networks specific to groups
-
-
-# Describe networks
-for sample in samples:
-    df = pd.read_csv(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-gene_interactions.tsv"), sep="\t")
-
-    G = nx.Graph()
-    for i in df.index:
-        G.add_edge(df.ix[i]['TF'], df.ix[i]['gene'], weight=df.ix[i]['interaction_score'])
-
-    nx.shortest_path(G, 'PAX5', 'NFKB1', weight='weight')
-
-
-# classify nodes into regulator/regulated
-# color in visualization
-
-
-# Compare Networks
-
-
-#
-
 
 # CIS-REGULATORY MODULE USAGE BETWEEN CLL TYPES
 # Get CLL groups
