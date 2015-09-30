@@ -351,11 +351,12 @@ with open("/home/afr/data.json", "w") as handle:
 nx.draw_networkx(
     G, pos=nx.spring_layout(G), alpha=.5,
     arrows=False,
-    edge_color=[G[u][v]['weight'] for u, v in G.edges()],
+    #edge_color=[G[u][v]['weight'] for u, v in G.edges()],
     edge_cmap=plt.get_cmap('gray_r')  # white to gray
 )
 
 # Plot network description
+# rank vs value for all samples, in a grid of variables
 desc['TF'] = desc.index
 df = pd.melt(desc, id_vars=['TF', 'sample'])
 ranks = desc.rank(numeric_only=True)
@@ -367,16 +368,16 @@ value_ranks = pd.merge(df, ranks)
 g = sns.FacetGrid(value_ranks, hue="sample", col="variable", col_wrap=3, margin_titles=True, size=4)
 g.map(plt.scatter, "rank", "value", color="#338844", edgecolor="white", s=50, lw=1)
 
+# mean vs -std across samples, in a grid of variables
+df.groupby(["TF", "variable"]).apply(np.mean)
+df.groupby(["TF", "variable"]).apply(np.std)
 
-# network types:
-# patient-specific:
-# - build network specific to each patient
-# - compare networks
-# - cluster patients based on network connections
 
-# for groups of patients:
-# - come up with a way of combining signal from several patients from one group
-# - build networks specific to groups
+g = sns.FacetGrid(value_ranks, col="variable", col_wrap=3, margin_titles=True, size=4)
+g.map(plt.scatter, "mean", "std", color="#338844", edgecolor="white", s=50, lw=1)
+
+
+#
 
 
 # Describe networks
