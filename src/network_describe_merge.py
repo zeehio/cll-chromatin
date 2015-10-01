@@ -5,6 +5,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pipelines.models import Project
+from networkx.readwrite import json_graph
 import json
 
 
@@ -250,38 +251,54 @@ def average_weights(G):
 def describe_graph(G):
     """Graph description"""
 
-    desc = list()
+    # GRAPH DESCRIPTION
+    graph_desc = list()
+    # n. nodes
+    G.number_of_nodes()
+    # n. edges
+    G.number_of_edges()
+    # n. of selfloops
+
+    # density
+    nx.average_shortest_path_length(G)
+    nx.average_degree_connectivity(G)
+    nx.k_nearest_neighbors(G)
+
+    # NODE DESCRIPTION
+    node_desc = list()
+    # n. of neighbours
+
+    # n. of outgoing
+
+    # n. of incoming
+
+    # ratio out/in
+
     # centrality
     # degree based
-    desc.append(pd.Series(nx.degree_centrality(G), name="degree_centrality"))
-    desc.append(pd.Series(nx.in_degree_centrality(G), name="in_degree_centrality"))
-    desc.append(pd.Series(nx.out_degree_centrality(G), name="out_degree_centrality"))
+    node_desc.append(pd.Series(nx.degree_centrality(G), name="degree_centrality"))
+    node_desc.append(pd.Series(nx.in_degree_centrality(G), name="in_degree_centrality"))
+    node_desc.append(pd.Series(nx.out_degree_centrality(G), name="out_degree_centrality"))
     # closest-path based
-    desc.append(pd.Series(nx.closeness_centrality(G), name="closeness_centrality"))
-    desc.append(pd.Series(nx.betweenness_centrality(G), name="betweenness_centrality"))
+    node_desc.append(pd.Series(nx.closeness_centrality(G), name="closeness_centrality"))
+    node_desc.append(pd.Series(nx.betweenness_centrality(G), name="betweenness_centrality"))
     # eigenvector-based
-    desc.append(pd.Series(nx.eigenvector_centrality(G), name="eigenvector_centrality"))
-    desc.append(pd.Series(nx.katz_centrality_numpy(G), name="katz_centrality"))
+    node_desc.append(pd.Series(nx.eigenvector_centrality(G), name="eigenvector_centrality"))
+    node_desc.append(pd.Series(nx.katz_centrality_numpy(G), name="katz_centrality"))
     # load-based
-    desc.append(pd.Series(nx.load_centrality(G), name="load_centrality"))
+    node_desc.append(pd.Series(nx.load_centrality(G), name="load_centrality"))
 
     # nx.dispersion(G)  # find un/coordinated nodes
 
-    # average shortest path length
-    # nx.average_shortest_path_length(G)
-
     # Connectivity
-    # desc.append(pd.Series(nx.degree_assortativity_coefficient(G), name="degree_assortativity_coefficient"))
-    # desc.append(pd.Series(nx.degree_pearson_correlation_coefficient(G), name="degree_pearson_correlation_coefficient"))
-    # desc.append(pd.Series(nx.attribute_assortativity_coefficient(G, 'count'), name="attribute_assortativity_coefficient"))
-    # desc.append(pd.Series(nx.numeric_assortativity_coefficient(G, 'count'), name="numeric_assortativity_coefficient"))
+    # node_desc.append(pd.Series(nx.degree_assortativity_coefficient(G), name="degree_assortativity_coefficient"))
+    # node_desc.append(pd.Series(nx.degree_pearson_correlation_coefficient(G), name="degree_pearson_correlation_coefficient"))
+    # node_desc.append(pd.Series(nx.attribute_assortativity_coefficient(G, 'count'), name="attribute_assortativity_coefficient"))
+    # node_desc.append(pd.Series(nx.numeric_assortativity_coefficient(G, 'count'), name="numeric_assortativity_coefficient"))
 
-    desc.append(pd.Series(nx.average_neighbor_degree(G), name="average_neighbor_degree"))
+    node_desc.append(pd.Series(nx.average_neighbor_degree(G), name="average_neighbor_degree"))
 
-    # desc.append(pd.Series(nx.average_degree_connectivity(G), name="average_degree_connectivity"))
-    # desc.append(pd.Series(nx.k_nearest_neighbors(G), name="k_nearest_neighbors"))
-
-    return pd.DataFrame(desc).T
+    return (graph_desc, pd.DataFrame(node_desc).T)
 
 
 # Get path configuration
@@ -341,10 +358,12 @@ G = average_weights(master_graph)
 
 # write network to disk
 # this can be visualized with D3.js (e.g. http://bl.ocks.org/mbostock/4062045#index.html)
-json_data = nx.readwrite.json_graph.node_link_data(G)
+json_data = json_graph.node_link_data(G)
 with open("/home/afr/data.json", "w") as handle:
     json.dump(json_data, handle)
 
+# to read in:
+# G = json_graph.node_link_graph(json.load(open("workspace/data.json", "r")))
 
 # Drawing
 # with edge weights as colormap
