@@ -442,7 +442,7 @@ unmutated = [s for s in samples if s.mutated is False]
 # describe and intersect
 uG, ugraph, unodes = samples_to_networks(unmutated)
 # plot
-plot_graph_attributes(graph, nodes, os.path.join(plots_dir, "networks_individual_uCLL.attributes"))
+plot_graph_attributes(ugraph, unodes, os.path.join(plots_dir, "networks_individual_uCLL.attributes"))
 # save to disk
 ugraph.to_csv(os.path.join(data_dir, "networks_individual_uCLL.attributes.csv"), index=False)
 unodes.to_csv(os.path.join(data_dir, "networks_individual_uCLL.attributes.nodes.csv"), index=False)
@@ -455,7 +455,7 @@ mutated = [s for s in samples if s.mutated is True]
 # describe and intersect
 mG, mgraph, mnodes = samples_to_networks(mutated)
 # plot
-plot_graph_attributes(graph, nodes, os.path.join(plots_dir, "networks_individual_uCLL.attributes"))
+plot_graph_attributes(mgraph, mnodes, os.path.join(plots_dir, "networks_individual_mCLL.attributes"))
 # save to disk
 mgraph.to_csv(os.path.join(data_dir, "networks_individual_mCLL.attributes.csv"), index=False)
 mnodes.to_csv(os.path.join(data_dir, "networks_individual_mCLL.attributes.nodes.csv"), index=False)
@@ -470,5 +470,9 @@ graph_to_json_d3(mG, os.path.join(data_dir, "networks_individual_mCLL.intersecti
 
 # idea:
 
+# subtract graphs
+
 # classify nodes into regulator/regulated
 # color in visualization
+
+# run again with TF-gene interactions
