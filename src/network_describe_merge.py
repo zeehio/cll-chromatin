@@ -298,6 +298,84 @@ def describe_graph(G):
     return (graph_desc, pd.DataFrame(node_desc).T)
 
 
+def graph_to_json_d3(G, json_file):
+    # write network to disk
+    # this can be visualized with D3.js (e.g. http://bl.ocks.org/mbostock/4062045#index.html)
+    json_data = json_graph.node_link_data(G)
+    with open(json_file, "w") as handle:
+        json.dump(json_data, handle)
+
+
+def json_to_graph(json_file):
+    return json_graph.node_link_graph(json.load(open(json_file, "r")))
+
+
+def samples_to_networks(samples):
+    for i, sample in enumerate(samples):
+        print(sample)
+        # Create sample graph
+        graph_file = os.path.join(data_dir, "footprints", sample.name + ".piq.TF-TF_interactions.tsv")
+        G = create_graph(graph_file)
+
+        # Describe network
+        graph_desc, node_desc = describe_graph(G)
+        graph_desc.name = sample.name
+        node_desc["sample"] = sample.name
+        if i == 0:
+            graph = [graph_desc]
+            nodes = node_desc
+        else:
+            graph.append(graph_desc)
+            nodes = nodes.append(node_desc)
+
+        # Intersect graphs, keeping weight from each
+        if i == 0:
+            master_graph = G
+        else:
+            master_graph = intersect_sum_weights(master_graph, G)
+    graph = pd.DataFrame(graph)
+
+    G = average_weights(master_graph)
+
+    return G, graph, nodes
+
+
+def plot_graph_attributes(graph, nodes, prefix):
+    # INDIVIDUAL NETWORKS
+    # Plot graph attributes
+    graph['sample'] = graph.index
+    # in stripplots
+    g = sns.PairGrid(
+        graph.sort("number_of_nodes", ascending=False),
+        x_vars=graph.columns[:4], y_vars=["sample"],
+        size=10, aspect=.25)
+    g.map(sns.stripplot, size=10, orient="h",
+          palette="Reds_r", edgecolor="gray")
+    plt.savefig(prefix + ".svg", bbox_inches="tight")
+
+    # Plot node attributes
+    nodes['TF'] = nodes.index
+    df = pd.melt(nodes, id_vars=['TF', 'sample'])
+    # all values of all samples
+    g = sns.FacetGrid(df, col="variable", sharey=False, col_wrap=3, margin_titles=True, size=4)
+    g.map(sns.barplot, "TF", "value")
+    plt.savefig(prefix + ".nodes.svg", bbox_inches="tight")
+
+    # mean vs -std across samples, in a grid of variables
+    # calculate mean across samples for each variable
+    mean = df.groupby(["TF", "variable"]).aggregate(np.mean).reset_index()
+    mean.columns = ["TF", "variable", "mean"]
+    # calculate std across samples for each variable
+    std = df.groupby(["TF", "variable"]).aggregate(np.std).reset_index()
+    std.columns = ["TF", "variable", "std"]
+    # merge both (mean, std)
+    df2 = pd.merge(mean, std).dropna()
+    # plot
+    g = sns.FacetGrid(df2, col="variable", hue="TF", sharex=False, sharey=False, col_wrap=4, margin_titles=True)
+    g.map(plt.scatter, "mean", "std")
+    plt.savefig(prefix + ".nodes.stats.svg", bbox_inches="tight")
+
+
 # Get path configuration
 data_dir = os.path.join('.', "data")
 results_dir = os.path.join('.', "results")
@@ -331,91 +409,23 @@ samples_to_exclude = [
 samples = [sample for sample in prj.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq" and sample.name not in samples_to_exclude]
 
 
-for i, sample in enumerate(samples):
-    print(sample)
-    # Create sample graph
-    graph_file = os.path.join(data_dir, "footprints", sample.name + ".piq.TF-TF_interactions.tsv")
-    G = create_graph(graph_file)
-
-    # Describe network
-    graph_desc, node_desc = describe_graph(G)
-    graph_desc.name = sample.name
-    node_desc["sample"] = sample.name
-    if i == 0:
-        graph = [graph_desc]
-        node = node_desc
-    else:
-        graph.append(graph_desc)
-        node = node.append(node_desc)
-
-    # Intersect graphs, keeping weight from each
-    if i == 0:
-        master_graph = G
-    else:
-        master_graph = intersect_sum_weights(master_graph, G)
-graph = pd.DataFrame(graph)
-
+# All samples
+# describe
+G, graph, nodes = samples_to_networks(samples)
+# Plot
+plot_graph_attributes(graph, nodes, os.path.join(plots_dir, "networks_individual.attributes"))
 # save to disk
-graph.to_csv(os.path.join(data_dir, "networks_individual_attributes.csv"), index=False)
-node.to_csv(os.path.join(data_dir, "networks_individual_attributes.nodes.csv"), index=False)
-
-
-# INDIVIDUAL NETWORKS
-# Plot graph attributes
-graph['sample'] = graph.index
-
-# # all in one grid
-# df = pd.melt(graph, id_vars=['sample'])
-# g = sns.FacetGrid(df, col="variable", sharey=False, col_wrap=1)
-# g.map(sns.barplot, "sample", "value")
-
-# in stripplots
-g = sns.PairGrid(
-    graph.sort("number_of_nodes", ascending=False),
-    x_vars=graph.columns[:4], y_vars=["sample"],
-    size=10, aspect=.25)
-g.map(sns.stripplot, size=10, orient="h",
-      palette="Reds_r", edgecolor="gray")
-plt.savefig(os.path.join(plots_dir, "networks_individual_attributes.general.svg"), bbox_inches="tight")
-
-
-# Plot network description
-node['TF'] = node.index
-df = pd.melt(node, id_vars=['TF', 'sample'])
-# all values of all samples
-g = sns.FacetGrid(df, col="variable", sharey=False, col_wrap=3, margin_titles=True, size=4)
-g.map(sns.barplot, "TF", "value")
-plt.savefig(os.path.join(plots_dir, "networks_individual_attributes.nodes.svg"), bbox_inches="tight")
-
-# mean vs -std across samples, in a grid of variables
-# calculate mean across samples for each variable
-mean = df.groupby(["TF", "variable"]).aggregate(np.mean).reset_index()
-mean.columns = ["TF", "variable", "mean"]
-# calculate std across samples for each variable
-std = df.groupby(["TF", "variable"]).aggregate(np.std).reset_index()
-std.columns = ["TF", "variable", "std"]
-# merge both (mean, std)
-df2 = pd.merge(mean, std).dropna()
-# plot
-g = sns.FacetGrid(df2, col="variable", hue="TF", sharex=False, sharey=False, col_wrap=4, margin_titles=True)
-g.map(plt.scatter, "mean", "std")
-plt.savefig(os.path.join(plots_dir, "networks_individual_attributes.nodes.stats.svg"), bbox_inches="tight")
+graph.to_csv(os.path.join(data_dir, "networks_individual.attributes.csv"), index=False)
+nodes.to_csv(os.path.join(data_dir, "networks_individual.attributes.nodes.csv"), index=False)
 
 
 # MERGED NETWORK
 # Average edge's weights
-G = average_weights(master_graph)
 # describe master graph
 all_graph, all_node = describe_graph(G)
-
+plot_graph_attributes(all_graph, all_node, os.path.join(plots_dir, "networks_individual"))
 # write network to disk
-# this can be visualized with D3.js (e.g. http://bl.ocks.org/mbostock/4062045#index.html)
-json_data = json_graph.node_link_data(G)
-with open(os.path.join(data_dir, "networks_individual.intersection.json"), "w") as handle:
-    json.dump(json_data, handle)
-
-# to read in:
-# G = json_graph.node_link_graph(json.load(open("workspace/data.json", "r")))
+graph_to_json_d3(G, os.path.join(data_dir, "networks_individual.intersection.json"))
 
 # Drawing
 # with edge weights as colormap
@@ -426,8 +436,39 @@ nx.draw_networkx(
     edge_cmap=plt.get_cmap('gray_r')  # white to gray
 )
 
-# Describe networks
+# COMPARISON: Compare uCLL/mCLL networks
+# uCLL
+unmutated = [s for s in samples if s.mutated is False]
+# describe and intersect
+uG, ugraph, unodes = samples_to_networks(unmutated)
+# plot
+plot_graph_attributes(graph, nodes, os.path.join(plots_dir, "networks_individual_uCLL.attributes"))
+# save to disk
+ugraph.to_csv(os.path.join(data_dir, "networks_individual_uCLL.attributes.csv"), index=False)
+unodes.to_csv(os.path.join(data_dir, "networks_individual_uCLL.attributes.nodes.csv"), index=False)
+
+# write network to disk
+graph_to_json_d3(uG, os.path.join(data_dir, "networks_individual_uCLL.intersection.json"))
+
+# mCLL
+mutated = [s for s in samples if s.mutated is True]
+# describe and intersect
+mG, mgraph, mnodes = samples_to_networks(mutated)
+# plot
+plot_graph_attributes(graph, nodes, os.path.join(plots_dir, "networks_individual_uCLL.attributes"))
+# save to disk
+mgraph.to_csv(os.path.join(data_dir, "networks_individual_mCLL.attributes.csv"), index=False)
+mnodes.to_csv(os.path.join(data_dir, "networks_individual_mCLL.attributes.nodes.csv"), index=False)
+# write network to disk
+graph_to_json_d3(mG, os.path.join(data_dir, "networks_individual_mCLL.intersection.json"))
+
+# iCLL
+
+
+#
+
+
+# idea:
+
 # classify nodes into regulator/regulated
 # color in visualization
-
-# Compare uCLL/mCLL networks
