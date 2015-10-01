@@ -252,27 +252,34 @@ def describe_graph(G):
     """Graph description"""
 
     # GRAPH DESCRIPTION
-    graph_desc = list()
+    graph_desc = pd.Series()
     # n. nodes
-    G.number_of_nodes()
+    graph_desc["number_of_nodes"] = G.number_of_nodes()
     # n. edges
-    G.number_of_edges()
+    graph_desc["number_of_edges"] = G.number_of_edges()
     # n. of selfloops
+    graph_desc["number_of_selfloops"] = len(G.selfloop_edges())
 
     # density
-    nx.average_shortest_path_length(G)
-    nx.average_degree_connectivity(G)
-    nx.k_nearest_neighbors(G)
+    graph_desc["average_shortest_path_length"] = nx.average_shortest_path_length(G)
+    # connectivity
+    graph_desc.append(pd.Series(nx.degree_assortativity_coefficient(G), name="degree_assortativity_coefficient"))
+    graph_desc.append(pd.Series(nx.degree_pearson_correlation_coefficient(G), name="degree_pearson_correlation_coefficient"))
 
     # NODE DESCRIPTION
     node_desc = list()
     # n. of neighbours
-
+    node_desc.append(pd.Series(G.degree(), name="degree"))
+    node_desc.append(pd.Series(nx.average_neighbor_degree(G), name="average_neighbor_degree"))
     # n. of outgoing
-
+    outgoing = pd.Series(G.in_degree(), name="in_degree")
+    node_desc.append(outgoing)
     # n. of incoming
-
-    # ratio out/in
+    incoming = pd.Series(G.out_degree(), name="out_degree")
+    node_desc.append(incoming)
+    # fold change out/in
+    ratio = np.log2(outgoing + 1) - np.log2(incoming + 1)
+    node_desc.append(pd.Series(ratio, name="out_in_degree_fold_change"))
 
     # centrality
     # degree based
@@ -287,16 +294,6 @@ def describe_graph(G):
     node_desc.append(pd.Series(nx.katz_centrality_numpy(G), name="katz_centrality"))
     # load-based
     node_desc.append(pd.Series(nx.load_centrality(G), name="load_centrality"))
-
-    # nx.dispersion(G)  # find un/coordinated nodes
-
-    # Connectivity
-    # node_desc.append(pd.Series(nx.degree_assortativity_coefficient(G), name="degree_assortativity_coefficient"))
-    # node_desc.append(pd.Series(nx.degree_pearson_correlation_coefficient(G), name="degree_pearson_correlation_coefficient"))
-    # node_desc.append(pd.Series(nx.attribute_assortativity_coefficient(G, 'count'), name="attribute_assortativity_coefficient"))
-    # node_desc.append(pd.Series(nx.numeric_assortativity_coefficient(G, 'count'), name="numeric_assortativity_coefficient"))
-
-    node_desc.append(pd.Series(nx.average_neighbor_degree(G), name="average_neighbor_degree"))
 
     return (graph_desc, pd.DataFrame(node_desc).T)
 
@@ -341,25 +338,80 @@ for i, sample in enumerate(samples):
     G = create_graph(graph_file)
 
     # Describe network
-    df = describe_graph(G)
-    df["sample"] = sample.name
+    graph_desc, node_desc = describe_graph(G)
+    graph_desc.name = sample.name
+    node_desc["sample"] = sample.name
     if i == 0:
-        desc = df
+        graph = [graph_desc]
+        node = node_desc
     else:
-        desc = desc.append(df)
+        graph.append(graph_desc)
+        node = node.append(node_desc)
 
     # Intersect graphs, keeping weight from each
     if i == 0:
         master_graph = G
     else:
         master_graph = intersect_sum_weights(master_graph, G)
+graph = pd.DataFrame(graph)
 
+# save to disk
+graph.to_csv(os.path.join(data_dir, "networks_individual_attributes.csv"), index=False)
+node.to_csv(os.path.join(data_dir, "networks_individual_attributes.nodes.csv"), index=False)
+
+
+# INDIVIDUAL NETWORKS
+# Plot graph attributes
+graph['sample'] = graph.index
+
+# # all in one grid
+# df = pd.melt(graph, id_vars=['sample'])
+# g = sns.FacetGrid(df, col="variable", sharey=False, col_wrap=1)
+# g.map(sns.barplot, "sample", "value")
+
+# in stripplots
+g = sns.PairGrid(
+    graph.sort("number_of_nodes", ascending=False),
+    x_vars=graph.columns[:4], y_vars=["sample"],
+    size=10, aspect=.25)
+g.map(sns.stripplot, size=10, orient="h",
+      palette="Reds_r", edgecolor="gray")
+plt.savefig(os.path.join(plots_dir, "networks_individual_attributes.general.svg"), bbox_inches="tight")
+
+
+# Plot network description
+node['TF'] = node.index
+df = pd.melt(node, id_vars=['TF', 'sample'])
+# all values of all samples
+g = sns.FacetGrid(df, col="variable", sharey=False, col_wrap=3, margin_titles=True, size=4)
+g.map(sns.barplot, "TF", "value")
+plt.savefig(os.path.join(plots_dir, "networks_individual_attributes.nodes.svg"), bbox_inches="tight")
+
+# mean vs -std across samples, in a grid of variables
+# calculate mean across samples for each variable
+mean = df.groupby(["TF", "variable"]).aggregate(np.mean).reset_index()
+mean.columns = ["TF", "variable", "mean"]
+# calculate std across samples for each variable
+std = df.groupby(["TF", "variable"]).aggregate(np.std).reset_index()
+std.columns = ["TF", "variable", "std"]
+# merge both (mean, std)
+df2 = pd.merge(mean, std).dropna()
+# plot
+g = sns.FacetGrid(df2, col="variable", hue="TF", sharex=False, sharey=False, col_wrap=4, margin_titles=True)
+g.map(plt.scatter, "mean", "std")
+plt.savefig(os.path.join(plots_dir, "networks_individual_attributes.nodes.stats.svg"), bbox_inches="tight")
+
+
+# MERGED NETWORK
+# Average edge's weights
 G = average_weights(master_graph)
+# describe master graph
+all_graph, all_node = describe_graph(G)
 
 # write network to disk
 # this can be visualized with D3.js (e.g. http://bl.ocks.org/mbostock/4062045#index.html)
 json_data = json_graph.node_link_data(G)
-with open("/home/afr/data.json", "w") as handle:
+with open(os.path.join(data_dir, "networks_individual.intersection.json"), "w") as handle:
     json.dump(json_data, handle)
 
 # to read in:
@@ -370,37 +422,12 @@ with open("/home/afr/data.json", "w") as handle:
 nx.draw_networkx(
     G, pos=nx.spring_layout(G), alpha=.5,
     arrows=False,
-    #edge_color=[G[u][v]['weight'] for u, v in G.edges()],
+    edge_color=[G[u][v]['weight'] for u, v in G.edges()],
     edge_cmap=plt.get_cmap('gray_r')  # white to gray
 )
-
-# Plot network description
-# rank vs value for all samples, in a grid of variables
-desc['TF'] = desc.index
-df = pd.melt(desc, id_vars=['TF', 'sample'])
-ranks = desc.rank(numeric_only=True)
-ranks['TF'] = ranks.index
-ranks = pd.melt(ranks, id_vars=['TF'], value_name='rank')
-# merge values and ranks
-value_ranks = pd.merge(df, ranks)
-
-g = sns.FacetGrid(value_ranks, hue="sample", col="variable", col_wrap=3, margin_titles=True, size=4)
-g.map(plt.scatter, "rank", "value", color="#338844", edgecolor="white", s=50, lw=1)
-
-# mean vs -std across samples, in a grid of variables
-df.groupby(["TF", "variable"]).apply(np.mean)
-df.groupby(["TF", "variable"]).apply(np.std)
-
-
-g = sns.FacetGrid(value_ranks, col="variable", col_wrap=3, margin_titles=True, size=4)
-g.map(plt.scatter, "mean", "std", color="#338844", edgecolor="white", s=50, lw=1)
-
-
-#
-
 
 # Describe networks
 # classify nodes into regulator/regulated
 # color in visualization
 
-# Compare Networks
+# Compare uCLL/mCLL networks
