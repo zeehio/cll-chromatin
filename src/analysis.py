@@ -34,6 +34,7 @@ from collections import Counter
 pd.set_option("date_dayfirst", True)
 sns.set_style("whitegrid")
 sns.set_context("paper")
+sns.set_palette(sns.color_palette("colorblind"))
 
 
 def pickle_me(function):
@@ -787,7 +788,7 @@ def normalize_quantiles_r(array):
     return np.array(normq(array))
 
 
-def name_to_repr(name):
+def name_to_sample_id(name):
     return "_".join([name.split("_")[0]] + [name.split("_")[2]] + name.split("_")[3:4])
 
 
@@ -807,12 +808,13 @@ def name_to_sample_id(name):
 def samples_to_color(samples, method="mutation"):
     # dependent on ighv status
     if method == "mutation":
+        # This uses sns colorblind pallete
         colors = list()
         for sample in samples:
             if sample.mutated is True:
-                colors.append('yellow')
+                colors.append(sns.color_palette("colorblind")[0])  # blue
             elif sample.mutated is False:
-                colors.append('green')
+                colors.append(sns.color_palette("colorblind")[2])  # vermillion
             elif sample.mutated is None:
                 if sample.cellLine == "CLL":
                     colors.append('gray')
@@ -822,12 +824,12 @@ def samples_to_color(samples, method="mutation"):
     # unique color per patient
     elif method == "unique":
         # per patient
-        patients = set([sample.patientID for sample in samples])
+        patients = set(sample.patientID for sample in samples)
         color_dict = cm.Paired(np.linspace(0, 1, len(patients)))
-        color_dict = dict(zip(patients, colors))
+        color_dict = dict(zip(patients, color_dict))
         return [color_dict[sample.patientID] for sample in samples]
     # rainbow (unique color per sample)
-    elif method == "unique":
+    elif method == "unique_sample":
         return cm.Paired(np.linspace(0, 1, len(samples)))
     elif method == "gender":
         colors = list()
@@ -843,15 +845,19 @@ def samples_to_color(samples, method="mutation"):
                     colors.append('black')
         return colors
     elif method == "treatment":
-        drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR', 'Alemtuz']
+        drugs = ['Alemtuz', "Ibrutinib"]
         colors = list()
         for sample in samples:
             if sample.treatment_active is False and sample.relapse is False:
-                colors.append('dodgerblue')
+                colors.append('peru')  # untreated samples
+            elif sample.treatment_active is True and sample.treatment_type not in drugs:
+                colors.append('black')  # chemo
             elif sample.treatment_active is True and sample.treatment_type in drugs:
-                colors.append('peru')
+                colors.append('green')  # 2nd gen
+            elif sample.treatment_active is True and sample.treatment_type == "":
+                colors.append('grey')  # no info
             else:
-                colors.append('grey')
+                colors.append('grey')  # no info
         return colors
     elif method == "disease":
         colors = list()
@@ -860,11 +866,22 @@ def samples_to_color(samples, method="mutation"):
                 colors.append('#A6CEE3')
             elif sample.diagnosis_disease == "MBL":
                 colors.append('#F17047')
+            elif sample.diagnosis_disease == "SLL":
+                colors.append('#482115')
             else:
                 colors.append('grey')
         return colors
     else:
         raise ValueError("Method %s is not valid" % method)
+
+
+def all_sample_colors(samples, order=""):
+    return [
+        # samples_to_color(samples, "unique"),
+        samples_to_color(samples, "mutation"),
+        samples_to_color(samples, "treatment"),
+        samples_to_color(samples, "disease")
+    ]
 
 
 def annotate_igvh_mutations(samples, clinical):
@@ -1247,48 +1264,58 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
 
     # ANNOTATE
     # compute p-value, add to annotation
-    fold_change = list()
-    mean_a = list()
-    mean_b = list()
-    p_values = list()
-    for i in range(len(analysis.coverage_qnorm_annotated)):
-        # compute log2 fold-change
-        a = g1.ix[i].mean()
-        b = g2.ix[i].mean()
-        mean_a.append(a)
-        mean_b.append(b)
-        fold_change.append(np.log2(a / b))
-        # compute p-value
-        p_values.append(mannwhitneyu(g1.ix[i], g2.ix[i])[1])
-
-    # add to annotation
-    analysis.coverage_qnorm_annotated["_".join(["fold_change", feature])] = fold_change
-    analysis.coverage_qnorm_annotated["_".join(["mean", feature, str(group1)])] = mean_a
-    analysis.coverage_qnorm_annotated["_".join(["mean", feature, str(group2)])] = mean_b
-    # compute q values
-    q_values = pd.Series(multipletests(p_values, method='fdr_bh', alpha=0.05)[1])
-    analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] = p_values
-    analysis.coverage_qnorm_annotated["_".join(["q_value", feature])] = q_values
-    # save as csv
     csv = os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_mean_foldchange_pvalues.csv" % method)
-    analysis.coverage_qnorm_annotated[[
-        "_".join(["fold_change", feature]),
-        "_".join(["mean", feature, str(group1)]),
-        "_".join(["mean", feature, str(group2)]),
-        "_".join(["q_value", feature]),
-        "_".join(["p_value", feature])]].to_csv(csv, index=False)
+    if os.path.exists(csv) and not generate:
+        # load from csv
+        df = pd.read_csv(csv)
+        for col in df.columns:
+            analysis.coverage_qnorm_annotated[col] = df[col]
+    else:
+        fold_change = list()
+        mean_a = list()
+        mean_b = list()
+        p_values = list()
+        for i in range(len(analysis.coverage_qnorm_annotated)):
+            # compute log2 fold-change
+            a = g1.ix[i].mean()
+            b = g2.ix[i].mean()
+            mean_a.append(a)
+            mean_b.append(b)
+            fold_change.append(np.log2(a / b))
+            # compute p-value
+            p_values.append(mannwhitneyu(g1.ix[i], g2.ix[i])[1])
+
+        # add to annotation
+        analysis.coverage_qnorm_annotated["_".join(["fold_change", feature])] = fold_change
+        analysis.coverage_qnorm_annotated["_".join(["mean", feature, str(group1)])] = mean_a
+        analysis.coverage_qnorm_annotated["_".join(["mean", feature, str(group2)])] = mean_b
+        # compute q values
+        q_values = pd.Series(multipletests(p_values, method='fdr_bh', alpha=0.05)[1])
+        analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] = p_values
+        analysis.coverage_qnorm_annotated["_".join(["q_value", feature])] = q_values
+        # save as csv
+        analysis.coverage_qnorm_annotated[[
+            "_".join(["fold_change", feature]),
+            "_".join(["mean", feature, str(group1)]),
+            "_".join(["mean", feature, str(group2)]),
+            "_".join(["q_value", feature]),
+            "_".join(["p_value", feature])]].to_csv(csv, index=False)
+
     # pickle
     analysis.to_pickle()
 
     # VISUALIZE
     # visualize distribution of fold-change, p-values
     # A vs B
-    sns.jointplot(np.log2(1 + np.array(mean_a)), np.log2(1 + np.array(mean_b)))
+    sns.jointplot(
+        np.log2(1 + np.array(analysis.coverage_qnorm_annotated["_".join(["mean", feature, str(group1)])])),
+        np.log2(1 + np.array(analysis.coverage_qnorm_annotated["_".join(["mean", feature, str(group2)])])))
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_fold_change.svg" % method), bbox_inches="tight")
     plt.close('all')
     # volcano plot (logfoldchange vs logpvalue)
     sns.jointplot(
-        np.array(fold_change), -np.log10(np.array(p_values)),
+        np.array(analysis.coverage_qnorm_annotated["_".join(["fold_change", feature])]),
+        -np.log10(np.array(analysis.coverage_qnorm_annotated["_".join(["p_value", feature])])),
         stat_func=None, space=0, xlim=(-2.5, 2.5)
     )
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_volcano.svg" % method), bbox_inches="tight")
@@ -1309,30 +1336,49 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     significant_values = significant[[sample.name for sample in sel_samples]]
 
     # get nice sample IDs
-    significant_values.columns = map(name_to_repr, significant_values.columns)
+    significant_values.columns = map(name_to_sample_id, significant_values.columns)
 
-    # cluster samples and sites
-    # plot heatmap of differentialy open sites
-    sites_cluster = sns.clustermap(
-        significant_values,
-        cmap=plt.get_cmap('YlGn'),
-        annot=False,
-        standard_scale=0,
-        yticklabels=False,
-        col_colors=sample_colors
-    )
-    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.svg" % method), bbox_inches="tight")
-    plt.close('all')
-
+    # CHARACTERIZE SAMPLES
     # correlate samples on significantly different sites
-    corr_cluster = sns.clustermap(
+    samples_cluster = sns.clustermap(
         significant_values.corr(),
         method="complete",
         annot=False,
-        col_colors=sample_colors,
-        row_colors=sample_colors
+        col_colors=all_sample_colors(sel_samples),
+        row_colors=samples_to_color(sel_samples, "unique")
     )
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_correlation.svg" % method), bbox_inches="tight")
+    plt.close('all')
+
+    # classify samples based on cluster correlation
+    # assign a cluster to each sample
+    dendr = dendrogram(
+        samples_cluster.dendrogram_row.linkage,
+        color_threshold=18,
+        labels=significant_values.columns)
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_samples.dendrogram.svg" % method), bbox_inches="tight")
+
+    sample_cluster_colors = dict(zip(dendr['ivl'], dendr['color_list']))
+    # exchange with CLL colors
+    colors = {
+        "g": sns.color_palette("colorblind")[2],  # vermillion
+        "r": sns.color_palette("colorblind")[4],  # pastel
+        "c": sns.color_palette("colorblind")[0],  # blue
+        "b": "black"
+    }
+    sample_cluster_colors = {k: colors[v] for k, v in sample_cluster_colors.items()}
+
+    # run clustering again, label with cluster colors
+    cll_cluster_colors = [sample_cluster_colors[s] if s in sample_cluster_colors.keys() else "grey" for s in significant_values.columns]
+
+    samples_cluster = sns.clustermap(
+        significant_values.corr(),
+        method="complete",
+        annot=False,
+        col_colors=all_sample_colors(sel_samples),
+        row_colors=cll_cluster_colors
+    )
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_correlation.labels.svg" % method), bbox_inches="tight")
     plt.close('all')
 
     # pca
@@ -1343,7 +1389,26 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     output_pdf = os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.pca.svg" % method)
     pca_r(x_scaled, sample_colors, output_pdf)
 
-    # CHARACTERIZE
+    # pca with iCLL marks
+    output_pdf = os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.pca.3cluster_colors.svg" % method)
+    pca_r(x_scaled, cll_cluster_colors, output_pdf)
+
+    # CHARACTERIZE SITES
+
+    # cluster samples and sites
+    # plot heatmap of differentialy open sites
+    sites_cluster = sns.clustermap(
+        significant_values,
+        cmap=plt.get_cmap('YlGn'),
+        annot=False,
+        standard_scale=0,
+        yticklabels=False,
+        # get all color codes for samples as labels
+        col_colors=all_sample_colors(sel_samples)
+    )
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.svg" % method), bbox_inches="tight")
+    plt.close('all')
+
     # plot features of all sites
     significant['length'] = significant.apply(lambda x: x['end'] - x['start'], axis=1)
 
