@@ -21,11 +21,8 @@ import parmap
 import pysam
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import normalize
-from sklearn.decomposition import RandomizedPCA
-from sklearn.manifold import MDS
-from scipy.cluster.hierarchy import dendrogram
-from scipy.cluster.hierarchy import fcluster
+from sklearn.metrics import roc_curve
+from scipy.cluster.hierarchy import dendrogram, fcluster
 from scipy.stats import mannwhitneyu
 from statsmodels.sandbox.stats.multicomp import multipletests
 import cPickle as pickle
@@ -386,26 +383,6 @@ class Analysis(object):
             # therefore we need to calculate
             n = float(len([s for s in self.samples if (s.cellLine == "CLL" and s.technique == "ATAC-seq")]))
             self.rpkm_filtered = self.rpkm_annotated[self.rpkm_annotated['support'] > x / n]
-
-    def pca_analysis(self, data):
-        # PCA
-        # normalize
-        x = normalize(data)
-
-        # random PCA
-        self.pca = RandomizedPCA()
-        self.pca_fit = self.pca.fit(x).transform(x)
-
-    def mds_analysis(self, data):
-        # normalize, get *n* most variable sites
-        x = normalize(data)
-
-        # convert two components as we're plotting points in a two-dimensional plane
-        # "precomputed" because we provide a distance matrix
-        # we will also specify `random_state` so the plot is reproducible.
-        self.mds = MDS()  # n_components=2, dissimilarity="precomputed", random_state=1)
-
-        self.mds_fit = self.mds.fit_transform(x)
 
     def plot_peak_characteristics(self):
         # Loop at summary statistics:
@@ -1360,8 +1337,9 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
         labels=significant_values.columns)
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_samples.dendrogram.svg" % method), bbox_inches="tight")
 
-    sample_cluster_colors = dict(zip(significant_values.columns, fcluster(Z, 3, criterion="maxclust")))
-    # exchange with CLL colors
+    sample_cluster_labels = fcluster(Z, 2, criterion="maxclust")
+    sample_cluster_colors = dict(zip(significant_values.columns, sample_cluster_labels))
+    # get CLL colors based on clusters
     colors = {
         1: sns.color_palette("colorblind")[2],  # uCLL - vermillion
         2: sns.color_palette("colorblind")[4],  # iCLL - pastel
@@ -1373,11 +1351,10 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     cll_cluster_colors = [sample_cluster_colors[s] if s in sample_cluster_colors.keys() else "grey" for s in significant_values.columns]
 
     samples_cluster = sns.clustermap(
-        significant_values.corr(),
+        significant_values,
         method="complete",
         annot=False,
-        col_colors=all_sample_colors(sel_samples),
-        row_colors=cll_cluster_colors
+        col_colors=cll_cluster_colors,
     )
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_correlation.labels.svg" % method), bbox_inches="tight")
     plt.close('all')
@@ -1394,8 +1371,67 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     output_pdf = os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.pca.3cluster_colors.svg" % method)
     pca_r(x_scaled, cll_cluster_colors, output_pdf)
 
-    # CHARACTERIZE SITES
+    # Using chromatin features as CLL class predictors
+    # multiclass classification (uCLL/iCLL/mCLL)
+    from sklearn import svm
+    from sklearn.metrics import roc_curve, auc
+    from sklearn.cross_validation import train_test_split
+    from sklearn.preprocessing import label_binarize
+    from sklearn.multiclass import OneVsRestClassifier
 
+    sites_cluster = sns.clustermap(
+        significant_values,
+        standard_scale=0
+    )
+    Z = sites_cluster.dendrogram_col.linkage
+
+    # Import some data to play with
+    # get features and labels
+    x = significant_values.values  # returns a numpy array
+    X = normalize(x).T
+    y = fcluster(Z, 3, criterion="maxclust")
+
+    # Binarize the output
+    y = label_binarize(y, classes=[1, 2, 3])
+    n_classes = y.shape[1]
+
+    # shuffle and split training and test sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=.2, test_size=.8)  # you can vary this
+
+    # Learn to predict each class against the other
+    classifier = OneVsRestClassifier(svm.SVC(kernel='linear', probability=True))
+    y_score = classifier.fit(X_train, y_train).decision_function(X_test)
+
+    # Compute ROC curve and ROC area for each class
+    fpr = dict()
+    tpr = dict()
+    roc_auc = dict()
+    for i in range(n_classes):
+        fpr[i], tpr[i], _ = roc_curve(y_test[:, i], y_score[:, i])
+        roc_auc[i] = auc(fpr[i], tpr[i])
+
+    # Compute micro-average ROC curve and ROC area
+    fpr["micro"], tpr["micro"], _ = roc_curve(y_test.ravel(), y_score.ravel())
+    roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+
+    # Plot ROC curve
+    plt.figure()
+    plt.plot(fpr["micro"], tpr["micro"],
+             label='micro-average ROC curve (area = {0:0.2f})'
+                   ''.format(roc_auc["micro"]))
+    for i in range(n_classes):
+        plt.plot(fpr[i], tpr[i], label='ROC curve of class {0} (area = {1:0.2f})'
+                                       ''.format(i, roc_auc[i]))
+    plt.plot([0, 1], [0, 1], 'k--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Extension of ROC to multi-class')
+    plt.legend(loc="lower right")
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.OneVsRest.svg" % method), bbox_inches="tight")
+
+    # CHARACTERIZE SITES
     # cluster samples and sites
     # plot heatmap of differentialy open sites
     sites_cluster = sns.clustermap(
