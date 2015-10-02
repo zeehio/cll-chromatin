@@ -25,6 +25,7 @@ from sklearn.preprocessing import normalize
 from sklearn.decomposition import RandomizedPCA
 from sklearn.manifold import MDS
 from scipy.cluster.hierarchy import dendrogram
+from scipy.cluster.hierarchy import fcluster
 from scipy.stats import mannwhitneyu
 from statsmodels.sandbox.stats.multicomp import multipletests
 import cPickle as pickle
@@ -1315,7 +1316,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     # volcano plot (logfoldchange vs logpvalue)
     sns.jointplot(
         np.array(analysis.coverage_qnorm_annotated["_".join(["fold_change", feature])]),
-        -np.log10(np.array(analysis.coverage_qnorm_annotated["_".join(["p_value", feature])])),
+        -np.log10(np.array(analysis.coverage_qnorm_annotated["_".join(["q_value", feature])])),
         stat_func=None, space=0, xlim=(-2.5, 2.5)
     )
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_volcano.svg" % method), bbox_inches="tight")
@@ -1351,20 +1352,20 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     plt.close('all')
 
     # classify samples based on cluster correlation
+    Z = samples_cluster.dendrogram_row.linkage
     # assign a cluster to each sample
     dendr = dendrogram(
-        samples_cluster.dendrogram_row.linkage,
+        Z,
         color_threshold=18,
         labels=significant_values.columns)
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_samples.dendrogram.svg" % method), bbox_inches="tight")
 
-    sample_cluster_colors = dict(zip(dendr['ivl'], dendr['color_list']))
+    sample_cluster_colors = dict(zip(significant_values.columns, fcluster(Z, 3, criterion="maxclust")))
     # exchange with CLL colors
     colors = {
-        "g": sns.color_palette("colorblind")[2],  # vermillion
-        "r": sns.color_palette("colorblind")[4],  # pastel
-        "c": sns.color_palette("colorblind")[0],  # blue
-        "b": "black"
+        1: sns.color_palette("colorblind")[2],  # uCLL - vermillion
+        2: sns.color_palette("colorblind")[4],  # iCLL - pastel
+        3: sns.color_palette("colorblind")[0],  # mCLL - blue
     }
     sample_cluster_colors = {k: colors[v] for k, v in sample_cluster_colors.items()}
 
