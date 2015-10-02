@@ -21,7 +21,11 @@ import parmap
 import pysam
 import pandas as pd
 import numpy as np
-from sklearn.metrics import roc_curve
+from sklearn import svm
+from sklearn.cross_validation import train_test_split
+from sklearn.preprocessing import label_binarize
+from sklearn.multiclass import OneVsRestClassifier
+from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
 from scipy.cluster.hierarchy import dendrogram, fcluster
 from scipy.stats import mannwhitneyu
 from statsmodels.sandbox.stats.multicomp import multipletests
@@ -1373,12 +1377,6 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
 
     # Using chromatin features as CLL class predictors
     # multiclass classification (uCLL/iCLL/mCLL)
-    from sklearn import svm
-    from sklearn.metrics import roc_curve, auc
-    from sklearn.cross_validation import train_test_split
-    from sklearn.preprocessing import label_binarize
-    from sklearn.multiclass import OneVsRestClassifier
-
     sites_cluster = sns.clustermap(
         significant_values,
         standard_scale=0
@@ -1395,12 +1393,23 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     y = label_binarize(y, classes=[1, 2, 3])
     n_classes = y.shape[1]
 
-    # shuffle and split training and test sets
-    X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=.2, test_size=.8)  # you can vary this
+    # repeat n times
+    n = 1000
+    for i in range(n):
 
-    # Learn to predict each class against the other
-    classifier = OneVsRestClassifier(svm.SVC(kernel='linear', probability=True))
-    y_score = classifier.fit(X_train, y_train).decision_function(X_test)
+        # shuffle and split training and test sets
+        X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=.2, test_size=.8)  # you can vary this
+
+        # Learn to predict each class against the other
+        classifier = OneVsRestClassifier(svm.SVC(kernel='linear', probability=True))
+        y_score = classifier.fit(X_train, y_train).decision_function(X_test)
+
+        if i == 0:
+            y_all_test = y_test
+            y_all_scores = y_score
+        else:
+            y_all_test = np.concatenate([y_all_test, y_test])
+            y_all_scores = np.concatenate([y_all_scores, y_score])
 
     # Compute ROC curve and ROC area for each class
     fpr = dict()
@@ -1414,22 +1423,59 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     fpr["micro"], tpr["micro"], _ = roc_curve(y_test.ravel(), y_score.ravel())
     roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
 
-    # Plot ROC curve
-    plt.figure()
-    plt.plot(fpr["micro"], tpr["micro"],
-             label='micro-average ROC curve (area = {0:0.2f})'
-                   ''.format(roc_auc["micro"]))
+    # Compute Precision-Recall and plot curve
+    precision = dict()
+    recall = dict()
+    average_precision = dict()
     for i in range(n_classes):
-        plt.plot(fpr[i], tpr[i], label='ROC curve of class {0} (area = {1:0.2f})'
-                                       ''.format(i, roc_auc[i]))
-    plt.plot([0, 1], [0, 1], 'k--')
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title('Extension of ROC to multi-class')
-    plt.legend(loc="lower right")
-    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.OneVsRest.svg" % method), bbox_inches="tight")
+        precision[i], recall[i], _ = precision_recall_curve(y_test[:, i], y_score[:, i])
+        average_precision[i] = average_precision_score(y_test[:, i], y_score[:, i])
+
+    # Compute micro-average ROC curve and ROC area
+    precision["micro"], recall["micro"], _ = precision_recall_curve(y_test.ravel(), y_score.ravel())
+    average_precision["micro"] = average_precision_score(y_test, y_score, average="micro")
+
+    # Plot ROC and PRC curves
+    class_labels = ["uCLL", "iCLL", "mCLL"]
+    class_colors = [sns.color_palette("colorblind")[2], sns.color_palette("colorblind")[4], sns.color_palette("colorblind")[0]]
+    fig, axis = plt.subplots(1, 2, figsize=(12, 5))
+
+    # Plot ROC curve for each class
+    axis[0].plot(fpr["micro"], tpr["micro"], "--",
+                 color="grey",
+                 label='micro-average ROC curve (area = {0:0.2f})'
+                 .format(roc_auc["micro"]))
+    for i in range(n_classes):
+        axis[0].plot(fpr[i], tpr[i],
+                     color=class_colors[i],
+                     label='class {0} (area = {1:0.2f})'
+                     .format(class_labels[i], roc_auc[i]))
+    axis[0].plot([0, 1], [0, 1], 'k--')
+    axis[0].set_xlim([0.0, 1.0])
+    axis[0].set_ylim([0.0, 1.05])
+    axis[0].set_xlabel('False Positive Rate')
+    axis[0].set_ylabel('True Positive Rate')
+    axis[0].set_title('Extension of ROC to multi-class')
+    axis[0].legend(loc="lower right")
+
+    # Plot Precision-Recall curve for each class
+    axis[1].plot(recall["micro"], precision["micro"], "--",
+                 color="grey",
+                 label='micro-average (area = {0:0.2f})'
+                 .format(average_precision["micro"]))
+    for i in range(n_classes):
+        axis[1].plot(recall[i], precision[i],
+                     color=class_colors[i],
+                     label='class {0} (area = {1:0.2f})'
+                     .format(class_labels[i], average_precision[i]))
+    axis[1].set_xlim([0.0, 1.0])
+    axis[1].set_ylim([0.0, 1.05])
+    axis[1].set_xlabel('Recall')
+    axis[1].set_ylabel('Precision')
+    axis[1].set_title('Extension of PRC multi-class')
+    axis[1].legend(loc="lower right")
+
+    fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.OneVsRest.ROC_PRC.svg" % method), bbox_inches="tight")
 
     # CHARACTERIZE SITES
     # cluster samples and sites
