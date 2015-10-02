@@ -23,7 +23,7 @@ import pandas as pd
 import numpy as np
 from sklearn import svm
 from sklearn.cross_validation import train_test_split
-from sklearn.preprocessing import label_binarize
+from sklearn.preprocessing import normalize, label_binarize
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
 from scipy.cluster.hierarchy import dendrogram, fcluster
@@ -1394,7 +1394,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     n_classes = y.shape[1]
 
     # repeat n times
-    n = 100000
+    n = 5000
     for i in range(n):
         # shuffle and split training and test sets
         X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=.2, test_size=.8)  # you can vary this
@@ -1442,7 +1442,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     # Plot ROC curve for each class
     axis[0].plot(fpr["micro"], tpr["micro"], "--",
                  color="grey",
-                 label='micro-average ROC curve (area = {0:0.2f})'
+                 label='micro-average (area = {0:0.2f})'
                  .format(roc_auc["micro"]))
     for i in range(n_classes):
         axis[0].plot(fpr[i], tpr[i],
@@ -1450,7 +1450,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
                      label='class {0} (area = {1:0.2f})'
                      .format(class_labels[i], roc_auc[i]))
     axis[0].plot([0, 1], [0, 1], 'k--')
-    axis[0].set_xlim([0.0, 1.0])
+    axis[0].set_xlim([-0.05, 1.0])
     axis[0].set_ylim([0.0, 1.05])
     axis[0].set_xlabel('False Positive Rate')
     axis[0].set_ylabel('True Positive Rate')
@@ -1482,8 +1482,7 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     X1 = normalize(x).T
     y = fcluster(Z, 2, criterion="maxclust")
     # Binarize the output
-    y = label_binarize(y, classes=[1, 2])
-    n_classes = y.shape[1]
+    y = label_binarize(y, classes=[1, 2]).flatten()
 
     fractions = [1, 0.5, 0.25, .125, 0.0625, 0.03125]  # fraction of features to select
 
@@ -1498,13 +1497,13 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
         # subset starting with highest fold change or significance
 
         # repeat n times
-        n = 100000
+        n = 100
         for i in range(n):
             # shuffle and split training and test sets
             X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=.2, test_size=.8)  # you can vary this
 
             # Learn to predict each class against the other
-            classifier = OneVsRestClassifier(svm.SVC(kernel='linear', probability=True))
+            classifier = svm.SVC(kernel='linear', probability=True)
             y_score = classifier.fit(X_train, y_train).decision_function(X_test)
 
             if i == 0:
@@ -1515,46 +1514,27 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
                 y_all_scores = np.concatenate([y_all_scores, y_score])
 
         # Compute ROC curve and ROC area for each class
-        fpr = dict()
-        tpr = dict()
-        roc_auc = dict()
-        for i in range(n_classes):
-            fpr[i], tpr[i], _ = roc_curve(y_test[:, i], y_score[:, i])
-            roc_auc[i] = auc(fpr[i], tpr[i])
-
+        fpr, tpr, _ = roc_curve(y_test, y_score)
+        roc_auc = auc(fpr, tpr, reorder=True)
         # Compute Precision-Recall and plot curve
-        precision = dict()
-        recall = dict()
-        average_precision = dict()
-        for i in range(n_classes):
-            precision[i], recall[i], _ = precision_recall_curve(y_test[:, i], y_score[:, i])
-            average_precision[i] = average_precision_score(y_test[:, i], y_score[:, i])
+        precision, recall, _ = precision_recall_curve(y_test, y_score)
+        prc_auc = auc(y_test, y_score, reorder=True)
 
-        # Plot ROC curve for each class
-        for i in range(n_classes):
-            axis[0].plot(fpr[i], tpr[i],
-                         label='using {0} feature (area = {1:0.2f})'
-                         .format(size, roc_auc[i]))
-        axis[0].plot([0, 1], [0, 1], 'k--')
-        axis[0].set_xlim([0.0, 1.0])
-        axis[0].set_ylim([0.0, 1.05])
-        axis[0].set_xlabel('False Positive Rate')
-        axis[0].set_ylabel('True Positive Rate')
-        axis[0].set_title('Extension of ROC to multi-class')
-        axis[0].legend(loc="lower right")
+        axis[0].plot(fpr, tpr, label='ROC fold %d (n = {1}, area = {2:0.2f})'.format(f * 100, int(size), roc_auc))
+        axis[1].plot(precision, recall, label='ROC fold %d (n = {1}, area = {2:0.2f})'.format(f * 100, int(size), prc_auc))
 
-        for i in range(n_classes):
-            axis[1].plot(recall[i], precision[i],
-                         label='using {0} feature (area = {1:0.2f})'
-                         .format(class_labels[i], average_precision[i]))
-        axis[1].set_xlim([0.0, 1.0])
-        axis[1].set_ylim([0.0, 1.05])
-        axis[1].set_xlabel('Recall')
-        axis[1].set_ylabel('Precision')
-        axis[1].set_title('Extension of PRC multi-class')
-        axis[1].legend(loc="lower right")
+    axis[0].set_xlim([-0.05, 1.0])
+    axis[0].set_ylim([0.0, 1.05])
+    axis[0].set_xlabel('False Positive Rate')
+    axis[0].set_ylabel('True Positive Rate')
+    axis[0].legend(loc="lower right")
+    axis[1].set_xlim([-0.05, 1.0])
+    axis[1].set_ylim([0.0, 1.05])
+    axis[1].set_xlabel('Precision')
+    axis[1].set_ylabel('Recall')
+    axis[1].legend(loc="lower right")
 
-    fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.OneVsRest.ROC_PRC.svg" % method), bbox_inches="tight")
+    fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.OneVsRest.ROC_PRC.subset.svg" % method), bbox_inches="tight")
 
     # CHARACTERIZE SITES
     # cluster samples and sites
