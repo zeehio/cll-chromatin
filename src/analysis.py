@@ -1394,9 +1394,8 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     n_classes = y.shape[1]
 
     # repeat n times
-    n = 1000
+    n = 100000
     for i in range(n):
-
         # shuffle and split training and test sets
         X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=.2, test_size=.8)  # you can vary this
 
@@ -1474,6 +1473,86 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     axis[1].set_ylabel('Precision')
     axis[1].set_title('Extension of PRC multi-class')
     axis[1].legend(loc="lower right")
+
+    fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.OneVsRest.ROC_PRC.svg" % method), bbox_inches="tight")
+
+    # Get reduced numbers of features, train and predict
+    # get features and labels
+    x = significant_values.values  # returns a numpy array
+    X1 = normalize(x).T
+    y = fcluster(Z, 2, criterion="maxclust")
+    # Binarize the output
+    y = label_binarize(y, classes=[1, 2])
+    n_classes = y.shape[1]
+
+    fractions = [1, 0.5, 0.25, .125, 0.0625, 0.03125]  # fraction of features to select
+
+    # Plot ROC and PRC curves
+    fig, axis = plt.subplots(1, 2, figsize=(12, 5))
+
+    for f in fractions:
+        size = np.round(X1.shape[1] * f)
+        # subset X with random features
+        r = sorted(np.random.choice(range(X1.shape[1]), size=size, replace=False))
+        X = X1[:, r]
+        # subset starting with highest fold change or significance
+
+        # repeat n times
+        n = 100000
+        for i in range(n):
+            # shuffle and split training and test sets
+            X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=.2, test_size=.8)  # you can vary this
+
+            # Learn to predict each class against the other
+            classifier = OneVsRestClassifier(svm.SVC(kernel='linear', probability=True))
+            y_score = classifier.fit(X_train, y_train).decision_function(X_test)
+
+            if i == 0:
+                y_all_test = y_test
+                y_all_scores = y_score
+            else:
+                y_all_test = np.concatenate([y_all_test, y_test])
+                y_all_scores = np.concatenate([y_all_scores, y_score])
+
+        # Compute ROC curve and ROC area for each class
+        fpr = dict()
+        tpr = dict()
+        roc_auc = dict()
+        for i in range(n_classes):
+            fpr[i], tpr[i], _ = roc_curve(y_test[:, i], y_score[:, i])
+            roc_auc[i] = auc(fpr[i], tpr[i])
+
+        # Compute Precision-Recall and plot curve
+        precision = dict()
+        recall = dict()
+        average_precision = dict()
+        for i in range(n_classes):
+            precision[i], recall[i], _ = precision_recall_curve(y_test[:, i], y_score[:, i])
+            average_precision[i] = average_precision_score(y_test[:, i], y_score[:, i])
+
+        # Plot ROC curve for each class
+        for i in range(n_classes):
+            axis[0].plot(fpr[i], tpr[i],
+                         label='using {0} feature (area = {1:0.2f})'
+                         .format(size, roc_auc[i]))
+        axis[0].plot([0, 1], [0, 1], 'k--')
+        axis[0].set_xlim([0.0, 1.0])
+        axis[0].set_ylim([0.0, 1.05])
+        axis[0].set_xlabel('False Positive Rate')
+        axis[0].set_ylabel('True Positive Rate')
+        axis[0].set_title('Extension of ROC to multi-class')
+        axis[0].legend(loc="lower right")
+
+        for i in range(n_classes):
+            axis[1].plot(recall[i], precision[i],
+                         label='using {0} feature (area = {1:0.2f})'
+                         .format(class_labels[i], average_precision[i]))
+        axis[1].set_xlim([0.0, 1.0])
+        axis[1].set_ylim([0.0, 1.05])
+        axis[1].set_xlabel('Recall')
+        axis[1].set_ylabel('Precision')
+        axis[1].set_title('Extension of PRC multi-class')
+        axis[1].legend(loc="lower right")
 
     fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.OneVsRest.ROC_PRC.svg" % method), bbox_inches="tight")
 
