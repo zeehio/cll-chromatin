@@ -305,26 +305,6 @@ class Analysis(object):
         self.coverage.to_csv(os.path.join(self.data_dir, "cll_peaks.raw_coverage.tsv"), sep="\t", index=True)
 
     @pickle_me
-    def normalize_coverage(self):
-        # Normalize by feature length (Reads per kilobase)
-        rpk = self.coverage.apply(normalize_by_interval_length, axis=1)
-
-        # Normalize by library size - mapped reads (Reads per kilobase per million)
-        rpkm = rpk[[sample.name for sample in self.samples]].apply(normalize_by_library_size, args=(self.samples, ), axis=0)
-
-        # Save
-        self.rpkm = pd.concat([rpk[["chrom", "start", "end"]], rpkm], axis=1)
-
-        # calculate log
-        self.log_rpkm()
-
-        self.rpkm.to_csv(os.path.join(self.data_dir, "cll_peaks.rpkm.tsv"), sep="\t", index=False)
-
-    def log_rpkm(self):
-        # Log2 transform
-        self.rpkm[[sample.name for sample in self.samples]] = np.log2(1 + self.rpkm[[sample.name for sample in self.samples]])
-
-    @pickle_me
     def normalize_coverage_quantiles(self):
         # Normalize by quantiles
         to_norm = self.coverage.iloc[:, :len(self.samples)]
@@ -355,13 +335,13 @@ class Analysis(object):
         self.coverage_qnorm_annotated = pd.merge(
             self.coverage_qnorm_annotated,
             self.chrom_state_annotation[['chrom', 'start', 'end', 'chromatin_state']], on=['chrom', 'start', 'end'])
-        # add support to rpkm - this is added here because support was calculated prior to rpkms
+        # add support to coverage - this is added here because support was calculated prior to coverage
         self.coverage_qnorm_annotated = pd.merge(
             self.coverage_qnorm_annotated,
             self.support[['chrom', 'start', 'end', 'support']], on=['chrom', 'start', 'end'])
-        # calculate mean rpkm
+        # calculate mean coverage
         self.coverage_qnorm_annotated['mean'] = self.coverage_qnorm_annotated[[sample.name for sample in atacseq_samples]].apply(lambda x: np.mean(x), axis=1)
-        # calculate variance
+        # calculate coverage variance
         self.coverage_qnorm_annotated['variance'] = self.coverage_qnorm_annotated[[sample.name for sample in atacseq_samples]].apply(lambda x: np.var(x), axis=1)
         # calculate std deviation (sqrt(variance))
         self.coverage_qnorm_annotated['std_deviation'] = np.sqrt(self.coverage_qnorm_annotated['variance'])
@@ -375,18 +355,39 @@ class Analysis(object):
 
         self.coverage_qnorm_annotated.to_csv(os.path.join(self.data_dir, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t", index=False)
 
-    def filter_rpkm(self, x, method):
-        if method == "rpkm":
-            self.rpkm_filtered = self.rpkm_annotated[self.rpkm_annotated['mean'] > x]
-        elif method == "std":
-            # this assumes x represents x times the value
-            # of the standard deviation for a given peak
-            self.rpkm_filtered = self.rpkm_annotated[self.rpkm_annotated['std_deviation'] > x]
-        elif method == "support":
-            # this assumes x represents a minimum of samples
-            # therefore we need to calculate
-            n = float(len([s for s in self.samples if (s.cellLine == "CLL" and s.technique == "ATAC-seq")]))
-            self.rpkm_filtered = self.rpkm_annotated[self.rpkm_annotated['support'] > x / n]
+    def correlate_expression(self):
+        # get expression
+        expression_matrix = pd.read_csv(os.path.join("data", "CLL.geneReadcount.txt"), sep=" ")
+        expression_matrix.index = expression_matrix['geneid']
+        # get values from numbered samples (n=98)
+        expression_values = expression_matrix[[n for n in expression_matrix.columns if "X" == n[0]]]
+        # average across all samples
+        expression_mean = expression_values.apply(np.mean, axis=1).reset_index()
+        expression_mean.columns = ['ensembl_gene_id', 'rna']
+        # log expression
+        expression_mean['rna'] = np.log2(1 + expression_mean['rna'])
+        # get only expressed genes
+        # expression_mean = expression_mean[expression_mean['rna'] > 3]
+
+        # get oppenness
+        # get only autosomes
+        openness = self.coverage_qnorm_annotated[self.coverage_qnorm_annotated['chrom'].str.contains("chr[^X|Y]")]
+
+        # get closest gene info with ensembl ids
+        g = pd.read_csv("data/cll_peaks.gene_annotation.csv")
+        # get only genes within 5kb
+        g = g[g['distance'] < 5000]
+        openness = pd.merge(openness, g)
+        # average 'oppenness' for various sites for each gene
+        openness = openness[['mean', 'ensembl_gene_id']].groupby('ensembl_gene_id').aggregate(np.mean).reset_index()
+        openness.columns = ['ensembl_gene_id', 'atac']
+
+        # merge expression and openness
+        m = pd.merge(expression_mean, openness)
+
+        sns.jointplot(m['atac'], m['rna'], kind='kde')
+
+        # os.path.join("data", "ferreira_2012_gr.ighv_mutation_status.csv")
 
     def plot_peak_characteristics(self):
         # Loop at summary statistics:
@@ -466,8 +467,7 @@ class Analysis(object):
         fig.tight_layout()
         fig.savefig(os.path.join(self.plots_dir, "cll_peaks.chromatin_states.svg"), bbox_inches="tight")
 
-    def plot_rpkm(self):
-        # data = self.rpkm_annotated.copy()
+    def plot_coverage(self):
         data = self.coverage_qnorm_annotated.copy()
         # (rewrite to avoid putting them there in the first place)
         for variable in ['gene_name', 'genomic_region', 'chromatin_state']:
@@ -484,7 +484,6 @@ class Analysis(object):
                      'gene_name', 'genomic_region', 'chromatin_state', 'support'], var_name="sample", value_name="norm_counts")
 
         # Together in same violin plot
-        # rpkm
         sns.violinplot("genomic_region", "norm_counts", data=data_melted)
         plt.savefig(os.path.join(self.plots_dir, "norm_counts.per_genomic_region.violinplot.svg"), bbox_inches="tight")
         plt.close()
@@ -536,32 +535,6 @@ class Analysis(object):
         g = sns.FacetGrid(data_melted, col="chromatin_state", col_wrap=3)
         g.map(sns.distplot, "support", hist=False, rug=False)
         plt.savefig(os.path.join(self.plots_dir, "norm_counts.support.chromatin_state.distplot.svg"), bbox_inches="tight")
-        plt.close()
-
-        #
-
-        # Beware below!
-
-        # rpkm density
-        # all in one plot
-        for sample in self.samples:
-            sns.distplot(self.rpkm_annotated[[sample.name]], hist=False, label=sample.name)
-        # plt.legend()
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.distplot.all.svg"), bbox_inches="tight")
-        plt.close()
-
-        # separately in one grid
-        g = sns.FacetGrid(data_melted, col="sample", aspect=2, col_wrap=4)
-        g.map(sns.distplot, "rpkm", hist=False)
-        plt.xlim(0, 15)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.distplot.svg"), bbox_inches="tight")
-        plt.close()
-
-        # boxplot rpkm per sample
-        # Plot the orbital period with horizontal boxes
-        sns.boxplot(x="rpkm", y="sample", data=data_melted)
-        plt.xlim(0, 15)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.boxplot.svg"), bbox_inches="tight")
         plt.close()
 
     def plot_variance(self):
@@ -1832,7 +1805,7 @@ def main():
         # plot general peak set features
         analysis.plot_peak_characteristics()
         # Plot rpkm features across peaks/samples
-        analysis.plot_rpkm()
+        analysis.plot_coverage()
         analysis.plot_variance()
         analysis.plot_sample_correlations()
         # Observe exponential fit to the coeficient of variation
