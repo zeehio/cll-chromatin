@@ -1,10 +1,7 @@
 .DEFAULT_GOAL := all
 
 requirements:
-	pip install https://github.com/epigen/pipelines.git
-
-	# python stuff:
-	pip install numpy pandas scipy pysam pybedtools matplotlib seaborn parmap sklearn statsmodels
+	pip install -r requirements.txt
 
 	# R stuff:
 	# lola seq2pathway
