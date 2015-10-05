@@ -3,13 +3,13 @@
 <style>
 
 .node {
-  stroke: #fff;
-  stroke-width: 1.5px;
+    stroke: #fff;
 }
 
 .link {
-  stroke: #999;
-  stroke-opacity: .6;
+    fill: none;
+    stroke: #666;
+    stroke-width: 1.5px;
 }
 
 </style>
@@ -44,7 +44,7 @@ var svg = d3.select("body").append("svg")
 var zoomfactor = 1;
 
 var zoomlistener = d3.behavior.zoom()
-.on("zoom", redraw);
+    .on("zoom", redraw);
 
 d3.select(".zoomin").on("click", function (){
     zoomfactor = zoomfactor + 0.2;
@@ -57,8 +57,8 @@ d3.select(".zoomout").on("click", function (){
 });
 
 function redraw() {
-  console.log("here", d3.event.translate, d3.event.scale);
-  g.attr("transform","translate(" + d3.event.translate + ")" + " scale(" + d3.event.scale + ")"); 
+    console.log("here", d3.event.translate, d3.event.scale);
+    g.attr("transform","translate(" + d3.event.translate + ")" + " scale(" + d3.event.scale + ")"); 
 } 
 
 d3.json(data, function(error, graph) {
@@ -69,10 +69,24 @@ d3.json(data, function(error, graph) {
         .links(graph.links)
         .start();
 
+    svg.append("svg:defs").selectAll("marker")
+            .data(["end"])      // Different link/path types can be defined here
+        .enter().append("svg:marker")    // This section adds in the arrows
+            .attr("id", String)
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 15)
+            .attr("refY", -1.5)
+            .attr("markerWidth", 5)
+            .attr("markerHeight", 5)
+            .attr("orient", "auto")
+        .append("svg:path")
+            .attr("d", "M0,-5L10,0L0,5");
+
     var link = svg.selectAll(".link")
         .data(graph.links)
         .enter().append("line")
         .attr("class", "link")
+        .attr("marker-end", "url(#end)")
         .style("stroke-width", function(d) { return d.weight / 100; });
 
     var nodes = svg.selectAll(".node")
