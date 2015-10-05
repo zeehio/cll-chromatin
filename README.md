@@ -1,7 +1,7 @@
 cll-patients
 ============
 
-# Repository organization
+## Repository organization
 
 A basic review of CLL literature can be found in `/metadata/literature/`.
 
@@ -10,7 +10,7 @@ Clinical, wetlab and sequenced sample annotations are in `/metadata`.
 Code used in the analysis is in `/src`
 
 ### Data
-Cohort clinical data: [CSV](metadata/patient_clinical_annotation.csv)
+Cohort clinical data: [CSV](metadata/clinical_annotation.csv)
 
 See annotation sheet here: [CSV](metadata/sequencing_sample_annotation.csv)
 
@@ -28,6 +28,15 @@ As defined in [`pipelines`](https://github.com/afrendeiro/pipelines):
 
 
 # Analysis
+
+## Reproduce the analysis
+
+1. Clone the repository: `git clone git@github.com:epigen/cll-patients.git`
+2. Install required software for the analysis:`make requirements`
+3. Install required software for the analysis: `make preprocessing`
+4. Get external files: `make external_files`
+5. Run the analysis: `make analysis`
+
 
 ### To-do list
 #### 1
@@ -85,3 +94,12 @@ As defined in [`pipelines`](https://github.com/afrendeiro/pipelines):
     + http://www.nature.com/nmeth/journal/v12/n5/full/nmeth.3326.html
     + http://biorxiv.org/content/early/2015/04/30/018788
     + enrichment in GWAS variants
+
+# Manuscript
+The manuscript is written in [scholarly markdown](http://scholarlymarkdown.com/), therefore you need [Scholdoc](https://github.com/timtylin/scholdoc).
+
+To render the pdf version of the manuscript, run:
+```
+make manuscript
+```
+this requires in general a full latex installation.

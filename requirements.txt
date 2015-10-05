@@ -1,0 +1,13 @@
+-e git://github.com/afrendeiro/pipelines.git#egg=pipelines
+argparse
+matplotlib
+seaborn
+multiprocessing
+pybedtools
+parmap
+pysam
+pandas
+numpy
+sklearn
+scipy
+statsmodels
