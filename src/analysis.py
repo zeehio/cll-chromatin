@@ -378,6 +378,9 @@ class Analysis(object):
         # get only genes within 5kb
         g = g[g['distance'] < 5000]
         openness = pd.merge(openness, g)
+        # weight atac signal with distance
+        # openness['weighted_mean'] = openness.apply(lambda x: x['mean'] * np.exp(-x['distance'] / 1000.), axis=1)
+
         # average 'oppenness' for various sites for each gene
         openness = openness[['mean', 'ensembl_gene_id']].groupby('ensembl_gene_id').aggregate(np.mean).reset_index()
         openness.columns = ['ensembl_gene_id', 'atac']
@@ -385,7 +388,11 @@ class Analysis(object):
         # merge expression and openness
         m = pd.merge(expression_mean, openness)
 
+        # plot
+        sns.jointplot(m['atac'], m['rna'], kind='scatter', s=3, linewidth=1, alpha=.3)
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.scatter.svg"), bbox_inches="tight")
         sns.jointplot(m['atac'], m['rna'], kind='kde')
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.kde.svg"), bbox_inches="tight")
 
         # os.path.join("data", "ferreira_2012_gr.ighv_mutation_status.csv")
 
@@ -741,6 +748,10 @@ def normalize_quantiles_r(array):
     robjects.r('require("preprocessCore")')
     normq = robjects.r('normalize.quantiles')
     return np.array(normq(array))
+
+
+def name_to_repr(name):
+    return "_".join([name.split("_")[0]] + [name.split("_")[2]] + name.split("_")[3:4])
 
 
 def name_to_sample_id(name):
