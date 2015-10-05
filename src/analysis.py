@@ -778,9 +778,9 @@ def samples_to_color(samples, method="mutation"):
         colors = list()
         for sample in samples:
             if sample.mutated is True:
-                colors.append(sns.color_palette("colorblind")[0])  # blue
+                colors.append(sns.color_palette("colorblind")[0])  # blue #0072b2
             elif sample.mutated is False:
-                colors.append(sns.color_palette("colorblind")[2])  # vermillion
+                colors.append(sns.color_palette("colorblind")[2])  # vermillion #d55e00
             elif sample.mutated is None:
                 if sample.cellLine == "CLL":
                     colors.append('gray')
@@ -1296,6 +1296,52 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     # SAVE AS BED
     bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.clustering_sites.bed" % method)
     significant[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
+
+    # CORRELATE WITH EXPRESSION
+    # Correlate fold-change with expression
+    # read in uCLL/mCLL info
+    patients = pd.read_csv(os.path.join("data", "ferreira_2012_gr.ighv_mutation_status.csv"), dtype=str)
+    # get expression
+    expression_matrix = pd.read_csv(os.path.join("data", "CLL.geneReadcount.txt"), sep=" ")
+    expression_matrix.index = expression_matrix['geneid']
+    # get values from numbered samples (n=98)
+    unmut = patients.loc[patients['ighv_status'] == "UNMUT", "patient_id"]
+    unmut_expression = expression_matrix[[n for n in expression_matrix.columns for p in unmut if p in n]].apply(lambda x: np.log2(1 + np.mean(x)), axis=1).reset_index()
+    unmut_expression.columns = ['ensembl_gene_id', 'uCLL']
+
+    mut = patients.loc[patients['ighv_status'] == "MUT", "patient_id"]
+    mut_expression = expression_matrix[[n for n in expression_matrix.columns for p in mut if p in n]].apply(lambda x: np.log2(1 + np.mean(x)), axis=1).reset_index()
+    mut_expression.columns = ['ensembl_gene_id', 'mCLL']
+
+    expression = pd.merge(unmut_expression, mut_expression)
+
+    fig, axis = plt.subplots(2, figsize=(4, 10))
+    # get ensembl ids
+    g = pd.read_csv("data/cll_peaks.gene_annotation.csv")
+    openness = pd.merge(significant, g)
+    openness = openness[openness['distance'] < 50000]
+
+    # get significant positive
+    pos = openness[openness['fold_change_mutated'] > 0]
+    # merge with expression
+    pos = pd.melt(pd.merge(pos, expression)[['uCLL', 'mCLL']])
+    sns.boxplot(x="variable", y="value", data=pos, ax=axis[0])  # , color=["#0072b2", "#d55e00"])
+    # Add in points to show each observation
+    sns.stripplot(x="variable", y="value", data=pos, jitter=True, ax=axis[0])
+
+    # get significant positive
+    neg = openness[openness['fold_change_mutated'] < 0]
+    # merge with expression
+    neg = pd.melt(pd.merge(neg, expression)[['uCLL', 'mCLL']])
+    sns.boxplot(x="variable", y="value", data=neg, ax=axis[1])  # , color=["#0072b2", "#d55e00"])
+    # Add in points to show each observation
+    sns.stripplot(x="variable", y="value", data=neg, jitter=True, ax=axis[1])
+
+    axis[0].set_title("Genes near differential regions upregulated in mCLL")
+    axis[0].set_ylabel("mean log2(1 + count)")
+    axis[1].set_title("Genes near differential regions upregulated in uCLL")
+    axis[1].set_ylabel("mean log2(1 + count)")
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.expression_correlation.boxplot.svg" % method), bbox_inches="tight")
 
     # EXPLORE
     # get normalized counts in significant sites only for CLL samples
