@@ -5,7 +5,6 @@ Determine number of mitochondrial reads.
 Determine what percentage of the total number of duplicate reads is explained by the mitochondrial reads.
 """
 
-import yaml
 import os
 from pipelines.models import Project, ATACseqSample
 from pipelines import toolkit as tk
@@ -17,12 +16,10 @@ import seaborn as sns
 
 sns.set(style="whitegrid")
 
-
-# Read configuration file
-with open("config.yaml", 'r') as handle:
-    config = yaml.load(handle)
-dataDir = os.path.join(config["paths"]["parent"], config["projectname"], "data")
-resultsDir = os.path.join(config["paths"]["parent"], config["projectname"], "results", "plots")
+# Get path configuration
+data_dir = os.path.join('.', "data")
+results_dir = os.path.join('.', "results")
+plots_dir = os.path.join(results_dir, "plots")
 
 # Start project
 prj = Project("cll-patients")
@@ -30,11 +27,22 @@ prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
 
 # Select ATAC-seq samples
-samples = [s for s in prj.samples if type(s) == ATACseqSample and s.cellLine == "CLL"]
+samples_to_exclude = [
+    'CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19',
+    'CLL_ATAC-seq_5186_1-5-57350_ATAC17-4_hg19',
+    'CLL_ATAC-seq_4784_1-5-52817_ATAC17-6_hg19',
+    'CLL_ATAC-seq_981_1-5-42480_ATAC16-6_hg19',
+    'CLL_ATAC-seq_5277_1-5-57269_ATAC17-8_hg19',
+    'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19',
+    'CLL_ATAC-seq_5147_1-5-48105_ATAC17-2_hg19',
+    'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19']
+
+samples = [s for s in prj.samples if type(s) == ATACseqSample and s.cellLine == "CLL" and s.name not in samples_to_exclude]
 
 
 # GET DUPLICATES IN MITOCHONDRIAL GENOME ONLY
 # Submit job marking duplicates for each sample
+
 for sample in samples:
     dupsLog = os.path.join(sample.dirs.sampleRoot, sample.name + ".dupLog.txt")
 
@@ -95,4 +103,4 @@ for i, ax in enumerate(g.axes.flat):
 sns.despine(left=True, bottom=True)
 
 # save plot
-plt.savefig(os.path.join(resultsDir, "mitochondria_duplicates.pdf"), bbox_inches="tight")
+plt.savefig(os.path.join(results_dir, "mitochondria_duplicates.pdf"), bbox_inches="tight")
