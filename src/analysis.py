@@ -1203,6 +1203,64 @@ def meme(input_fasta, output_dir):
     return cmd
 
 
+def classify_samples(analysis):
+    """
+    Classify samples into uCLL/mCLL.
+    """
+    from sklearn import cross_validation
+
+    sel_samples = [s for s in analysis.samples if type(s.mutated) is bool]
+
+    # ALL REGIONS
+    matrix = analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]]
+
+    # BINARY CLASSIFICATION
+    # get features and labels
+    X = normalize(matrix).T
+    y = np.array([s.mutated for s in sel_samples])
+
+    loo = cross_validation.LeaveOneOut(len(X))
+
+    for i, (train_index, test_index) in enumerate(loo):
+        X_train, X_test = X[train_index], X[test_index]
+        y_train, y_test = y[train_index], y[test_index]
+
+        # Train, predict
+        classifier = svm.SVC(kernel='linear', probability=True)
+        y_score = classifier.fit(X_train, y_train).decision_function(X_test)
+
+        if i == 0:
+            y_all_test = y_test
+            y_all_scores = y_score
+        else:
+            y_all_test = np.concatenate([y_all_test, y_test])
+            y_all_scores = np.concatenate([y_all_scores, y_score])
+
+    # Compute ROC curve and ROC area for each class
+    fpr, tpr, _ = roc_curve(y_all_test, y_all_scores)
+    roc_auc = auc(fpr, tpr, reorder=True)
+    # Compute Precision-Recall and plot curve
+    precision, recall, _ = precision_recall_curve(y_all_test, y_all_scores)
+    prc_auc = average_precision_score(y_all_test, y_all_scores)
+
+    # Plot ROC and PRC curves
+    fig, axis = plt.subplots(1, 2, figsize=(12, 5))
+    axis[0].plot(fpr, tpr, label='ROC (area = {0:0.2f})'.format(roc_auc))
+    axis[1].plot(precision, recall, label='PRC (area = {0:0.2f})'.format(prc_auc))
+    axis[0].set_xlim([-0.05, 1.0])
+    axis[0].set_ylim([0.0, 1.05])
+    axis[0].set_xlabel('False Positive Rate')
+    axis[0].set_ylabel('True Positive Rate')
+    axis[0].legend(loc="lower right")
+    axis[1].set_xlim([-0.05, 1.0])
+    axis[1].set_ylim([0.0, 1.05])
+    axis[1].set_xlabel('Precision')
+    axis[1].set_ylabel('Recall')
+    axis[1].legend(loc="lower right")
+
+    fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.loocv.ROC_PRC.svg" % "mutation"), bbox_inches="tight")
+
+
 def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, generate=True):
     """
     Analysis between two groups of samples.
