@@ -1778,6 +1778,7 @@ def classify_samples(analysis):
     Classify samples into uCLL/mCLL.
     """
     from sklearn import cross_validation
+    from sklearn.ensemble import RandomForestClassifier
 
     sel_samples = [s for s in analysis.samples if type(s.mutated) is bool]
 
@@ -1797,27 +1798,29 @@ def classify_samples(analysis):
         y_train, y_test = y[train_index], y[test_index]
 
         # Train, predict
-        classifier = svm.SVC(kernel='linear', probability=True)
-        y_score = classifier.fit(X_train, y_train).decision_function(X_test)
+        classifier = RandomForestClassifier(n_estimators=100)
+        y_score = classifier.fit(X_train, y_train).predict_proba(X_test)
 
         if i == 0:
             y_all_test = y_test
             y_all_scores = y_score
+            importance = classifier.feature_importances_
         else:
-            y_all_test = np.concatenate([y_all_test, y_test])
-            y_all_scores = np.concatenate([y_all_scores, y_score])
+            y_all_test = np.vstack([y_all_test, y_test])
+            y_all_scores = np.vstack([y_all_scores, y_score])
+            importance = np.vstack([importance, classifier.feature_importances_])
 
     # Compute ROC curve and ROC area for each class
-    fpr, tpr, _ = roc_curve(y_all_test, y_all_scores)
+    fpr, tpr, _ = roc_curve(y_all_test, y_all_scores[:, 1])
     roc_auc = auc(fpr, tpr, reorder=True)
-    # Compute Precision-Recall and plot curve
-    precision, recall, _ = precision_recall_curve(y_all_test, y_all_scores)
-    prc_auc = average_precision_score(y_all_test, y_all_scores)
+    # Compute Precision-Recall and average precision
+    precision, recall, _ = precision_recall_curve(y_all_test, y_all_scores[:, 1])
+    aps = average_precision_score(y_all_test, y_all_scores[:, 1])
 
     # Plot ROC and PRC curves
     fig, axis = plt.subplots(1, 2, figsize=(12, 5))
     axis[0].plot(fpr, tpr, label='ROC (area = {0:0.2f})'.format(roc_auc))
-    axis[1].plot(precision, recall, label='PRC (area = {0:0.2f})'.format(prc_auc))
+    axis[1].plot(precision, recall, label='PRC (average precision = {0:0.2f})'.format(aps))
     axis[0].set_xlim([-0.05, 1.0])
     axis[0].set_ylim([0.0, 1.05])
     axis[0].set_xlabel('False Positive Rate')
@@ -1829,120 +1832,27 @@ def classify_samples(analysis):
     axis[1].set_ylabel('Recall')
     axis[1].legend(loc="lower right")
 
-    fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.loocv.ROC_PRC.svg" % "mutation"), bbox_inches="tight")
+    fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.ROC_PRC.svg" % "mutation"), bbox_inches="tight")
 
-    # 3-WAY CLASSIFICATION
+    # Get most informative features
+    # average feature importance across iterations
+    mean_importance = importance.mean(axis=0)
+    # get n top features
+    n = 500
+    x = X[:, np.argsort(mean_importance)[-n:]].T
+    sites_cluster = sns.clustermap(x, standard_scale=0)
+    plt.close('all')
+
     # Get labels from clusters
-    # get significant sites
-    feature = "mutated"
-    method = "mutation"
-    csv = os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_mean_foldchange_pvalues.csv" % method)
-    # load from csv
-    df = pd.read_csv(csv)
-    for col in df.columns:
-        analysis.coverage_qnorm_annotated[col] = df[col]
-
-    significant = analysis.coverage_qnorm_annotated[
-        (analysis.coverage_qnorm_annotated["_".join(["p_value", feature])] < 0.05) &
-        (abs(analysis.coverage_qnorm_annotated["_".join(["fold_change", feature])]) > 1)
-    ]
-    # cluster samples on these
-    sites_cluster = sns.clustermap(
-        significant[[s.name for s in sel_samples]],
-        standard_scale=0
-    )
     Z = sites_cluster.dendrogram_col.linkage
-    clusters = fcluster(Z, 3, criterion="maxclust")
+    clusters = fcluster(Z, 4, criterion="maxclust")
+    cluster_colors = dict(zip(np.unique(clusters), sns.color_palette("colorblind")))
+    colors = [cluster_colors[c] for c in clusters]
 
-    # Get features (all)
-    X = normalize(matrix).T
-    # get labels - binarize classes
-    y = label_binarize(clusters, classes=[1, 2, 3])
-    n_classes = y.shape[1]
-
-    loo = cross_validation.LeaveOneOut(len(X))
-
-    for i, (train_index, test_index) in enumerate(loo):
-        print(i)
-        X_train, X_test = X[train_index], X[test_index]
-        y_train, y_test = y[train_index], y[test_index]
-
-        # Train, predict
-        classifier = OneVsRestClassifier(svm.SVC(kernel='linear', probability=True))
-        y_score = classifier.fit(X_train, y_train).decision_function(X_test)
-
-        if i == 0:
-            y_all_test = y_test
-            y_all_scores = y_score
-        else:
-            y_all_test = np.concatenate([y_all_test, y_test])
-            y_all_scores = np.concatenate([y_all_scores, y_score])
-
-    # Compute ROC curve and ROC area for each class
-    fpr = dict()
-    tpr = dict()
-    roc_auc = dict()
-    for i in range(n_classes):
-        fpr[i], tpr[i], _ = roc_curve(y_all_test[:, i], y_all_scores[:, i])
-        roc_auc[i] = auc(fpr[i], tpr[i])
-
-    # Compute micro-average ROC curve and ROC area
-    fpr["micro"], tpr["micro"], _ = roc_curve(y_all_test.ravel(), y_all_scores.ravel())
-    roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
-
-    # Compute Precision-Recall and plot curve
-    precision = dict()
-    recall = dict()
-    average_precision = dict()
-    for i in range(n_classes):
-        precision[i], recall[i], _ = precision_recall_curve(y_all_test[:, i], y_all_scores[:, i])
-        average_precision[i] = average_precision_score(y_all_test[:, i], y_all_scores[:, i])
-
-    # Compute micro-average ROC curve and ROC area
-    precision["micro"], recall["micro"], _ = precision_recall_curve(y_all_test.ravel(), y_all_scores.ravel())
-    average_precision["micro"] = average_precision_score(y_all_test, y_all_scores, average="micro")
-
-    # Plot ROC and PRC curves
-    class_labels = ["uCLL", "iCLL", "mCLL"]
-    class_colors = [sns.color_palette("colorblind")[2], sns.color_palette("colorblind")[4], sns.color_palette("colorblind")[0]]
-    fig, axis = plt.subplots(1, 2, figsize=(12, 5))
-
-    # Plot ROC curve for each class
-    axis[0].plot(fpr["micro"], tpr["micro"], "--",
-                 color="grey",
-                 label='micro-average (area = {0:0.2f})'
-                 .format(roc_auc["micro"]))
-    for i in range(n_classes):
-        axis[0].plot(fpr[i], tpr[i],
-                     color=class_colors[i],
-                     label='class {0} (area = {1:0.2f})'
-                     .format(class_labels[i], roc_auc[i]))
-    axis[0].plot([0, 1], [0, 1], 'k--')
-    axis[0].set_xlim([-0.05, 1.0])
-    axis[0].set_ylim([0.0, 1.05])
-    axis[0].set_xlabel('False Positive Rate')
-    axis[0].set_ylabel('True Positive Rate')
-    axis[0].set_title('Extension of ROC to multi-class')
-    axis[0].legend(loc="lower right")
-
-    # Plot Precision-Recall curve for each class
-    axis[1].plot(recall["micro"], precision["micro"], "--",
-                 color="grey",
-                 label='micro-average (area = {0:0.2f})'
-                 .format(average_precision["micro"]))
-    for i in range(n_classes):
-        axis[1].plot(recall[i], precision[i],
-                     color=class_colors[i],
-                     label='class {0} (area = {1:0.2f})'
-                     .format(class_labels[i], average_precision[i]))
-    axis[1].set_xlim([0.0, 1.0])
-    axis[1].set_ylim([0.0, 1.05])
-    axis[1].set_xlabel('Recall')
-    axis[1].set_ylabel('Precision')
-    axis[1].set_title('Extension of PRC multi-class')
-    axis[1].legend(loc="lower right")
-
-    fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.3way.loocv.ROC_PRC.svg" % "mutation"), bbox_inches="tight")
+    # plot clustered heatmap with cluster labels
+    sites_cluster = sns.clustermap(x, standard_scale=0, col_colors=colors)
+    fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.svg" % "mutation"), bbox_inches="tight")
+    plt.close('all')
 
 
 def main():
