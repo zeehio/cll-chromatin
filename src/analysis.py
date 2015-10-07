@@ -1780,7 +1780,12 @@ def classify_samples(analysis):
     from sklearn import cross_validation
     from sklearn.ensemble import RandomForestClassifier
 
+    method = "mutation"
+
+    samples = [s for s in analysis.samples if s.cellLine == "CLL"]
     sel_samples = [s for s in analysis.samples if type(s.mutated) is bool]
+
+    cmap = sns.cubehelix_palette(8, start=.5, rot=-.75, as_cmap=True)
 
     # ALL REGIONS
     matrix = analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]]
@@ -1831,27 +1836,75 @@ def classify_samples(analysis):
     axis[1].set_xlabel('Precision')
     axis[1].set_ylabel('Recall')
     axis[1].legend(loc="lower right")
-
     fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.ROC_PRC.svg" % "mutation"), bbox_inches="tight")
 
+    # Display training and prediction of pre-labeled samples of most informative features:
     # Get most informative features
+    matrix = analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]]
     # average feature importance across iterations
     mean_importance = importance.mean(axis=0)
-    # get n top features
-    n = 500
-    x = X[:, np.argsort(mean_importance)[-n:]].T
-    sites_cluster = sns.clustermap(x, standard_scale=0)
+    # get important features
+    # n = 500; x = matrix.loc[np.argsort(mean_importance)[-n:], :] # get n top features
+    # or
+    x = matrix.loc[[i for i, j in enumerate(mean_importance > 0.0001) if j == True], :]  # get features on the tail of the importance distribution
+    sns.clustermap(
+        x,
+        cmap=cmap,
+        standard_scale=0,
+        col_colors=samples_to_color(sel_samples, "mutation"),
+        yticklabels=False)
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.svg" % "mutation"), bbox_inches="tight")
     plt.close('all')
 
-    # Get labels from clusters
+    # Display most informative features for ALL samples:
+    matrix = analysis.coverage_qnorm_annotated[[s.name for s in samples]]
+    # get important features
+    x = matrix.loc[[i for i, j in enumerate(mean_importance > 0.0001) if j == True], :]  # get features on the tail of the importance distribution
+
+    # get colors for each cluster
+    # cluster all samples first
+    sites_cluster = sns.clustermap(x, standard_scale=0)
+    # get cluster labels
     Z = sites_cluster.dendrogram_col.linkage
-    clusters = fcluster(Z, 4, criterion="maxclust")
+    clusters = fcluster(Z, 5, criterion="maxclust")
+    # get cluster colors
     cluster_colors = dict(zip(np.unique(clusters), sns.color_palette("colorblind")))
     colors = [cluster_colors[c] for c in clusters]
 
-    # plot clustered heatmap with cluster labels
-    sites_cluster = sns.clustermap(x, standard_scale=0, col_colors=colors)
-    fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.svg" % "mutation"), bbox_inches="tight")
+    # cluster this time to show sample labels and cluster labels
+    sns.clustermap(
+        x,
+        cmap=cmap,
+        standard_scale=0,
+        col_colors=all_sample_colors(samples) + [colors],
+        yticklabels=False)
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_labels.svg" % "mutation"), bbox_inches="tight")
+    plt.close('all')
+
+    # REGIONS
+    # Save as bed
+    bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % method)
+    analysis.coverage_qnorm_annotated.loc[x.index, ['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
+
+    # Region characterization
+    # plot chromosome distribution of regions
+    chrom_count = Counter(analysis.coverage_qnorm_annotated.loc[x.index, ['chrom', 'start', 'end']].chrom)
+    chrom_count = np.array(sorted(chrom_count.items(), key=lambda x: x[1], reverse=True))
+    sns.barplot(chrom_count[:, 0], chrom_count[:, 1].astype(int))
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.sites_location.svg" % method), bbox_inches="tight")
+
+    # Split in two major groups
+    Z = sites_cluster.dendrogram_row.linkage
+    clusters = fcluster(Z, 2, criterion="maxclust")
+    # visualize  cluster site attribution
+    sns.clustermap(
+        x,
+        cmap=cmap,
+        standard_scale=0,
+        col_colors=all_sample_colors(samples),
+        row_colors=[sns.color_palette("colorblind")[2] if i == 1 else sns.color_palette("colorblind")[0] for i in clusters],
+        yticklabels=False)
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sites_labels.svg" % "mutation"), bbox_inches="tight")
     plt.close('all')
 
 
