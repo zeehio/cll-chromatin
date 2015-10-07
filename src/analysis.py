@@ -1795,7 +1795,6 @@ def characterize_regions_composition(df, prefix, universe_df=None, plots_dir="re
     fig.savefig(os.path.join(plots_dir, "%s_regions.variability.svg" % prefix), bbox_inches="tight")
 
     # compare genomic regions and chromatin_states
-    fig, axis = plt.subplots(1, figsize=(10, 10))
     for i, var in enumerate(['genomic_region', 'chromatin_state']):
         # prepare:
         # separate comma-delimited fields:
@@ -1810,17 +1809,11 @@ def characterize_regions_composition(df, prefix, universe_df=None, plots_dir="re
         both = pd.DataFrame([df_count, df_universe_count], index=['subset', 'all']).T
         both = both.sort("subset")
         both['region'] = both.index
-        both['variable'] = var
-        if i == 0:
-            data = both
-        else:
-            data = pd.concat([data, both])
+        data = pd.melt(both, var_name="set", id_vars=['region']).replace(np.nan, 0)
 
-    data = pd.melt(data, var_name="set", id_vars=['region'])
-    sns.factorplot(
-        "set", col="region", data=data,
-        kind="count", ax=axis)
-    fig.savefig(os.path.join(plots_dir, "%s_regions.genomic_chromatin_location.svg" % prefix), bbox_inches="tight")
+        g = sns.FacetGrid(col="region", data=data)
+        g.map(sns.barplot, "set", "value")
+        plt.savefig(os.path.join(plots_dir, "%s_regions.%s.svg" % (prefix, var)), bbox_inches="tight")
 
 
 def characterize_regions_function(df, output_dir, prefix, data_dir="data", universe_file=None):
@@ -2030,7 +2023,7 @@ def classify_samples(analysis):
         df = dataframe.ix[cluster_index]
 
         characterize_regions_composition(df=df, prefix="%s_cluster%i" % (method, cluster), universe_df=analysis.coverage_qnorm_annotated)
-        # characterize_regions_function(df=df, output_dir=os.path.join(analysis.data_dir, "%s_peaks_cluster%i" % (method, cluster)), prefix="%s_cluster%i" % (method, cluster))
+        characterize_regions_function(df=df, output_dir=os.path.join(analysis.data_dir, "%s_peaks_cluster%i" % (method, cluster)), prefix="%s_cluster%i" % (method, cluster))
 
 
 def main():
