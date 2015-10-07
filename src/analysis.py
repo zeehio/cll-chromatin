@@ -1772,6 +1772,57 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.clusters.length_support_p-values.svg" % method), bbox_inches="tight")
 
 
+def characterize_regions_composition(df, prefix, universe_df=None, plots_dir="results/plots"):
+    # use all cll sites as universe
+    if universe_df is None:
+        universe_df = pd.read_csv(os.path.join("data", "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
+
+    # compare amplitude and support
+    fig, axis = plt.subplots(2, 1, figsize=(5, 10))
+    for i, var in enumerate(['fold_change', 'support']):
+        sns.distplot(df[[var]], ax=axis[i])
+        sns.distplot(universe_df[[var]], ax=axis[i])
+        axis[i].set_title(var)
+    fig.savefig(os.path.join(plots_dir, "%s_regions.amplitude_support.svg" % prefix), bbox_inches="tight")
+
+    # compare 4 measurements of variability
+    fig, axis = plt.subplots(2, 2, figsize=(10, 10))
+    axis = axis.flatten()
+    for i, var in enumerate(['variance', 'std_deviation', 'dispersion', 'qv2']):
+        sns.distplot(df[[var]], ax=axis[i])
+        sns.distplot(universe_df[[var]], ax=axis[i])
+        axis[i].set_title(var)
+    fig.savefig(os.path.join(plots_dir, "%s_regions.variability.svg" % prefix), bbox_inches="tight")
+
+    # compare genomic regions and chromatin_states
+    fig, axis = plt.subplots(1, figsize=(10, 10))
+    for i, var in enumerate(['genomic_region', 'chromatin_state']):
+        # prepare:
+        # separate comma-delimited fields:
+        df_count = Counter(df[var].str.split(',').apply(pd.Series).stack().tolist())
+        df_universe_count = Counter(universe_df[var].str.split(',').apply(pd.Series).stack().tolist())
+
+        # divide by total:
+        df_count = {k: v / float(len(df)) for k, v in df_count.items()}
+        df_universe_count = {k: v / float(len(universe_df)) for k, v in df_universe_count.items()}
+
+        # join data, sort by subset data
+        both = pd.DataFrame([df_count, df_universe_count], index=['subset', 'all']).T
+        both = both.sort("subset")
+        both['region'] = both.index
+        both['variable'] = var
+        if i == 0:
+            data = both
+        else:
+            data = pd.concat([data, both])
+
+    data = pd.melt(data, var_name="set", id_vars=['region'])
+    sns.factorplot(
+        "set", col="region", data=data,
+        kind="count", ax=axis)
+    fig.savefig(os.path.join(plots_dir, "%s_regions.genomic_chromatin_location.svg" % prefix), bbox_inches="tight")
+
+
 def characterize_regions_function(df, output_dir, prefix, data_dir="data", universe_file=None):
     # use all cll sites as universe
     if universe_file is None:
@@ -1937,17 +1988,21 @@ def classify_samples(analysis):
     plt.close('all')
 
     # REGIONS
+    # add cluster number to df
+    dataframe = analysis.coverage_qnorm_annotated.loc[x.index, :]
+    dataframe['importance'] = mean_importance[x.index]
+    dataframe['cluster'] = clusters
     # Save whole dataframe as csv
-    dataframe = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % method)
-    analysis.coverage_qnorm_annotated.loc[x.index, :].to_csv(dataframe, sep="\t", header=False, index=False)
+    dataframe_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % method)
+    dataframe.to_csv(dataframe_file, sep="\t", header=False, index=False)
 
     # Save as bed
     bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % method)
-    analysis.coverage_qnorm_annotated.loc[x.index, ['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
+    dataframe[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
 
     # Region characterization
     # plot chromosome distribution of regions
-    chrom_count = Counter(analysis.coverage_qnorm_annotated.loc[x.index, ['chrom', 'start', 'end']].chrom)
+    chrom_count = Counter(dataframe[['chrom', 'start', 'end']].chrom)
     chrom_count = np.array(sorted(chrom_count.items(), key=lambda x: x[1], reverse=True))
     sns.barplot(chrom_count[:, 0], chrom_count[:, 1].astype(int))
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.sites_location.svg" % method), bbox_inches="tight")
@@ -1972,8 +2027,10 @@ def classify_samples(analysis):
         imp_index = np.array([j for j, k in enumerate(mean_importance > 0.0001) if k == True])
         cluster_index = imp_index[[j for j, k in enumerate(clusters) if k == cluster]]
 
-        df = analysis.coverage_qnorm_annotated.ix[cluster_index]
-        characterize_regions_function(df=df, output_dir=os.path.join(analysis.data_dir, "%s_peaks_cluster%i" % (method, i)), prefix="%s_cluster%i" % (method, i))
+        df = dataframe.ix[cluster_index]
+
+        characterize_regions_composition(df=df, prefix="%s_cluster%i" % (method, cluster), universe_df=analysis.coverage_qnorm_annotated)
+        # characterize_regions_function(df=df, output_dir=os.path.join(analysis.data_dir, "%s_peaks_cluster%i" % (method, cluster)), prefix="%s_cluster%i" % (method, cluster))
 
 
 def main():
