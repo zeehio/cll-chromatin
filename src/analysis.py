@@ -1188,19 +1188,18 @@ def meme(input_fasta, output_dir):
     """
     De novo motif finding with MEME-chip.
     """
-    cmd = """meme-chip \\
-    -meme-p 12 \\
-    -ccut 147 \\
-    -meme-minw 6 -meme-maxw 30 -meme-nmotifs 20 \\
-    -dreme-e 0.05 \\
-    -centrimo-score 5.0 \\
-    -centrimo-ethresh 10.0 \\
-    -ccut 147 \\
-    -db ~/resources/motifs/motif_databases/HUMAN/HOCOMOCOv9.meme -meme-mod zoops \\
-    -oc {0} \\
+    cmd = """meme-chip -ccut 147 \
+    -meme-minw 6 -meme-maxw 30 -meme-nmotifs 20 \
+    -dreme-e 0.05 \
+    -centrimo-score 5.0 \
+    -centrimo-ethresh 10.0 \
+    -ccut 147 \
+    -db ~/resources/motifs/motif_databases/HUMAN/HOCOMOCOv9.meme -meme-mod zoops \
+    -oc {0} \
     {1}
     """.format(output_dir, input_fasta)
-    return cmd
+    # -meme-p 12 \\
+    os.system(cmd)
 
 
 def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, generate=True):
@@ -1773,27 +1772,30 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.clusters.length_support_p-values.svg" % method), bbox_inches="tight")
 
 
-def characterize_peaks(df, output_dir, prefix, data_dir="data", universe_file=None):
+def characterize_regions_function(df, output_dir, prefix, data_dir="data", universe_file=None):
     # use all cll sites as universe
     if universe_file is None:
         universe_file = os.path.join(data_dir, "cll_peaks.bed")
     # get go term mapping
     go_term_mapping = os.path.join(data_dir, "goID_goName.csv")
 
+    # make output dirs
+    lola_output = os.path.join(output_dir, "lola")
+    meme_output = os.path.join(output_dir, "meme")
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    if not os.path.exists(lola_output):
+        os.makedirs(lola_output)
+    if not os.path.exists(meme_output):
+        os.makedirs(meme_output)
+
     # save to bed
     bed_file = os.path.join(output_dir, "%s_regions.bed" % prefix)
-    df[['index', 'chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
+    df[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
 
     tsv_file = os.path.join(output_dir, "%s_regions.tsv" % prefix)
     df['index'] = df.index
     df[['index', 'chrom', 'start', 'end']].to_csv(tsv_file, sep="\t", header=False, index=False)
-
-    # make output dirs
-    lola_output = os.path.join(output_dir, "lola")
-    meme_output = os.path.join(output_dir, "meme")
-    if not os.path.exists:
-        os.makedirs(lola_output)
-        os.makedirs(meme_output)
 
     # Lola
     lola(bed_file, universe_file, lola_output)
@@ -1820,8 +1822,7 @@ def characterize_peaks(df, output_dir, prefix, data_dir="data", universe_file=No
 
     # Motifs
     # de novo motif finding - enrichment
-    bed_file = os.path.join(output_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.bed" % prefix)
-    fasta_file = os.path.join(output_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.fa" % prefix)
+    fasta_file = os.path.join(output_dir, "%s_regions.fa" % prefix)
     bed_to_fasta(bed_file, fasta_file)
 
     meme(fasta_file, meme_output)
@@ -1936,6 +1937,10 @@ def classify_samples(analysis):
     plt.close('all')
 
     # REGIONS
+    # Save whole dataframe as csv
+    dataframe = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % method)
+    analysis.coverage_qnorm_annotated.loc[x.index, :].to_csv(dataframe, sep="\t", header=False, index=False)
+
     # Save as bed
     bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % method)
     analysis.coverage_qnorm_annotated.loc[x.index, ['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
@@ -1949,7 +1954,7 @@ def classify_samples(analysis):
 
     # Split in two major groups
     Z = sites_cluster.dendrogram_row.linkage
-    clusters = fcluster(Z, 2, criterion="maxclust")
+    clusters = fcluster(Z, 3, criterion="maxclust")
     # visualize  cluster site attribution
     sns.clustermap(
         x,
@@ -1960,6 +1965,15 @@ def classify_samples(analysis):
         yticklabels=False)
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sites_labels.svg" % "mutation"), bbox_inches="tight")
     plt.close('all')
+
+    for i, cluster in enumerate([1, 2]):
+        # GET REGIONS FROM CLUSTER
+        # grab whole dataframe only from this cluster
+        imp_index = np.array([j for j, k in enumerate(mean_importance > 0.0001) if k == True])
+        cluster_index = imp_index[[j for j, k in enumerate(clusters) if k == cluster]]
+
+        df = analysis.coverage_qnorm_annotated.ix[cluster_index]
+        characterize_regions_function(df=df, output_dir=os.path.join(analysis.data_dir, "%s_peaks_cluster%i" % (method, i)), prefix="%s_cluster%i" % (method, i))
 
 
 def main():
