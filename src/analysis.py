@@ -1773,6 +1773,60 @@ def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, gener
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.clustering_sites.clusters.length_support_p-values.svg" % method), bbox_inches="tight")
 
 
+def characterize_peaks(df, output_dir, prefix, data_dir="data", universe_file=None):
+    # use all cll sites as universe
+    if universe_file is None:
+        universe_file = os.path.join(data_dir, "cll_peaks.bed")
+    # get go term mapping
+    go_term_mapping = os.path.join(data_dir, "goID_goName.csv")
+
+    # save to bed
+    bed_file = os.path.join(output_dir, "%s_regions.bed" % prefix)
+    df[['index', 'chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
+
+    tsv_file = os.path.join(output_dir, "%s_regions.tsv" % prefix)
+    df['index'] = df.index
+    df[['index', 'chrom', 'start', 'end']].to_csv(tsv_file, sep="\t", header=False, index=False)
+
+    # make output dirs
+    lola_output = os.path.join(output_dir, "lola")
+    meme_output = os.path.join(output_dir, "meme")
+    if not os.path.exists:
+        os.makedirs(lola_output)
+        os.makedirs(meme_output)
+
+    # Lola
+    lola(bed_file, universe_file, lola_output)
+
+    # seq2pathway
+    results = seq2pathway(tsv_file, go_term_mapping)
+    results_file = os.path.join(output_dir, "%s_regions.seq2pathway.csv" % prefix)
+    results.to_csv(results_file, index=False)
+
+    # GO Terms
+    # write all gene names to file
+    universe_genes_file = os.path.join(output_dir, "%s_regions.universe.closest_genes.txt" % prefix)
+    with open(universe_genes_file, 'w') as handle:
+        for gene in df['gene_name']:
+            handle.write(gene + "\n")
+    # write gene names to file
+    genes_file = os.path.join(output_dir, "%s_regions.closest_genes.txt" % prefix)
+    with open(genes_file, 'w') as handle:
+        for gene in df['gene_name']:
+            handle.write(gene + "\n")
+    output_file = os.path.join(output_dir, "%s_regions.goverlap.tsv" % prefix)
+    # test enrichements of closest gene function: GO, KEGG, OMIM
+    goverlap(genes_file, universe_genes_file, output_file)
+
+    # Motifs
+    # de novo motif finding - enrichment
+    bed_file = os.path.join(output_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.bed" % prefix)
+    fasta_file = os.path.join(output_dir, "cll_peaks.%s_significant.clustering_sites.cluster_%i.fa" % prefix)
+    bed_to_fasta(bed_file, fasta_file)
+
+    meme(fasta_file, meme_output)
+
+
 def classify_samples(analysis):
     """
     Classify samples into uCLL/mCLL.
