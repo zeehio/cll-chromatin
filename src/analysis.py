@@ -1202,6 +1202,45 @@ def meme(input_fasta, output_dir):
     os.system(cmd)
 
 
+def meme_ame(input_fasta, output_dir, background_fasta=None):
+    # shuffle input in no background is provided
+    if background_fasta is None:
+        shuffled = input_fasta + ".shuffled"
+        cmd = """
+        fasta-dinucleotide-shuffle -c 10 -f {0} > {1}
+        """.format(input_fasta, shuffled)
+        os.system(cmd)
+
+    cmd = """
+    ame --bgformat 1 --scoring avg --method ranksum --pvalue-report-threshold 0.05 \
+    --control {0} -o {1} {2} ~/resources/motifs/motif_databases/HUMAN/HOCOMOCOv9.meme
+    """.format(background_fasta if background_fasta is not None else shuffled, output_dir, input_fasta)
+    os.system(cmd)
+
+    os.system("rm %s" % shuffled)
+
+
+def parse_ame(ame_dir):
+
+    with open(os.path.join(ame_dir, "ame.txt"), 'r') as handle:
+        lines = handle.readlines()
+
+    output = list()
+    for line in lines:
+        # skip header lines
+        if line[0] not in [str(i) for i in range(10)]:
+            continue
+
+        # get motif string and the first half of it (simple name)
+        motif = line.strip().split(" ")[5].split("_")[0]
+        # get corrected p-value
+        q_value = line.strip().split(" ")[-2]
+        # append
+        output.append((motif, q_value))
+
+    return output
+
+
 def group_analysis(analysis, sel_samples, feature, g1, g2, group1, group2, generate=True):
     """
     Analysis between two groups of samples.
@@ -1870,6 +1909,7 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
     bed_to_fasta(bed_file, fasta_file)
 
     meme(fasta_file, meme_output)
+    meme_ame(fasta_file, meme_output)
 
 
 def classify_samples(analysis):
