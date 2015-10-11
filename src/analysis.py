@@ -2063,7 +2063,31 @@ def classify_samples(analysis):
         df = dataframe.ix[cluster_index]
 
         characterize_regions_composition(df=df, prefix="%s_cluster%i" % (method, cluster), universe_df=analysis.coverage_qnorm_annotated)
-        characterize_regions_function(df=df, output_dir=os.path.join(analysis.data_dir, "%s_peaks_cluster%i" % (method, cluster)), prefix="%s_cluster%i" % (method, cluster))
+        output_dir = os.path.join(analysis.data_dir, "%s_peaks_cluster%i" % (method, cluster))
+        characterize_regions_function(df=df, output_dir=output_dir, prefix="%s_cluster%i" % (method, cluster))
+
+        # parse meme-ame output
+        res = pd.DataFrame(parse_ame(os.path.join(output_dir, "meme")), columns=['motifs', 'q_values'])
+        res['cluster'] = cluster
+        if i == 0:
+            df = res
+        else:
+            df = pd.concat([df, res])
+
+    # Plot motif enrichments
+    # get highest (worst) p-value from motifs of the same TF
+    df = df.groupby(['motifs', 'cluster']).aggregate(max).reset_index()
+    # spread again for each cluster
+    df = df.pivot('motifs', 'cluster', 'q_values')
+    # fix types
+    for i in [1, 2]:
+        df[i] = df[i].astype(float)
+    # sort
+    df = df.sort([1])
+    # plot heatmap of p-values
+    sns.clustermap(df)
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "%s_regions.motif_enrichment.svg" % "mutation"), bbox_inches="tight")
+    plt.close('all')
 
 
 def main():
