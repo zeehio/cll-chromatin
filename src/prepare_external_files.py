@@ -79,15 +79,15 @@ for i, region in enumerate(regions[1:]):
 genes.sort().saveas("./data/ensembl_genes.bed")
 
 # Make bed file
-genes = pd.read_csv("../data/ensGene.txt", sep="\t", header=None)
+genes = pd.read_csv("data/ensGene.txt", sep="\t", header=None)
 genes = genes[[2, 4, 5, 12, 1, 3]]
 genes.columns = ['chrom', 'start', 'end', 'gene', 'transcript', 'strand']
 
 # Annotate with gene names
-names = pd.read_csv("../data/ensemblToGeneName.txt", sep="\t", header=None)
+names = pd.read_csv("data/ensemblToGeneName.txt", sep="\t", header=None)
 names.columns = ['transcript', 'name']
 annotation = pd.merge(genes, names)
-annotation.to_csv("../data/GRCh37_hg19_ensembl_genes.bed", sep="\t", index=False, header=False)
+annotation.to_csv("data/GRCh37_hg19_ensembl_genes.bed", sep="\t", index=False, header=False)
 
 # Get TSSs
 tsss = annotation.apply(get_tss, axis=1)

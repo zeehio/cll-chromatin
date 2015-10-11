@@ -201,7 +201,6 @@ def bamToBigWig(inputBam, outputBigWig, tagmented=False, normalize=False):
     import re
 
     genomeSizes = "/data/groups/lab_bock/shared/resources/genomes/hg19/hg19.chromSizes"
-    genome = "hg19"
 
     cmd = tk.slurmHeader("merge_bams", os.path.join("/scratch/users/arendeiro/", "merge_bams.slurm.log"), cpusPerTask=4, time='6-10:00:00', queue="longq", memPerCpu=8000)
 
@@ -211,7 +210,6 @@ def bamToBigWig(inputBam, outputBigWig, tagmented=False, normalize=False):
     bedtools bamtobed -i {0} |""".format(inputBam)
     if not tagmented:
         cmd1 += " bedtools slop -i stdin -g {0} -s -l 0 -r 130 |".format(genomeSizes)
-        cmd1 += " fix_bedfile_genome_boundaries.py {0} |".format(genome)
     cmd1 += " genomeCoverageBed {0}-bg -g {1} -i stdin > {2}.cov".format(
             "-5 " if tagmented else "",
             genomeSizes,
