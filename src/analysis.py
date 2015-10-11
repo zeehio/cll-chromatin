@@ -1177,24 +1177,6 @@ def goverlap(genes_file, universe_file, output_file):
         pass
 
 
-def meme(input_fasta, output_dir):
-    """
-    De novo motif finding with MEME-chip.
-    """
-    cmd = """meme-chip -ccut 147 \
-    -meme-minw 6 -meme-maxw 30 -meme-nmotifs 20 \
-    -dreme-e 0.05 \
-    -centrimo-score 5.0 \
-    -centrimo-ethresh 10.0 \
-    -ccut 147 \
-    -db ~/resources/motifs/motif_databases/HUMAN/HOCOMOCOv9.meme -meme-mod zoops \
-    -oc {0} \
-    {1}
-    """.format(output_dir, input_fasta)
-    # -meme-p 12 \\
-    os.system(cmd)
-
-
 def meme_ame(input_fasta, output_dir, background_fasta=None):
     # shuffle input in no background is provided
     if background_fasta is None:
@@ -1331,7 +1313,6 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
     fasta_file = os.path.join(output_dir, "%s_regions.fa" % prefix)
     bed_to_fasta(bed_file, fasta_file)
 
-    meme(fasta_file, meme_output)
     meme_ame(fasta_file, meme_output)
 
 
