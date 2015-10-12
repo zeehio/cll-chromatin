@@ -1255,9 +1255,22 @@ def characterize_regions_composition(df, prefix, universe_df=None, plots_dir="re
         both['region'] = both.index
         data = pd.melt(both, var_name="set", id_vars=['region']).replace(np.nan, 0)
 
-        g = sns.FacetGrid(col="region", data=data, col_wrap=3)
+        # sort for same order
+        data.sort('region', inplace=True)
+
+        g = sns.FacetGrid(col="region", data=data, col_wrap=3, sharey=False)
         g.map(sns.barplot, "set", "value")
         plt.savefig(os.path.join(plots_dir, "%s_regions.%s.svg" % (prefix, var)), bbox_inches="tight")
+
+        fc = pd.DataFrame(np.log2(both['subset'] / both['all']), columns=['value'])
+        fc['variable'] = var
+        print fc
+        if i == 0:
+            df2 = fc
+        else:
+            df2 = df2.append(fc)
+
+    return df2
 
 
 def characterize_regions_function(df, output_dir, prefix, data_dir="data", universe_file=None):
@@ -1398,7 +1411,7 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
     # n = 500; x = matrix.loc[np.argsort(mean_importance)[-n:], :] # get n top features
     # or
     x = matrix.loc[[i for i, j in enumerate(mean_importance > 0.0001) if j == True], :]  # get features on the tail of the importance distribution
-    sns.clustermap(
+    sites_cluster = sns.clustermap(
         x,
         cmap=cmap,
         standard_scale=0,
@@ -1416,26 +1429,24 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
     if comparison == 'gender':
         gs = 2
     elif comparison == 'mutation':
-        gs = 5
+        gs = 4
     else:
         gs = 5
     # cluster all samples first
-    sites_cluster = sns.clustermap(x, standard_scale=0)
+    samples_cluster = sns.clustermap(x.corr())
     # get cluster labels for samples
-    Z = sites_cluster.dendrogram_col.linkage
+    Z = samples_cluster.dendrogram_col.linkage
     clusters = fcluster(Z, gs, criterion="maxclust")
     # get cluster colors
     cluster_colors = dict(zip(np.unique(clusters), sns.color_palette("colorblind")))
     colors = [cluster_colors[c] for c in clusters]
 
-    # cluster this time to show sample labels and cluster labels
+    # sample correlation dendrogram
     sns.clustermap(
-        x,
-        cmap=cmap,
-        standard_scale=0,
+        x.corr(),
         col_colors=all_sample_colors(all_samples) + [colors],
-        yticklabels=False)
-    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_labels.svg" % comparison), bbox_inches="tight")
+        row_colors=all_sample_colors(all_samples) + [colors])
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_correlation.svg" % comparison), bbox_inches="tight")
     plt.close('all')
 
     # pca on these regions
@@ -1472,11 +1483,15 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
     dataframe['cluster'] = clusters
     # Save whole dataframe as csv
     dataframe_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % comparison)
-    dataframe.to_csv(dataframe_file, sep="\t", header=False, index=False)
+    dataframe.to_csv(dataframe_file, sep="\t", index=False)
 
     # Save as bed
     bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % comparison)
     dataframe[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
+
+    # Load up
+    dataframe_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % comparison)
+    dataframe = pd.read_csv(dataframe_file, sep="\t")
 
     # Region characterization
     # plot chromosome distribution of regions
@@ -1486,42 +1501,71 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
     sns.barplot(chrom_count[:, 0], chrom_count[:, 1].astype(int), ax=axis)
     fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.sites_location.svg" % comparison), bbox_inches="tight")
 
-    for i, cluster in enumerate(np.unique(clusters)):
+    for i, cluster in enumerate(np.unique(dataframe['cluster'])):
         # GET REGIONS FROM CLUSTER
-        # grab whole dataframe only from this cluster
-        imp_index = np.array([j for j, k in enumerate(mean_importance > 0.0001) if k == True])
-        cluster_index = imp_index[[j for j, k in enumerate(clusters) if k == cluster]]
-
-        df = dataframe.ix[cluster_index]
+        df = dataframe[dataframe['cluster'] == cluster]
 
         if len(df) < 100:
             continue
 
-        characterize_regions_composition(df=df, prefix="%s_cluster%i" % (comparison, cluster), universe_df=analysis.coverage_qnorm_annotated)
+        # region's composition
+        regions = characterize_regions_composition(df=df, prefix="%s_cluster%i" % (comparison, cluster), universe_df=analysis.coverage_qnorm_annotated)
+        regions['cluster'] = cluster
+
+        if i == 0:
+            df3 = regions
+        else:
+            df3 = df3.append(regions)
+
+        # region's function
         output_dir = os.path.join(analysis.data_dir, "%s_peaks_cluster%i" % (comparison, cluster))
         characterize_regions_function(df=df, output_dir=output_dir, prefix="%s_cluster%i" % (comparison, cluster))
 
         # parse meme-ame output
-        res = pd.DataFrame(parse_ame(os.path.join(output_dir, "meme")), columns=['motifs', 'q_values'])
-        res['cluster'] = cluster
+        motifs = pd.DataFrame(parse_ame(os.path.join(output_dir, "meme")), columns=['motifs', 'q_values'])
+        motifs['cluster'] = cluster
         if i == 0:
-            df2 = res
+            df2 = motifs
         else:
-            df2 = pd.concat([df2, res])
+            df2 = pd.concat([df2, motifs])
+
+    # Plot region enrichment
+    df3 = df3.sort(['region'])
+    df3 = df3.replace(np.nan, 0)
+    df3['region'] = df3.index
+
+    g = sns.FacetGrid(col="region", data=df3[df3['variable'] == 'genomic_region'], col_wrap=3, sharey=True)
+    g.map(sns.barplot, "cluster", "value")
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "%s_regions.region_enrichment.svg" % comparison), bbox_inches="tight")
+
+    g = sns.FacetGrid(col="region", data=df3[df3['variable'] == 'chromatin_state'], col_wrap=3, sharey=True)
+    g.map(sns.barplot, "cluster", "value")
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "%s_regions.chromatin_enrichment.svg" % comparison), bbox_inches="tight")
+
+    # save data
+    df3.to_csv(os.path.join(analysis.prj.dirs.plots, "%s_regions.region_enrichment.csv" % comparison), index=False)
 
     # Plot motif enrichments
+    df2['q_values'] = -np.log10(np.array(df2['q_values'], dtype=float))
     # get highest (worst) p-value from motifs of the same TF
     df3 = df2.groupby(['motifs', 'cluster']).aggregate(max).reset_index()
     # spread again for each cluster
     df3 = df3.pivot('motifs', 'cluster', 'q_values')
+    # replace nan with 0
+    df3 = df3.replace(np.nan, 0)
     # fix types
     for i in [1, 2]:
         df3[i] = df3[i].astype(float)
+
     # sort
     df3 = df3.sort([1])
     # plot heatmap of p-values
-    sns.clustermap(df3)
+    sns.clustermap(df3, z_score=1, figsize=(8, 24), linewidths=0)
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "%s_regions.motif_enrichment.svg" % comparison), bbox_inches="tight")
+    plt.close('all')
+
+    sns.clustermap(df3[(df3.icol(0) > 30) & (df3.icol(1) > 30)])
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "%s_regions.motif_enrichment.highest.svg" % comparison), bbox_inches="tight")
     plt.close('all')
 
     # save data
