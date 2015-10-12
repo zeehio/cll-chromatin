@@ -1322,7 +1322,7 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
     Extract features most important to separate samples and investigate those.
     """
     # get colors depending on feature (gender, mutation, drugs, etc...)
-    if comparison in ["mutated", "gender"]:
+    if comparison in ["mutation", "gender"]:
         comparison_colors = samples_to_color(sel_samples, comparison)
     elif comparison == 'untreated_vs_treated':
         comparison_colors = samples_to_color(sel_samples, "treatment")
@@ -1376,6 +1376,7 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
     fig, axis = plt.subplots(1, 2, figsize=(12, 5))
     axis[0].plot(fpr, tpr, label='ROC (area = {0:0.2f})'.format(roc_auc))
     axis[1].plot(precision, recall, label='PRC (average precision = {0:0.2f})'.format(aps))
+    axis[0].plot((0, 1), (0, 1), '--', color='gray')
     axis[0].set_xlim([-0.05, 1.0])
     axis[0].set_ylim([0.0, 1.05])
     axis[0].set_xlabel('False Positive Rate')
@@ -1412,11 +1413,17 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
     x = matrix.loc[[i for i, j in enumerate(mean_importance > 0.0001) if j == True], :]  # get features on the tail of the importance distribution
 
     # get colors for each cluster
+    if comparison == 'gender':
+        gs = 2
+    elif comparison == 'mutation':
+        gs = 5
+    else:
+        gs = 5
     # cluster all samples first
     sites_cluster = sns.clustermap(x, standard_scale=0)
     # get cluster labels for samples
     Z = sites_cluster.dendrogram_col.linkage
-    clusters = fcluster(Z, 5, criterion="maxclust")
+    clusters = fcluster(Z, gs, criterion="maxclust")
     # get cluster colors
     cluster_colors = dict(zip(np.unique(clusters), sns.color_palette("colorblind")))
     colors = [cluster_colors[c] for c in clusters]
@@ -1431,10 +1438,19 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_labels.svg" % comparison), bbox_inches="tight")
     plt.close('all')
 
+    # pca on these regions
+    pca_r(x, colors, os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_labels.svg" % comparison))
+
     # REGIONS
-    # Split in two major groups
+    # Split in major groups
+    if comparison == 'gender':
+        gr = 2
+    elif comparison == 'mutation':
+        gr = 3
+    else:
+        gr = 5
     Z = sites_cluster.dendrogram_row.linkage
-    clusters = fcluster(Z, 3, criterion="maxclust")
+    clusters = fcluster(Z, gr, criterion="maxclust")
     # visualize  cluster site attribution
     # get cluster colors
     cluster_colors = dict(zip(np.unique(clusters), sns.color_palette("colorblind")))
@@ -1478,6 +1494,9 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
 
         df = dataframe.ix[cluster_index]
 
+        if len(df) < 100:
+            continue
+
         characterize_regions_composition(df=df, prefix="%s_cluster%i" % (comparison, cluster), universe_df=analysis.coverage_qnorm_annotated)
         output_dir = os.path.join(analysis.data_dir, "%s_peaks_cluster%i" % (comparison, cluster))
         characterize_regions_function(df=df, output_dir=output_dir, prefix="%s_cluster%i" % (comparison, cluster))
@@ -1486,24 +1505,27 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
         res = pd.DataFrame(parse_ame(os.path.join(output_dir, "meme")), columns=['motifs', 'q_values'])
         res['cluster'] = cluster
         if i == 0:
-            df = res
+            df2 = res
         else:
-            df = pd.concat([df, res])
+            df2 = pd.concat([df2, res])
 
     # Plot motif enrichments
     # get highest (worst) p-value from motifs of the same TF
-    df = df.groupby(['motifs', 'cluster']).aggregate(max).reset_index()
+    df3 = df2.groupby(['motifs', 'cluster']).aggregate(max).reset_index()
     # spread again for each cluster
-    df = df.pivot('motifs', 'cluster', 'q_values')
+    df3 = df3.pivot('motifs', 'cluster', 'q_values')
     # fix types
     for i in [1, 2]:
-        df[i] = df[i].astype(float)
+        df3[i] = df3[i].astype(float)
     # sort
-    df = df.sort([1])
+    df3 = df3.sort([1])
     # plot heatmap of p-values
-    sns.clustermap(df)
+    sns.clustermap(df3)
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "%s_regions.motif_enrichment.svg" % comparison), bbox_inches="tight")
     plt.close('all')
+
+    # save data
+    df3.to_csv(os.path.join(analysis.prj.dirs.plots, "%s_regions.motif_enrichment.csv" % comparison), index=False)
 
 
 def main():
@@ -1600,8 +1622,6 @@ def main():
         analysis.plot_sample_correlations()
         # Observe exponential fit to the coeficient of variation
         analysis.plot_qv2_fit()
-        # PCA & MDS analysis:
-        # currently not working
     else:
         analysis.sites = pybedtools.BedTool(os.path.join(analysis.prj.dirs.data, "cll_peaks.bed"))
         analysis.peak_count = pickle.load(open(os.path.join(analysis.prj.dirs.data, "cll_peaks.cum_peak_count.pickle"), 'rb'))
@@ -1618,11 +1638,8 @@ def main():
         analysis.chrom_state_annotation_b = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.chromatin_state_background.csv"))
 
         analysis.coverage = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.raw_coverage.tsv"), sep="\t", index_col=0)
-        # analysis.rpkm = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.rpkm.tsv"), sep="\t")
         analysis.coverage_qnorm = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t")
-
         analysis.coverage_qnorm_annotated = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
-        # analysis.rpkm_annotated = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.rpkm.annotated.tsv"), sep="\t")
 
     # TRAIT-SPECIFIC ANALYSIS
     # Gender
