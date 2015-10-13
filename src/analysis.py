@@ -1264,7 +1264,7 @@ def characterize_regions_composition(df, prefix, universe_df=None, plots_dir="re
 
         fc = pd.DataFrame(np.log2(both['subset'] / both['all']), columns=['value'])
         fc['variable'] = var
-        print fc
+
         if i == 0:
             df2 = fc
         else:
@@ -1297,6 +1297,11 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
     tsv_file = os.path.join(output_dir, "%s_regions.tsv" % prefix)
     df['index'] = df.index
     df[['index', 'chrom', 'start', 'end']].to_csv(tsv_file, sep="\t", header=False, index=False)
+
+    # export ensembl gene names
+    gene_annotation = pd.read_csv(os.path.join('data', "cll_peaks.gene_annotation.csv"))
+    ensembl_genes = pd.merge(df, gene_annotation, on=['chrom', 'start', 'end'])['ensembl_gene_id']
+    ensembl_genes.to_csv(os.path.join(output_dir, "%s_genes.txt" % prefix), index=False)
 
     # Lola
     lola(bed_file, universe_file, lola_output)
@@ -1334,164 +1339,172 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
     Use a machine learning approach for sample classification based on known sample attributes.
     Extract features most important to separate samples and investigate those.
     """
-    # get colors depending on feature (gender, mutation, drugs, etc...)
-    if comparison in ["mutation", "gender"]:
-        comparison_colors = samples_to_color(sel_samples, comparison)
-    elif comparison == 'untreated_vs_treated':
-        comparison_colors = samples_to_color(sel_samples, "treatment")
-    elif comparison == "untreated_vs_1stline":
-        comparison_colors = samples_to_color(sel_samples, "treatment")
-    elif comparison == "CLL_vs_MBL":
-        comparison_colors = samples_to_color(sel_samples, "disease")
 
-    # get all samples
-    all_samples = [s for s in analysis.samples if s.cellLine == "CLL"]
+    dataframe_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % comparison)
+    if os.path.exists(dataframe_file):  # Load up
+        dataframe = pd.read_csv(dataframe_file, sep="\t")
+    else:  # Run analysis
+        # get colors depending on feature (gender, mutation, drugs, etc...)
+        if comparison in ["mutation", "gender"]:
+            comparison_colors = samples_to_color(sel_samples, comparison)
+        elif comparison == 'untreated_vs_treated':
+            comparison_colors = samples_to_color(sel_samples, "treatment")
+        elif comparison == "untreated_vs_1stline":
+            comparison_colors = samples_to_color(sel_samples, "treatment")
+        elif comparison == "CLL_vs_MBL":
+            comparison_colors = samples_to_color(sel_samples, "disease")
 
-    cmap = sns.cubehelix_palette(8, start=.5, rot=-.75, as_cmap=True)
+        # get all samples
+        all_samples = [s for s in analysis.samples if s.cellLine == "CLL"]
 
-    # ALL REGIONS
-    matrix = analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]]
+        cmap = sns.cubehelix_palette(8, start=.5, rot=-.75, as_cmap=True)
 
-    # BINARY CLASSIFICATION
-    # get features and labels
-    X = normalize(matrix).T
-    y = np.array(labels)
+        # ALL REGIONS
+        matrix = analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]]
 
-    loo = cross_validation.LeaveOneOut(len(X))
+        # BINARY CLASSIFICATION
+        # get features and labels
+        X = normalize(matrix).T
+        y = np.array(labels)
 
-    for i, (train_index, test_index) in enumerate(loo):
-        print(i)
-        X_train, X_test = X[train_index], X[test_index]
-        y_train, y_test = y[train_index], y[test_index]
+        loo = cross_validation.LeaveOneOut(len(X))
 
-        # Train, predict
-        classifier = RandomForestClassifier(n_estimators=100)
-        y_score = classifier.fit(X_train, y_train).predict_proba(X_test)
+        for i, (train_index, test_index) in enumerate(loo):
+            print(i)
+            X_train, X_test = X[train_index], X[test_index]
+            y_train, y_test = y[train_index], y[test_index]
 
-        if i == 0:
-            y_all_test = y_test
-            y_all_scores = y_score
-            importance = classifier.feature_importances_
+            # Train, predict
+            classifier = RandomForestClassifier(n_estimators=100)
+            y_score = classifier.fit(X_train, y_train).predict_proba(X_test)
+
+            if i == 0:
+                y_all_test = y_test
+                y_all_scores = y_score
+                importance = classifier.feature_importances_
+            else:
+                y_all_test = np.vstack([y_all_test, y_test])
+                y_all_scores = np.vstack([y_all_scores, y_score])
+                importance = np.vstack([importance, classifier.feature_importances_])
+
+        # Compute ROC curve and ROC area for each class
+        fpr, tpr, _ = roc_curve(y_all_test, y_all_scores[:, 1], pos_label=classifier.classes_[1])
+        roc_auc = auc(fpr, tpr, reorder=True)
+        # Compute Precision-Recall and average precision
+        precision, recall, _ = precision_recall_curve(y_all_test, y_all_scores[:, 1], pos_label=classifier.classes_[1])
+        binary_labels = [0 if x == classifier.classes_[0] else 1 for x in y_all_test]
+        aps = average_precision_score(binary_labels, y_all_scores[:, 1])
+
+        # Plot ROC and PRC curves
+        fig, axis = plt.subplots(1, 2, figsize=(12, 5))
+        axis[0].plot(fpr, tpr, label='ROC (area = {0:0.2f})'.format(roc_auc))
+        axis[1].plot(precision, recall, label='PRC (average precision = {0:0.2f})'.format(aps))
+        axis[0].plot((0, 1), (0, 1), '--', color='gray')
+        axis[0].set_xlim([-0.05, 1.0])
+        axis[0].set_ylim([0.0, 1.05])
+        axis[0].set_xlabel('False Positive Rate')
+        axis[0].set_ylabel('True Positive Rate')
+        axis[0].legend(loc="lower right")
+        axis[1].set_xlim([-0.05, 1.0])
+        axis[1].set_ylim([0.0, 1.05])
+        axis[1].set_xlabel('Precision')
+        axis[1].set_ylabel('Recall')
+        axis[1].legend(loc="lower right")
+        fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.ROC_PRC.svg" % comparison), bbox_inches="tight")
+
+        # Display training and prediction of pre-labeled samples of most informative features:
+        # Get most informative features
+        matrix = analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]]
+        # average feature importance across iterations
+        mean_importance = importance.mean(axis=0)
+        # get important features
+        # n = 500; x = matrix.loc[np.argsort(mean_importance)[-n:], :] # get n top features
+        # or
+        x = matrix.loc[[i for i, j in enumerate(mean_importance > 0.0001) if j == True], :]  # get features on the tail of the importance distribution
+        sites_cluster = sns.clustermap(
+            x,
+            cmap=cmap,
+            standard_scale=0,
+            col_colors=comparison_colors,
+            yticklabels=False)
+        plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.svg" % comparison), bbox_inches="tight")
+        plt.close('all')
+
+        # Display most informative features for ALL samples:
+        matrix = analysis.coverage_qnorm_annotated[[s.name for s in all_samples]]
+        # get important features
+        x = matrix.loc[[i for i, j in enumerate(mean_importance > 0.0001) if j == True], :]  # get features on the tail of the importance distribution
+
+        # get colors for each cluster
+        if comparison == 'gender':
+            gs = 2
+        elif comparison == 'mutation':
+            gs = 4
         else:
-            y_all_test = np.vstack([y_all_test, y_test])
-            y_all_scores = np.vstack([y_all_scores, y_score])
-            importance = np.vstack([importance, classifier.feature_importances_])
+            gs = 5
+        # cluster all samples first
+        samples_cluster = sns.clustermap(x.corr())
+        # get cluster labels for samples
+        Z = samples_cluster.dendrogram_col.linkage
+        clusters = fcluster(Z, gs, criterion="maxclust")
+        # get cluster colors
+        cluster_colors = dict(zip(np.unique(clusters), sns.color_palette("colorblind")))
+        colors = [cluster_colors[c] for c in clusters]
 
-    # Compute ROC curve and ROC area for each class
-    fpr, tpr, _ = roc_curve(y_all_test, y_all_scores[:, 1], pos_label=classifier.classes_[1])
-    roc_auc = auc(fpr, tpr, reorder=True)
-    # Compute Precision-Recall and average precision
-    precision, recall, _ = precision_recall_curve(y_all_test, y_all_scores[:, 1], pos_label=classifier.classes_[1])
-    binary_labels = [0 if x == classifier.classes_[0] else 1 for x in y_all_test]
-    aps = average_precision_score(binary_labels, y_all_scores[:, 1])
+        # sample correlation dendrogram
+        sns.clustermap(
+            x.corr(),
+            col_colors=all_sample_colors(all_samples) + [colors],
+            row_colors=all_sample_colors(all_samples) + [colors])
+        plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_correlation.svg" % comparison), bbox_inches="tight")
+        plt.close('all')
 
-    # Plot ROC and PRC curves
-    fig, axis = plt.subplots(1, 2, figsize=(12, 5))
-    axis[0].plot(fpr, tpr, label='ROC (area = {0:0.2f})'.format(roc_auc))
-    axis[1].plot(precision, recall, label='PRC (average precision = {0:0.2f})'.format(aps))
-    axis[0].plot((0, 1), (0, 1), '--', color='gray')
-    axis[0].set_xlim([-0.05, 1.0])
-    axis[0].set_ylim([0.0, 1.05])
-    axis[0].set_xlabel('False Positive Rate')
-    axis[0].set_ylabel('True Positive Rate')
-    axis[0].legend(loc="lower right")
-    axis[1].set_xlim([-0.05, 1.0])
-    axis[1].set_ylim([0.0, 1.05])
-    axis[1].set_xlabel('Precision')
-    axis[1].set_ylabel('Recall')
-    axis[1].legend(loc="lower right")
-    fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.ROC_PRC.svg" % comparison), bbox_inches="tight")
+        # pca on these regions
+        pca_r(x, colors, os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_labels.svg" % comparison))
 
-    # Display training and prediction of pre-labeled samples of most informative features:
-    # Get most informative features
-    matrix = analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]]
-    # average feature importance across iterations
-    mean_importance = importance.mean(axis=0)
-    # get important features
-    # n = 500; x = matrix.loc[np.argsort(mean_importance)[-n:], :] # get n top features
-    # or
-    x = matrix.loc[[i for i, j in enumerate(mean_importance > 0.0001) if j == True], :]  # get features on the tail of the importance distribution
-    sites_cluster = sns.clustermap(
-        x,
-        cmap=cmap,
-        standard_scale=0,
-        col_colors=comparison_colors,
-        yticklabels=False)
-    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.svg" % comparison), bbox_inches="tight")
-    plt.close('all')
+        # REGIONS
+        # Characterize regions as a whole
+        # region's composition
+        characterize_regions_composition(df=analysis.coverage_qnorm_annotated.loc[x.index, :], prefix=comparison)
+        # region's function
+        output_dir = os.path.join(analysis.data_dir, "%s_peaks" % comparison)
+        characterize_regions_function(df=analysis.coverage_qnorm_annotated.loc[x.index, :], output_dir=output_dir, prefix=comparison)
 
-    # Display most informative features for ALL samples:
-    matrix = analysis.coverage_qnorm_annotated[[s.name for s in all_samples]]
-    # get important features
-    x = matrix.loc[[i for i, j in enumerate(mean_importance > 0.0001) if j == True], :]  # get features on the tail of the importance distribution
+        # Split in major groups
+        if comparison == 'gender':
+            gr = 2
+        elif comparison == 'mutation':
+            gr = 3
+        else:
+            gr = 5
+        Z = sites_cluster.dendrogram_row.linkage
+        clusters = fcluster(Z, gr, criterion="maxclust")
+        # visualize  cluster site attribution
+        # get cluster colors
+        cluster_colors = dict(zip(np.unique(clusters), sns.color_palette("colorblind")))
+        colors = [cluster_colors[c] for c in clusters]
+        sns.clustermap(
+            x,
+            cmap=cmap,
+            standard_scale=0,
+            col_colors=all_sample_colors(all_samples),
+            row_colors=colors,
+            yticklabels=False)
+        plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sites_labels.svg" % comparison), bbox_inches="tight")
+        plt.close('all')
 
-    # get colors for each cluster
-    if comparison == 'gender':
-        gs = 2
-    elif comparison == 'mutation':
-        gs = 4
-    else:
-        gs = 5
-    # cluster all samples first
-    samples_cluster = sns.clustermap(x.corr())
-    # get cluster labels for samples
-    Z = samples_cluster.dendrogram_col.linkage
-    clusters = fcluster(Z, gs, criterion="maxclust")
-    # get cluster colors
-    cluster_colors = dict(zip(np.unique(clusters), sns.color_palette("colorblind")))
-    colors = [cluster_colors[c] for c in clusters]
+        # get cluster labels for sites
+        # add cluster number to df
+        dataframe = analysis.coverage_qnorm_annotated.loc[x.index, :]
+        dataframe['importance'] = mean_importance[x.index]
+        dataframe['cluster'] = clusters
+        # Save whole dataframe as csv
+        dataframe_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % comparison)
+        dataframe.to_csv(dataframe_file, sep="\t", index=False)
 
-    # sample correlation dendrogram
-    sns.clustermap(
-        x.corr(),
-        col_colors=all_sample_colors(all_samples) + [colors],
-        row_colors=all_sample_colors(all_samples) + [colors])
-    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_correlation.svg" % comparison), bbox_inches="tight")
-    plt.close('all')
-
-    # pca on these regions
-    pca_r(x, colors, os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_labels.svg" % comparison))
-
-    # REGIONS
-    # Split in major groups
-    if comparison == 'gender':
-        gr = 2
-    elif comparison == 'mutation':
-        gr = 3
-    else:
-        gr = 5
-    Z = sites_cluster.dendrogram_row.linkage
-    clusters = fcluster(Z, gr, criterion="maxclust")
-    # visualize  cluster site attribution
-    # get cluster colors
-    cluster_colors = dict(zip(np.unique(clusters), sns.color_palette("colorblind")))
-    colors = [cluster_colors[c] for c in clusters]
-    sns.clustermap(
-        x,
-        cmap=cmap,
-        standard_scale=0,
-        col_colors=all_sample_colors(all_samples),
-        row_colors=colors,
-        yticklabels=False)
-    plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sites_labels.svg" % comparison), bbox_inches="tight")
-    plt.close('all')
-
-    # get cluster labels for sites
-    # add cluster number to df
-    dataframe = analysis.coverage_qnorm_annotated.loc[x.index, :]
-    dataframe['importance'] = mean_importance[x.index]
-    dataframe['cluster'] = clusters
-    # Save whole dataframe as csv
-    dataframe_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % comparison)
-    dataframe.to_csv(dataframe_file, sep="\t", index=False)
-
-    # Save as bed
-    bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % comparison)
-    dataframe[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
-
-    # Load up
-    dataframe_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % comparison)
-    dataframe = pd.read_csv(dataframe_file, sep="\t")
+        # Save as bed
+        bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % comparison)
+        dataframe[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
 
     # Region characterization
     # plot chromosome distribution of regions
@@ -1507,6 +1520,11 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
 
         if len(df) < 100:
             continue
+
+        # output folder
+        outdir = os.path.join("%s_cluster%i" % (comparison, cluster))
+        if not os.path.exists(outdir):
+            os.makedirs(outdir)
 
         # region's composition
         regions = characterize_regions_composition(df=df, prefix="%s_cluster%i" % (comparison, cluster), universe_df=analysis.coverage_qnorm_annotated)
@@ -1530,9 +1548,9 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
             df2 = pd.concat([df2, motifs])
 
     # Plot region enrichment
+    df3['region'] = df3.index
     df3 = df3.sort(['region'])
     df3 = df3.replace(np.nan, 0)
-    df3['region'] = df3.index
 
     g = sns.FacetGrid(col="region", data=df3[df3['variable'] == 'genomic_region'], col_wrap=3, sharey=True)
     g.map(sns.barplot, "cluster", "value")
@@ -1684,6 +1702,13 @@ def main():
         analysis.coverage = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.raw_coverage.tsv"), sep="\t", index_col=0)
         analysis.coverage_qnorm = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t")
         analysis.coverage_qnorm_annotated = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
+
+    # Characterize all CLL regions as a whole
+    # region's composition
+    characterize_regions_composition(df=analysis.coverage_qnorm_annotated, prefix="all_regions")
+    # region's function
+    output_dir = os.path.join(analysis.data_dir, "%s_peaks" % "all_regions")
+    characterize_regions_function(df=analysis.coverage_qnorm_annotated, output_dir=output_dir, prefix="all_regions")
 
     # TRAIT-SPECIFIC ANALYSIS
     # Gender
