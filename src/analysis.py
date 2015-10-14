@@ -1258,7 +1258,7 @@ def characterize_regions_composition(df, prefix, universe_df=None, plots_dir="re
         # sort for same order
         data.sort('region', inplace=True)
 
-        g = sns.FacetGrid(col="region", data=data, col_wrap=3, sharey=False)
+        g = sns.FacetGrid(col="region", data=data, col_wrap=3, sharey=True)
         g.map(sns.barplot, "set", "value")
         plt.savefig(os.path.join(plots_dir, "%s_regions.%s.svg" % (prefix, var)), bbox_inches="tight")
 
@@ -1590,6 +1590,83 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
     df3.to_csv(os.path.join(analysis.prj.dirs.plots, "%s_regions.motif_enrichment.csv" % comparison), index=False)
 
 
+def compare_go_terms(cluster_labels, file_names, plot, p_value=0.05, n_max=35):
+    """
+    """
+    for i, _ in enumerate(file_names):
+        # read in file
+        df = pd.read_csv(file_names[i])
+        # label as cluster
+        df['cluster'] = cluster_labels[i]
+        # append / concatenate
+        if i == 0:
+            df2 = df
+        else:
+            df2 = df2.append(df)
+
+    # make readable name
+    df2['name'] = (df2['Name'] + " (" + df2['GOID'] + ")").tolist()
+    # melt
+    df3 = pd.melt(df2, value_vars=['FDR'], id_vars=['name', 'cluster'])
+    # expand to two axis terms/cluster, fill with p=1
+    df3 = df3.pivot('name', 'cluster', 'value').replace(np.nan, 1)
+
+    # filter p-values
+    df3 = df3[(df3[1] < p_value) | (df3[2] < p_value)]
+
+    # floor n_max
+    if len(df3) < n_max:
+        n_max = len(df3)
+
+    # get n most dissimilar features
+    s = abs(df3[1] - df3[2])
+    # sort by similarity
+    s.sort(ascending=False)
+    # get top
+    index = s.irow(range(n_max)).index
+
+    # plot matrix of clusters/terms with p_values
+    sns.clustermap(df3.ix[index], col_cluster=False, cmap=plt.cm.YlGn_r)
+    plt.savefig(plot, bbox_inches='tight')
+
+
+def compare_pathway_enrichment(cluster_labels, file_names, plot, p_value=0.05, n_max=35):
+    """
+    """
+    for i, _ in enumerate(file_names):
+        # read in file
+        df = pd.read_csv(file_names[i])
+        # label as cluster
+        df['cluster'] = cluster_labels[i]
+        # append / concatenate
+        if i == 0:
+            df2 = df
+        else:
+            df2 = df2.append(df)
+
+    # make readable name
+    df2['name'] = (df2['#Term'] + " (" + df2['Database'] + " " + df2['ID'].astype(str) + ")").tolist()
+    # melt
+    df3 = pd.melt(df2, value_vars=['P-Value'], id_vars=['name', 'cluster'])
+    df3.drop_duplicates(inplace=True)
+    # expand to two axis terms/cluster, fill with p=1
+    df3 = df3.pivot('name', 'cluster', 'value').replace(np.nan, 1)
+
+    # filter p-values
+    df4 = df3[(df3[1] < p_value) | (df3[2] < p_value)]
+
+    # get n most dissimilar features
+    s = abs(df4[1] - df4[2])
+    # sort by similarity
+    s.sort(ascending=False)
+    # get top
+    index = s.irow(range(n_max)).index
+
+    # plot matrix of clusters/terms with p_values
+    sns.clustermap(df4.ix[index], col_cluster=False, cmap=plt.cm.YlGn_r)
+    plt.savefig(plot, bbox_inches='tight')
+
+
 def main():
     # Parse arguments
     parser = ArgumentParser(
@@ -1758,6 +1835,24 @@ def main():
     # "diagnosis_start", ("CLL", "MBL"),
     # possibly other groups:
     # ['SF3B1', 'ATM', 'del13', 'del11q', 'tri12', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
+
+    compare_go_terms(
+        [1, 2],
+        ['data/mutation_peaks_cluster1/mutation_cluster1_regions.seq2pathway.csv', 'data/mutation_peaks_cluster2/mutation_cluster2_regions.seq2pathway.csv'],
+        "results/plots/mutation_regions.goterm_enrichment.svg",
+        p_value=0.05)
+
+    compare_pathway_enrichment(
+        [1, 2],
+        ['data/mutation_peaks_cluster1/mutation_cluster1_regions.pathway_enrichment.csv', 'data/mutation_peaks_cluster2/mutation_cluster2_regions.pathway_enrichment.csv'],
+        "results/plots/mutation_regions.pathway_enrichment.svg",
+        p_value=0.05)
+
+    compare_pathway_enrichment(
+        [1, 2],
+        ['data/mutation_peaks_cluster1/mutation_cluster1_regions.disease_enrichment.csv', 'data/mutation_peaks_cluster2/mutation_cluster2_regions.disease_enrichment.csv'],
+        "results/plots/mutation_regions.disease_enrichment.svg",
+        p_value=0.05)
 
 
 if __name__ == '__main__':
