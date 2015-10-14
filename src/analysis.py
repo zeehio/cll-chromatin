@@ -1578,16 +1578,39 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
     # sort
     df3 = df3.sort([1])
     # plot heatmap of p-values
-    sns.clustermap(df3, z_score=1, figsize=(8, 24), linewidths=0)
+    sns.clustermap(df3, z_score=1, figsize=(8, 24), linewidths=0, cmap=plt.cm.YlGn)
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "%s_regions.motif_enrichment.svg" % comparison), bbox_inches="tight")
     plt.close('all')
 
-    sns.clustermap(df3[(df3.icol(0) > 30) & (df3.icol(1) > 30)])
+    sns.clustermap(df3[(df3.icol(0) > 30) & (df3.icol(1) > 30)], cmap=plt.cm.YlGn)
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "%s_regions.motif_enrichment.highest.svg" % comparison), bbox_inches="tight")
     plt.close('all')
 
     # save data
     df3.to_csv(os.path.join(analysis.prj.dirs.plots, "%s_regions.motif_enrichment.csv" % comparison), index=False)
+
+    # get n_max most different motifs
+    n_max = 25
+    p_value = 3  # -log10
+
+    # filter p-values
+    df4 = df3[(df3[1] > p_value) | (df3[2] > p_value)]
+
+    # floor n_max
+    if len(df4) < n_max:
+        n_max = len(df4)
+
+    # get n most dissimilar features
+    s = abs(df4[1] - df4[2])
+    # sort by similarity
+    s.sort(ascending=False)
+    # get top
+    index = s.irow(range(n_max)).index
+
+    # plot matrix of clusters/terms with p_values
+    sns.clustermap(df4.ix[index], col_cluster=False, cmap=plt.cm.YlGn)
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "%s_regions.motif_enrichment.difference.svg" % comparison), bbox_inches="tight")
+    plt.close('all')
 
 
 def compare_go_terms(cluster_labels, file_names, plot, p_value=0.05, n_max=35):
