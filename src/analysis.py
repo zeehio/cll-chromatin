@@ -92,16 +92,18 @@ class Analysis(object):
         # Read up again
         self.sites = pybedtools.BedTool(os.path.join(self.data_dir, "cll_peaks.bed"))
 
-    def estimate_peak_saturation(self, n=100):
+    def estimate_peak_saturation(self, n=1000):
         """
         Randomizes sample order n times and measures the number of unique peaks after adding each sample after the other.
         Plots this.
         """
         import random
+        from scipy import stats
+
         # GET CONSENSUS SITES ACROSS CLL ATAC-SEQ SAMPLES
         samples = [sample for sample in self.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"]
 
-        peak_count = dict()
+        peak_count = np.zeros((len(samples), n))
         for i in range(n):
             samples_copy = samples[:]
             random.shuffle(samples_copy)
@@ -117,25 +119,30 @@ class Analysis(object):
                     # Concatenate all peaks
                     sites = sites.cat(peaks)
                 # Let's keep track of the number of new peaks found with each new sample
-                if j not in peak_count.keys():
-                    peak_count[j] = [len(sites)]
-                else:
-                    peak_count[j].append(len(sites))
+                peak_count[j, i] = len(sites)
+
+        # Make data frame
+        df = pd.DataFrame(peak_count)
+
+        # Calculate confidence intervals
+        ci = df.apply(lambda x: pd.Series(stats.norm.interval(0.95, loc=x.mean(), scale=x.std() / np.sqrt(len(x)))), axis=1)
+        ci.columns = ['low', 'high']
+
+        # Add sample number
+        ci['samples'] = np.array(range(len(samples))) + 1
 
         # Plot
         fig, axis = plt.subplots(1)
-        df = pd.DataFrame(peak_count)
-        df.apply(np.mean).plot(label="mean", ax=axis)
-        df.apply(np.min).plot(label="min", ax=axis)
-        df.apply(np.max).plot(label="max", ax=axis)
+        axis.plot(ci['samples'], ci['low'])
+        axis.plot(ci['samples'], ci['high'])
         axis.set_xlabel("# samples")
         axis.set_ylabel("# peaks")
         axis.set_ylim((0, 120000))
         plt.legend(loc='best')
-        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.cum_peak_count.svg"), bbox_inches="tight")
+        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.cum_peak_count.95CI.svg"), bbox_inches="tight")
 
         # Store
-        df.to_csv(os.path.join(self.data_dir, "cll_peaks.cum_peak_count.csv"), index=False)
+        df.to_csv(os.path.join(self.data_dir, "cll_peaks.cum_peak_count.95CI.csv"), index=False)
 
     def calculate_peak_support(self):
         samples = [s for s in self.samples if s.technique == "ATAC-seq" and s.cellLine == "CLL"]
@@ -1723,7 +1730,7 @@ def compare_lola_enrichment(cluster_labels, file_names, plot, p_value=20, n_max=
     index = s.irow(range(n_max)).index
 
     # plot matrix of clusters/terms with p_values
-    sns.clustermap(df3.ix[index], col_cluster=False, cmap=plt.cm.YlGn_r)
+    sns.clustermap(df4.ix[index], col_cluster=False, cmap=plt.cm.YlGn_r)
     plt.savefig(plot, bbox_inches='tight')
 
 
@@ -1923,7 +1930,6 @@ def main():
         ['data/mutation_peaks_cluster1/lola/allEnrichments.txt', 'data/mutation_peaks_cluster2/lola/allEnrichments.txt'],
         "results/plots/mutation_regions.lola_enrichment.svg",
         p_value=0.05)
-
 
 
 if __name__ == '__main__':
