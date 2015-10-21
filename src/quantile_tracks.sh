@@ -40,6 +40,7 @@ function get_coverage() {
 
 export -f get_coverage
 
+
 # Start
 # make 1bp windows for each chromosome
 parallel make_windows ::: {1..22}
@@ -63,9 +64,32 @@ parallel windows_position ::: {1..22}
 # concatenate columns across samples for each chromosome
 for CHROM in {1..22}
 do
-    # add "chrom start end" to begining
-    paste ~/windows/${CHROM}_position.bed ${BAMS[*]/.trimmed.bowtie2.filtered.bam/_${CHROM}.coverage.bed} | bgzip > ~/coverage/all_chr_${CHROM}.coverage.bgzip
+    # get sample and file names
+    i=0
+    for BAM in ${BAMS[*]}
+    do
+        NAMES[i]=`basename ${BAM/.trimmed.bowtie2.filtered.bam/}`
+        FILENAMES[i]=~/coverage/${NAMES[i]}_${CHROM}.coverage.bed 
+        let i=i+1
+    done
+
+    # paste iteratively (unfortunately, all at once is not working :S)
+    for FILE in ${FILENAMES[*]}
+    do
+        if [ $FILE == ${FILENAMES[0]} ]
+            then
+            # add "chrom start end" to begining
+            paste ~/windows/${CHROM}_position.bed $FILE > ~/coverage/all_chr_${CHROM}.coverage
+        else
+            paste ~/coverage/all_chr_${CHROM}.coverage $FILE > t
+            mv t ~/coverage/all_chr_${CHROM}.coverage
+        fi
+    done
+
+    # bgzip compress
+    bgzip ~/coverage/all_chr_${CHROM}.coverage
 done
+
 
 # index with tabix
 for CHROM in {1..22}
