@@ -510,6 +510,11 @@ samples = [sample for sample in prj.samples if sample.cellLine == "CLL" and samp
 
 jobs = list()
 
+
+# all CLL samples
+jobs.append(run_merged("all", [sample.filtered for sample in samples], "all"))
+
+
 # "gender" and "mutated"
 features = {
     "patient_gender": ("F", "M"),  # gender
@@ -558,6 +563,10 @@ motif_numbers = df[0]
 
 # send out jobs
 jobs = list()
+
+# all samples
+jobs += footprint("all", "all", motif_numbers)
+
 # "gender" and "mutated"
 for i, (feature, (group1, group2)) in enumerate(features.items()):
     # append file to jobs
@@ -583,6 +592,11 @@ refseq2gene = dict(zip(refseq2gene[0], refseq2gene[1]))
 
 # parse PIQ output,
 # connect each motif to a gene
+
+# all samples
+foots_dir = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", "all", "all"]), "footprints"))
+collect_networks(foots_dir, motif_numbers, "_".join(["merged-samples", "all", "all"]))
+
 
 # "gender" and "mutated"
 for i, (feature, (group1, group2)) in enumerate(features.items()):
