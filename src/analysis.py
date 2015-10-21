@@ -1690,6 +1690,43 @@ def compare_pathway_enrichment(cluster_labels, file_names, plot, p_value=0.05, n
     plt.savefig(plot, bbox_inches='tight')
 
 
+def compare_lola_enrichment(cluster_labels, file_names, plot, p_value=20, n_max=35):
+    """
+    """
+    for i, _ in enumerate(file_names):
+        # read in file
+        df = pd.read_csv(file_names[i], sep="\t")
+        # label as cluster
+        df['cluster'] = cluster_labels[i]
+        # append / concatenate
+        if i == 0:
+            df2 = df
+        else:
+            df2 = df2.append(df)
+
+    # make readable name
+    df2['name'] = (df2['description'] + " (" + df2['tissue'] + " " + df2['antibody'] + ")").tolist()
+    # melt
+    df3 = pd.melt(df2, value_vars=['pValueLog'], id_vars=['name', 'cluster'])
+    df3.drop_duplicates(['name', 'cluster'], inplace=True)
+    # expand to two axis terms/cluster, fill with p=1
+    df3 = df3.pivot('name', 'cluster', 'value').replace(np.nan, 1)
+
+    # filter p-values
+    df4 = df3[(df3[1] > p_value) | (df3[2] > p_value)]
+
+    # get n most dissimilar features
+    s = abs(df3[1] - df3[2])
+    # sort by similarity
+    s.sort(ascending=True)
+    # get top
+    index = s.irow(range(n_max)).index
+
+    # plot matrix of clusters/terms with p_values
+    sns.clustermap(df3.ix[index], col_cluster=False, cmap=plt.cm.YlGn_r)
+    plt.savefig(plot, bbox_inches='tight')
+
+
 def main():
     # Parse arguments
     parser = ArgumentParser(
@@ -1880,6 +1917,13 @@ def main():
         ['data/mutation_peaks_cluster1/mutation_cluster1_regions.disease_enrichment.csv', 'data/mutation_peaks_cluster2/mutation_cluster2_regions.disease_enrichment.csv'],
         "results/plots/mutation_regions.disease_enrichment.svg",
         p_value=0.05)
+
+    compare_lola_enrichment(
+        [1, 2],
+        ['data/mutation_peaks_cluster1/lola/allEnrichments.txt', 'data/mutation_peaks_cluster2/lola/allEnrichments.txt'],
+        "results/plots/mutation_regions.lola_enrichment.svg",
+        p_value=0.05)
+
 
 
 if __name__ == '__main__':
