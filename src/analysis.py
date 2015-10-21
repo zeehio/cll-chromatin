@@ -1850,6 +1850,10 @@ def main():
     # CLL vs MBL
     sel_samples = [s for s in analysis.samples if type(s.diagnosis_disease) is str and not sample.treatment_active and not sample.relapse]
     labels = [s.diagnosis_disease for s in sel_samples]
+    # remove SLL
+    index = [i for i, s in enumerate(sel_samples) if s.diagnosis_disease == 'SLL']
+    [sel_samples.pop(i) for i in index]
+    [labels.pop(i) for i in index]
     classify_samples(analysis, sel_samples, labels, comparison="CLL_vs_MBL")
 
     # "relapse", ("True", "False"), # relapse or before relapse

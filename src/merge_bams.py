@@ -182,7 +182,7 @@ def merge_bams(bams, output_bam):
     Decorator for some methods of Analysis class.
     """
     job_file = "/scratch/users/arendeiro/tmp.sh"
-    cmd = tk.slurmHeader("merge_bams", os.path.join("/scratch/users/arendeiro/", "merge_bams.slurm.log"), cpusPerTask=4, time='6-10:00:00', queue="longq", memPerCpu=8000)
+    cmd = tk.slurmHeader("merge_bams", os.path.join("/scratch/users/arendeiro/", "merge_bams.slurm.log"), cpusPerTask=8, time='6-10:00:00', queue="longq", memPerCpu=8000)
 
     cmd += """
     samtools merge {0} {1}
@@ -203,7 +203,7 @@ def bamToBigWig(inputBam, outputBigWig, tagmented=False, normalize=False):
     genomeSizes = "/data/groups/lab_bock/shared/resources/genomes/hg19/hg19.chromSizes"
     genome = "hg19"
 
-    cmd = tk.slurmHeader("merge_bams", os.path.join("/scratch/users/arendeiro/", "merge_bams.slurm.log"), cpusPerTask=4, time='6-10:00:00', queue="longq", memPerCpu=8000)
+    cmd = tk.slurmHeader("bam_to_bigwig", os.path.join("/scratch/users/arendeiro/", "merge_bams.slurm.log"), cpusPerTask=8, time='6-10:00:00', queue="longq", memPerCpu=8000)
 
     transientFile = os.path.abspath(re.sub("\.bigWig", "", outputBigWig))
 
@@ -277,7 +277,13 @@ def main():
     # Use these samples only
     samples = [sample for sample in prj.samples if sample.cellLine == "CLL" and sample.name not in samples_to_exclude and sample.technique == "ATAC-seq"]
 
-    # TRAIT-SPECIFIC ANALYSIS
+    # ALL CLL SAMPLES
+    merged_bam = os.path.abspath(os.path.join(prj.dirs.data, "merged-samples", "merged.bam"))
+    merged_bigwig = os.path.abspath(os.path.join(prj.dirs.html, "merged-samples", "merged.bigwig"))
+    merge_bams([sample.filtered for sample in samples], merged_bam)
+    bamToBigWig(merged_bam, merged_bigwig)
+
+    # TRAIT-SPECIFIC
     # "gender" and "mutated"
     features = {
         "patient_gender": ("F", "M"),  # gender
