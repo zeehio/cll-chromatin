@@ -363,41 +363,11 @@ class Analysis(object):
         Annotates peaks with closest gene.
         Needs files downloaded by prepare_external_files.py
         """
-        # get distance to gene and ensembl gene id annotation in whole matrix
-        df = pd.merge(self.coverage_qnorm_annotated, self.gene_annotation, on=['chrom', 'start', 'end', 'gene_name'])
+        sns.set(style="whitegrid", palette="pastel", color_codes=True)
 
-        # GET 1(!) element per gene
-        # TWO COMPARISONS:
-        # closest promoter element vs distal element
+        names = [s.name for s in self.samples]
 
-        # get genes around promoter (+/- 1kb)
-        df2 = df[df['distance'] <= 2000]
-        # promoters
-        promoter_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
-        promoters = df2.ix[promoter_index]
-
-        # get genes away from promoters (> 50kb)
-        df2 = df[df['distance'] > 2000]
-        # promoters
-        enhancer_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
-        enhancers = df2.ix[enhancer_index]
-
-        # Calculate quantiles
-        quant95 = promoters[[sample.name for sample in self.samples]].apply(np.percentile, args=[95], axis=1)
-        quant5 = promoters[[sample.name for sample in self.samples]].apply(np.percentile, args=[5], axis=1)
-        promoters['amplitude'] = quant95 - quant5
-
-        quant95 = enhancers[[sample.name for sample in self.samples]].apply(np.percentile, args=[95], axis=1)
-        quant5 = enhancers[[sample.name for sample in self.samples]].apply(np.percentile, args=[5], axis=1)
-        enhancers['amplitude'] = quant95 - quant5
-
-        # Plot distributions of amplitude (fold_change)
-        fig, axis = plt.subplots(1)
-        sns.distplot(promoters['amplitude'], color="b", ax=axis)
-        sns.distplot(enhancers['amplitude'], color="y", ax=axis)
-        fig.savefig(os.path.join("results", "plots", "all_genes.distplot.svg"))
-
-        # plot aditional boxplots for selected genes
+        # genes of interest
         sel_genes = {
             # main B cell surface markers
             "CD19": "ENSG00000177455",
@@ -436,6 +406,39 @@ class Analysis(object):
             # others
             "BCL6": "ENSG00000113916",
         }
+
+        # get distance to gene and ensembl gene id annotation in whole matrix
+        df = pd.merge(self.coverage_qnorm_annotated, self.gene_annotation, on=['chrom', 'start', 'end', 'gene_name'])
+
+        # GET 1(!) element per gene
+        # get peaks around promoter (+/- 1kb)
+        df2 = df[df['distance'] <= 1000]
+        # promoters
+        promoter_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
+        promoters = df2.ix[promoter_index]
+
+        # get peaks away from promoters (> 1kb)
+        df2 = df[df['distance'] > 1000]
+        # enhancers
+        enhancer_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
+        enhancers = df2.ix[enhancer_index]
+
+        # Calculate quantiles
+        quant95 = promoters[[sample.name for sample in self.samples]].apply(np.percentile, args=[95], axis=1)
+        quant5 = promoters[[sample.name for sample in self.samples]].apply(np.percentile, args=[5], axis=1)
+        promoters['amplitude'] = quant95 - quant5
+
+        quant95 = enhancers[[sample.name for sample in self.samples]].apply(np.percentile, args=[95], axis=1)
+        quant5 = enhancers[[sample.name for sample in self.samples]].apply(np.percentile, args=[5], axis=1)
+        enhancers['amplitude'] = quant95 - quant5
+
+        # Plot distributions of amplitude (fold_change)
+        fig, axis = plt.subplots(1, figsize=(15, 10))
+        sns.distplot(promoters['amplitude'], color="b", ax=axis)
+        sns.distplot(enhancers['amplitude'], color="y", ax=axis)
+        fig.savefig(os.path.join("results", "plots", "all_genes.distplot.svg"), bbox_inches='tight')
+
+        # plot aditional boxplots for selected genes
         genes_str = "|".join(sel_genes.values())
 
         gene_values = promoters[promoters['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in self.samples]].T
@@ -450,9 +453,68 @@ class Analysis(object):
 
         boxplot_data = pd.concat([promoter_data, enhancer_data])
 
-        fig, axis = plt.subplots(1)
+        fig, axis = plt.subplots(1, figsize=(15, 10))
+        sns.violinplot(data=boxplot_data.sort('openness'), x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
+        fig.savefig(os.path.join("results", "plots", "relevant_genes.violinplot.svg"), bbox_inches='tight')
+
+        #
+
+        #
+        # Other alternative: average across elements
+        #
+
+        #
+
+        # GET mean of ALL elements per gene
+        # get peaks around promoter (+/- 1kb)
+        df2 = df[df['distance'] <= 1000]
+        # promoters
+        promoter_mean = df2.groupby(["ensembl_gene_id"]).apply(lambda x: x[names].mean(axis=0).set_value("gene_name", x["gene_name"].astype(str)))
+        promoter_mean["ensembl_gene_id"] = promoter_mean.index
+
+        # get peaks away from promoters (> 1kb)
+        df2 = df[df['distance'] > 1000]
+        # enhancers (get mean openness across all enhancers of same gene)
+        enhancer_mean = df2.groupby(["ensembl_gene_id"]).apply(lambda x: x[names].mean(axis=0))
+        enhancer_mean["ensembl_gene_id"] = enhancer_mean.index
+
+        # Calculate quantiles
+        quant95 = promoter_mean[names].apply(np.percentile, args=[95], axis=1)
+        quant5 = promoter_mean[names].apply(np.percentile, args=[5], axis=1)
+        promoter_mean['amplitude'] = quant95 - quant5
+
+        quant95 = enhancer_mean[names].apply(np.percentile, args=[95], axis=1)
+        quant5 = enhancer_mean[names].apply(np.percentile, args=[5], axis=1)
+        enhancer_mean['amplitude'] = quant95 - quant5
+
+        # Plot distributions of amplitude (fold_change)
+        fig, axis = plt.subplots(1, figsize=(15, 10))
+        sns.distplot(promoter_mean['amplitude'], color="b", ax=axis)
+        sns.distplot(enhancer_mean['amplitude'], color="y", ax=axis)
+        sns.despine(left=True)
+        fig.savefig(os.path.join("results", "plots", "all_genes.distplot.mean.svg"), bbox_inches='tight')
+
+        # Plot whole diversity
+        # get ensembl - symbol mapping
+        ensembl_gene = df2.groupby(["ensembl_gene_id"]).apply(lambda x: x['gene_name'].reset_index(drop=True).ix[0])
+
+        # get interesting genes
+        gene_values = promoter_mean[promoter_mean['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in self.samples]].T
+        gene_values.columns = ensembl_gene.ix[gene_values.columns]
+        promoter_data = pd.melt(gene_values, var_name="gene", value_name="openness")
+        promoter_data['region'] = 'promoter'
+
+        gene_values = enhancer_mean[enhancer_mean['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in self.samples]].T
+        gene_values.columns = ensembl_gene.ix[gene_values.columns]
+        enhancer_data = pd.melt(gene_values, var_name="gene", value_name="openness")
+        enhancer_data['region'] = 'enhancer'
+
+        boxplot_data = pd.concat([promoter_data, enhancer_data])
+
+        fig, axis = plt.subplots(1, figsize=(15, 10))
         sns.violinplot(data=boxplot_data.sort('openness'), x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, ax=axis)
-        fig.savefig(os.path.join("results", "plots", "relevant_genes.violinplot.svg"))
+        sns.despine(left=True)
+        fig.savefig(os.path.join("results", "plots", "relevant_genes.violinplot.mean.svg"), bbox_inches='tight')
 
     def correlate_expression(self):
         # get expression
