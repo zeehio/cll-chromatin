@@ -373,12 +373,44 @@ class Analysis(object):
         element_count = df2.groupby(["ensembl_gene_id"]).apply(len)
 
         # group by gene, get mean oppenness across all samples, across all elements
-        mean_oppenness = df[[sample.name for sample in self.samples] + ["ensembl_gene_id"]].groupby(["ensembl_gene_id"]).apply(np.mean)
+        mean_oppenness = df2[["mean", "ensembl_gene_id"]].groupby(["ensembl_gene_id"]).apply(np.mean)
+        mean_oppenness = mean_oppenness.mean(axis=1)
 
-        # plot squares
+        # get amplitude of 5 and 95 percentiles
+        quant95 = df2[[sample.name for sample in self.samples]].apply(np.percentile, args=[95], axis=1)
+        quant5 = df2[[sample.name for sample in self.samples]].apply(np.percentile, args=[5], axis=1)
+        amplitude = quant95 - quant5
+
+        # get mean amplitude per gene
+        df2['amplitude'] = amplitude
+        mean_amplitude = df2[["amplitude", "ensembl_gene_id"]].groupby(["ensembl_gene_id"]).apply(np.mean)
+        mean_amplitude = mean_amplitude.mean(axis=1)
+
+        # put them together
+        df3 = pd.DataFrame([element_count, mean_oppenness['mean'], mean_amplitude]).T
+        df3.columns = ['count', 'openness', 'amplitude']
+        df3.to_csv(os.path.join(self.data_dir, "gene_level_measurements.csv"), index=False)
+
+        # plot squares (treemap)
         import squarify
+        width = 1200.
+        height = 1200.
 
-        # squarify.plot(sizes, labels, colors)
+        # get sizes of squares
+        sizes = squarify.normalize_sizes(np.log10(df3['openness']), width, height)
+        # get colors of squares
+        import matplotlib as mpl
+        import matplotlib.cm as cm
+        norm = mpl.colors.Normalize(vmin=np.percentile(df3['amplitude'], 5), vmax=np.percentile(df3['amplitude'], 95))
+        cmap = cm.hot
+        m = cm.ScalarMappable(norm=norm, cmap=cmap)
+
+        colors = [m.to_rgba(x) for x in df3['amplitude']]
+
+        squarify.plot(sorted(sizes), color=colors)
+
+        # plot scatter
+        # plt.scatter(np.log10(df3['openness']), np.log10(df3['amplitude']), s=5 * (df3['count'] * 2))
 
     def correlate_expression(self):
         # get expression
