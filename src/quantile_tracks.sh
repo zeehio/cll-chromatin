@@ -41,6 +41,58 @@ function get_coverage() {
 export -f get_coverage
 
 
+function paste_together() {
+    CHROM=$1
+
+    #load bgzip
+    module load htslib
+
+    # read bams
+    readarray BAMS < ~/bam_list.txt
+    
+    # get sample and file names
+    i=0
+    for BAM in ${BAMS[*]}
+    do
+        NAMES[i]=`basename ${BAM/.trimmed.bowtie2.filtered.bam/}`
+        FILENAMES[i]=~/coverage/${NAMES[i]}_${CHROM}.coverage.bed 
+        let i=i+1
+    done
+
+    paste ~/windows/${CHROM}_position.bed ${FILENAMES[*]} | bgzip > ~/coverage/all_chr_${CHROM}.bed.gz
+}
+
+export -f paste_together
+
+
+function quantilize() {
+    CHROM=$1
+
+    zcat all_chr_${CHROM}.bed.gz | \
+    python ~/quantilize.py ~/coverage/all_chr_${CHROM}
+}
+
+export -f quantilize
+
+
+function concatenate_chroms() {
+    SUFFIX=$1
+    cat ~/coverage/all_chr_{1..22}_${SUFFIX}.bed > all_${SUFFIX}.bedgraph
+}
+
+export -f concatenate_chroms
+
+
+function bedgraph_to_bigwig() {
+    BEDGRAPH=$1
+    BIGWIG=${BEDGRAPH/bedgraph/bigwig}
+    
+    bedGraphToBigWig $BEDGRAPH ~/resources/genomes/hg19/hg19.chromSizes $BIGWIG
+}
+
+export -f bedgraph_to_bigwig
+
+
 # Start
 # make 1bp windows for each chromosome
 parallel make_windows ::: {1..22}
@@ -56,48 +108,21 @@ do
         get_coverage $CHROM $BAM
     done
 done
-
 # while you wait for those jobs,
 parallel windows_position ::: {1..22}
 
 
 # concatenate columns across samples for each chromosome
-for CHROM in {1..22}
-do
-    # get sample and file names
-    i=0
-    for BAM in ${BAMS[*]}
-    do
-        NAMES[i]=`basename ${BAM/.trimmed.bowtie2.filtered.bam/}`
-        FILENAMES[i]=~/coverage/${NAMES[i]}_${CHROM}.coverage.bed 
-        let i=i+1
-    done
-
-    # paste iteratively (unfortunately, all at once is not working :S)
-    for FILE in ${FILENAMES[*]}
-    do
-        if [ $FILE == ${FILENAMES[0]} ]
-            then
-            # add "chrom start end" to begining
-            paste ~/windows/${CHROM}_position.bed $FILE > ~/coverage/all_chr_${CHROM}.coverage
-        else
-            paste ~/coverage/all_chr_${CHROM}.coverage $FILE > t
-            mv t ~/coverage/all_chr_${CHROM}.coverage
-        fi
-    done
-
-    # bgzip compress
-    bgzip ~/coverage/all_chr_${CHROM}.coverage
-done
+parallel paste_together ::: {1..22}
 
 
-# index with tabix
-for CHROM in {1..22}
-do
-    tabix -p bed ~/coverage/all_chr_${CHROM}.coverage.bgzip
-done
+# get quantiles
+parallel quantilize ::: {1..22}
 
-# try:
-# load into R with datatable
-# or
-# get sections out with tabix, calculate stats, write to file, paste position columns again
+
+# concat chromosomes
+parallel concatenate_chroms ::: quant5 quant25 mean quant75 quant95
+
+
+# make bigwigs
+bedgraph_to_bigwig ::: all_{quant5,quant25,mean,quant75,quant95}.bedgraph
