@@ -366,51 +366,91 @@ class Analysis(object):
         # get distance to gene and ensembl gene id annotation in whole matrix
         df = pd.merge(self.coverage_qnorm_annotated, self.gene_annotation, on=['chrom', 'start', 'end', 'gene_name'])
 
+        # GET 1(!) element per gene
+        # TWO COMPARISONS:
+        # closest promoter element vs distal element
+
         # get genes around promoter (+/- 2.5kb)
         df2 = df[df['distance'] <= 5000]
+        # promoters
+        promoter_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
+        promoters = df2.ix[promoter_index]
 
-        # group by gene, get mean oppenness across all samples, across all elements
-        element_count = df2.groupby(["ensembl_gene_id"]).apply(len)
+        # get genes away from promoters (> 50kb)
+        df2 = df[df['distance'] > 50000]
+        # promoters
+        enhancer_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
+        enhancers = df2.ix[enhancer_index]
 
-        # group by gene, get mean oppenness across all samples, across all elements
-        mean_oppenness = df2[["mean", "ensembl_gene_id"]].groupby(["ensembl_gene_id"]).apply(np.mean)
-        mean_oppenness = mean_oppenness.mean(axis=1)
+        # Calculate quantiles
+        quant95 = promoters[[sample.name for sample in self.samples]].apply(np.percentile, args=[95], axis=1)
+        quant5 = promoters[[sample.name for sample in self.samples]].apply(np.percentile, args=[5], axis=1)
+        promoters['amplitude'] = quant95 - quant5
 
-        # get amplitude of 5 and 95 percentiles
-        quant95 = df2[[sample.name for sample in self.samples]].apply(np.percentile, args=[95], axis=1)
-        quant5 = df2[[sample.name for sample in self.samples]].apply(np.percentile, args=[5], axis=1)
-        amplitude = quant95 - quant5
+        quant95 = enhancers[[sample.name for sample in self.samples]].apply(np.percentile, args=[95], axis=1)
+        quant5 = enhancers[[sample.name for sample in self.samples]].apply(np.percentile, args=[5], axis=1)
+        enhancers['amplitude'] = quant95 - quant5
 
-        # get mean amplitude per gene
-        df2['amplitude'] = amplitude
-        mean_amplitude = df2[["amplitude", "ensembl_gene_id"]].groupby(["ensembl_gene_id"]).apply(np.mean)
-        mean_amplitude = mean_amplitude.mean(axis=1)
+        # Plot distributions of amplitude (fold_change)
+        sns.distplot(promoters['amplitude'])
+        sns.distplot(enhancers['amplitude'])
 
-        # put them together
-        df3 = pd.DataFrame([element_count, mean_oppenness['mean'], mean_amplitude]).T
-        df3.columns = ['count', 'openness', 'amplitude']
-        df3.to_csv(os.path.join(self.data_dir, "gene_level_measurements.csv"), index=False)
+        # plot aditional boxplots for selected genes
+        sel_genes = {
+            # main B cell surface markers
+            "CD19": "ENSG00000177455",
+            "CD21": "ENSG00000117322",
+            "CD22": "ENSG00000012124",
+            "FCGR2B": "ENSG00000072694",  # CD32
 
-        # plot squares (treemap)
-        import squarify
-        width = 1200.
-        height = 1200.
+            # other B cell surface markers
+            "CD20": "ENSG00000156738",
+            "CD24": "ENSG00000272398",
+            "CD38": "ENSG00000004468",
+            "CD72": "ENSG00000137101",
+            "CD74": "ENSG00000019582",  # MHC2
+            "CD79A": "ENSG00000105369",
+            "CD79B": "ENSG00000007312",
+            "CD83": "ENSG00000112149",
+            "CD86": "ENSG00000114013",
 
-        # get sizes of squares
-        sizes = squarify.normalize_sizes(np.log10(df3['openness']), width, height)
-        # get colors of squares
-        import matplotlib as mpl
-        import matplotlib.cm as cm
-        norm = mpl.colors.Normalize(vmin=np.percentile(df3['amplitude'], 5), vmax=np.percentile(df3['amplitude'], 95))
-        cmap = cm.hot
-        m = cm.ScalarMappable(norm=norm, cmap=cmap)
+            # signal transduction molecules
+            "SYK": "ENSG00000165025",
+            "LYN": "ENSG00000254087",
+            "BTK": "ENSG00000010671",
+            "BLNK": "ENSG00000095585",
+            "BLK": "ENSG00000136573",
 
-        colors = [m.to_rgba(x) for x in df3['amplitude']]
+            # transcriptional regulators
+            "EBF1": "ENSG00000164330",
+            "PAX5": "ENSG00000196092",
+            "POU2AF1": "ENSG00000110777",
+            "SPIB": "ENSG00000269404",
+            "SPI1": "ENSG00000066336",
+            "IRF4": "ENSG00000137265",
+            "IRF8": "ENSG00000140968",
+            "CEBPB": "ENSG00000172216",
 
-        squarify.plot(sorted(sizes), color=colors)
+            # others
+            "BCL6": "ENSG00000113916",
+        }
+        genes_str = "|".join(sel_genes.values())
 
-        # plot scatter
-        # plt.scatter(np.log10(df3['openness']), np.log10(df3['amplitude']), s=5 * (df3['count'] * 2))
+        gene_values = promoters[promoters['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in self.samples]].T
+        gene_values.columns = promoters.ix[gene_values.columns]['gene_name']
+        promoter_data = pd.melt(gene_values, var_name="gene", value_name="openness")
+        promoter_data['region'] = 'promoter'
+
+        gene_values = enhancers[enhancers['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in self.samples]].T
+        gene_values.columns = enhancers.ix[gene_values.columns]['gene_name']
+        enhancer_data = pd.melt(gene_values, var_name="gene", value_name="openness")
+        enhancer_data['region'] = 'enhancer'
+
+        boxplot_data = pd.concat([promoter_data, enhancer_data])
+
+        fig, axis = plt.subplots(1)
+        sns.violinplot(boxplot_data, x="gene", y="promoter", hue="type", palette={"promoter": "b", "enhancer": "y"}, ax=axis)
+        fig.savefig(os.path.join("results", "plots", "relevant_genes.violinplot.svg"))
 
     def correlate_expression(self):
         # get expression
