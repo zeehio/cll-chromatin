@@ -358,6 +358,28 @@ class Analysis(object):
 
         self.coverage_qnorm_annotated.to_csv(os.path.join(self.data_dir, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t", index=False)
 
+    def gene_oppeness_across_samples(self):
+        """
+        Annotates peaks with closest gene.
+        Needs files downloaded by prepare_external_files.py
+        """
+        # get distance to gene and ensembl gene id annotation in whole matrix
+        df = pd.merge(self.coverage_qnorm_annotated, self.gene_annotation, on=['chrom', 'start', 'end', 'gene_name'])
+
+        # get genes around promoter (+/- 2.5kb)
+        df2 = df[df['distance'] <= 5000]
+
+        # group by gene, get mean oppenness across all samples, across all elements
+        element_count = df2.groupby(["ensembl_gene_id"]).apply(len)
+
+        # group by gene, get mean oppenness across all samples, across all elements
+        mean_oppenness = df[[sample.name for sample in self.samples] + ["ensembl_gene_id"]].groupby(["ensembl_gene_id"]).apply(np.mean)
+
+        # plot squares
+        import squarify
+
+        # squarify.plot(sizes, labels, colors)
+
     def correlate_expression(self):
         # get expression
         expression_matrix = pd.read_csv(os.path.join("data", "CLL.geneReadcount.txt"), sep=" ")
