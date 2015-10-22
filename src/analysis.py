@@ -370,14 +370,14 @@ class Analysis(object):
         # TWO COMPARISONS:
         # closest promoter element vs distal element
 
-        # get genes around promoter (+/- 2.5kb)
-        df2 = df[df['distance'] <= 5000]
+        # get genes around promoter (+/- 1kb)
+        df2 = df[df['distance'] <= 2000]
         # promoters
         promoter_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
         promoters = df2.ix[promoter_index]
 
         # get genes away from promoters (> 50kb)
-        df2 = df[df['distance'] > 50000]
+        df2 = df[df['distance'] > 2000]
         # promoters
         enhancer_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
         enhancers = df2.ix[enhancer_index]
@@ -392,8 +392,10 @@ class Analysis(object):
         enhancers['amplitude'] = quant95 - quant5
 
         # Plot distributions of amplitude (fold_change)
-        sns.distplot(promoters['amplitude'])
-        sns.distplot(enhancers['amplitude'])
+        fig, axis = plt.subplots(1)
+        sns.distplot(promoters['amplitude'], color="b", ax=axis)
+        sns.distplot(enhancers['amplitude'], color="y", ax=axis)
+        fig.savefig(os.path.join("results", "plots", "all_genes.distplot.svg"))
 
         # plot aditional boxplots for selected genes
         sel_genes = {
@@ -449,7 +451,7 @@ class Analysis(object):
         boxplot_data = pd.concat([promoter_data, enhancer_data])
 
         fig, axis = plt.subplots(1)
-        sns.violinplot(boxplot_data, x="gene", y="promoter", hue="type", palette={"promoter": "b", "enhancer": "y"}, ax=axis)
+        sns.violinplot(data=boxplot_data.sort('openness'), x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, ax=axis)
         fig.savefig(os.path.join("results", "plots", "relevant_genes.violinplot.svg"))
 
     def correlate_expression(self):
