@@ -65,29 +65,133 @@ function paste_together() {
 export -f paste_together
 
 
-function quantilize() {
-    CHROM=$1
+function split_files() {
+    FILE=$1
+    NAME=${FILE/.bed.gz/}
+    
+    echo "#! /bin/bash" > job.sh
+    echo "#SBATCH --partition=shortq" >> job.sh
+    echo "#SBATCH --ntasks=1" >> job.sh
 
-    zcat all_chr_${CHROM}.bed.gz | \
-    python ~/quantilize.py ~/coverage/all_chr_${CHROM}
+    echo "#SBATCH --cpus-per-task=1" >> job.sh
+    echo "#SBATCH --mem-per-cpu=4000" >> job.sh
+
+    echo "#SBATCH --job-name=${NAME}_chr${CHROM}" >> job.sh
+    echo "#SBATCH --output=/scratch/users/arendeiro/logs/split_files_${NAME}.log" >> job.sh
+
+    echo "hostname" >> job.sh
+    echo "date" >> job.sh
+
+    echo "zcat $FILE | split -a 5 -d -l 1000000 - ${NAME}_" >> job.sh
+
+    echo "date" >> job.sh
+    sbatch job.sh
+}
+
+export -f split_files
+
+
+function quantilize() {
+    FILE=$1
+    
+    echo "#! /bin/bash" > job.sh
+    echo "#SBATCH --partition=shortq" >> job.sh
+    echo "#SBATCH --ntasks=1" >> job.sh
+
+    echo "#SBATCH --cpus-per-task=1" >> job.sh
+    echo "#SBATCH --mem-per-cpu=2000" >> job.sh
+
+    echo "#SBATCH --job-name=quantilize_${FILE}" >> job.sh
+    echo "#SBATCH --output=/scratch/users/arendeiro/logs/quantilize_files_${FILE}.log" >> job.sh
+
+    echo "hostname" >> job.sh
+    echo "date" >> job.sh
+
+    echo "cat $FILE | python ~/quantilize.py ~/coverage/$FILE" >> job.sh
+
+    echo "date" >> job.sh
+    sbatch job.sh
 }
 
 export -f quantilize
 
 
-function concatenate_chroms() {
+function fix_quantilize() {
     SUFFIX=$1
-    cat ~/coverage/all_chr_{1..22}_${SUFFIX}.bed > all_${SUFFIX}.bedgraph
+    
+    echo "#! /bin/bash" > job.sh
+    echo "#SBATCH --partition=longq" >> job.sh
+    echo "#SBATCH --ntasks=1" >> job.sh
+
+    echo "#SBATCH --cpus-per-task=2" >> job.sh
+    echo "#SBATCH --mem-per-cpu=10000" >> job.sh
+
+    echo "#SBATCH --job-name=fix_quantilize_${SUFFIX}" >> job.sh
+    echo "#SBATCH --output=/scratch/users/arendeiro/logs/fix_quantilize_files_${SUFFIX}.log" >> job.sh
+
+    echo "hostname" >> job.sh
+    echo "date" >> job.sh
+
+    echo "NUMBER=\${RANDOM}" >> job.sh
+
+    echo "grep -P  '^chr\d+\t\d+\t\d+\t\d+\.\d+$' ~/coverage/all_${SUFFIX}.bedgraph > ~/coverage/t_\${NUMBER}" >> job.sh
+    echo "mv t_\${NUMBER} ~/coverage/all_${SUFFIX}.bedgraph" >> job.sh
+
+    echo "date" >> job.sh
+    sbatch job.sh
 }
 
-export -f concatenate_chroms
+export -f fix_quantilize
+
+
+function concatenate_back() {
+    SUFFIX=$1
+    
+    echo "#! /bin/bash" > job.sh
+    echo "#SBATCH --partition=longq" >> job.sh
+    echo "#SBATCH --ntasks=1" >> job.sh
+
+    echo "#SBATCH --cpus-per-task=4" >> job.sh
+    echo "#SBATCH --mem-per-cpu=8000" >> job.sh
+
+    echo "#SBATCH --job-name=concatenate_back_${FILE}" >> job.sh
+    echo "#SBATCH --output=/scratch/users/arendeiro/logs/concatenate_back_files_${FILE}.log" >> job.sh
+
+    echo "hostname" >> job.sh
+    echo "date" >> job.sh
+
+    echo "INPUT=(\`ls -v ~/coverage/ | grep -e all_chr_.*_${SUFFIX} | sort -z\`)" >> job.sh
+
+    echo "cat \${INPUT[@]} > all_${SUFFIX}.bedgraph" >> job.sh
+
+    echo "date" >> job.sh
+    sbatch job.sh
+}
+
+export -f concatenate_back
 
 
 function bedgraph_to_bigwig() {
     BEDGRAPH=$1
     BIGWIG=${BEDGRAPH/bedgraph/bigwig}
     
-    bedGraphToBigWig $BEDGRAPH ~/resources/genomes/hg19/hg19.chromSizes $BIGWIG
+    echo "#! /bin/bash" > job.sh
+    echo "#SBATCH --partition=longq" >> job.sh
+    echo "#SBATCH --ntasks=1" >> job.sh
+
+    echo "#SBATCH --cpus-per-task=2" >> job.sh
+    echo "#SBATCH --mem-per-cpu=100000" >> job.sh
+
+    echo "#SBATCH --job-name=bedgraph_to_bigwig_${BEDGRAPH}" >> job.sh
+    echo "#SBATCH --output=/scratch/users/arendeiro/logs/bedgraph_to_bigwig_${BEDGRAPH}.log" >> job.sh
+
+    echo "hostname" >> job.sh
+    echo "date" >> job.sh
+
+    echo "bedGraphToBigWig ~/coverage/all_${BEDGRAPH} ~/resources/genomes/hg19/hg19.chromSizes ~/coverage/all_${BIGWIG}" >> job.sh
+
+    echo "date" >> job.sh
+    sbatch job.sh
 }
 
 export -f bedgraph_to_bigwig
@@ -116,13 +220,35 @@ parallel windows_position ::: {1..22}
 parallel paste_together ::: {1..22}
 
 
-# get quantiles
-parallel quantilize ::: {1..22}
+# split files in chunks
+for CHROM in {1..22}
+do
+    split_files all_chr_$CHROM.bed.gz
+done
 
 
-# concat chromosomes
-parallel concatenate_chroms ::: quant5 quant25 mean quant75 quant95
+# get quantiles and mean
+for FILE in `ls ~/coverage/ | grep -v bed | grep -v job`
+do
+    quantilize $FILE
+done
+
+# concat chuncks across chromosomes
+for SUFFIX in quant5 quant25 mean quant75 quant95
+do
+    concatenate_back $SUFFIX
+done
+
+
+# fix this crap
+for SUFFIX in quant5 quant25 mean quant75 quant95
+do
+    fix_quantilize $SUFFIX
+done
 
 
 # make bigwigs
-bedgraph_to_bigwig ::: all_{quant5,quant25,mean,quant75,quant95}.bedgraph
+for SUFFIX in quant5 quant25 mean quant75 quant95
+do
+    bedgraph_to_bigwig ${SUFFIX}.bedgraph
+done
