@@ -4,6 +4,7 @@ import os
 import numpy as np
 import pandas as pd
 import pybedtools
+import re
 
 
 def get_tss(entry):
@@ -103,13 +104,21 @@ tsss.sort().saveas("../data/GRCh37_hg19_ensembl_genes.tss.bed")
 "grep NM t > hg19.refSeq.TSS.mRNA.bed"
 
 
-# Get roadmap CD19 perypheral blood HMM state annotation
+# Get roadmap HMM state annotation
 # read more about it here http://egg2.wustl.edu/roadmap/web_portal/chr_state_learning.html#core_15state
 roadmap_url = "http://egg2.wustl.edu/roadmap/data/byFileType/chromhmmSegmentations/ChmmModels/coreMarks/jointModel/final/"
 roadmap_15statesHMM = "all.mnemonics.bedFiles.tgz"
-roadmap_15statesHMM_CD19 = "E032_15_coreMarks_mnemonics.bed.gz"
-
 os.system("wget {0}{1}".format(roadmap_url, roadmap_15statesHMM))
+
+# Get all cell's HMM state annotation
+os.system("gzip -d {0}".format(roadmap_15statesHMM))
+
+# concatenate all files
+all_states = "all_states_all_lines.bed"
+os.system("cat *.bed > {0}".format(all_states))
+
+# Get CD19 perypheral blood HMM state annotation
+roadmap_15statesHMM_CD19 = "E032_15_coreMarks_mnemonics.bed.gz"
 os.system("tar zxvf {0} {1}".format(roadmap_15statesHMM, roadmap_15statesHMM_CD19))
 os.system("gzip -d {0}".format(roadmap_15statesHMM_CD19))
 os.system("mv E032_15_coreMarks_mnemonics.bed ../data/E032_15_coreMarks_mnemonics.bed")
@@ -174,3 +183,42 @@ samples = {
 
 for accession in samples.values():
     sra2bam(accession, os.path.join("data/external/%s.bam" % accession))
+
+
+# GWAS studies
+# gwas db dump
+os.system("wget -O gwas_catalog.tsv http://www.ebi.ac.uk/gwas/api/search/downloads/alternative")
+# gwas ontology
+os.system("wget http://www.ebi.ac.uk/fgpt/gwas/ontology/GWAS-EFO-Mappings201405.xlsx")
+
+# read in
+df = pd.read_csv("gwas_catalog.tsv", sep="\t")
+mapping = pd.read_excel("GWAS-EFO-Mappings201405.xlsx")
+
+# merge both
+df2 = pd.merge(df, mapping, on=['PUBMEDID'])
+
+# subset columns
+df3 = df2[['CHR_ID', 'CHR_POS', 'PUBMEDID', 'DISEASE/TRAIT', 'PARENT', 'SNPS', 'STRONGEST SNP-RISK ALLELE', 'P-VALUE', 'OR or BETA']]
+df3.columns = ['chr', 'pos', 'pubmed_id', 'trait', 'ontology_group', 'snp', 'snp_strongest_allele', 'p_value', 'beta']
+df3.to_csv("gwas_catalog.csv", index=False)
+
+# Filter
+df4 = df3[df3['p_value'] < 5e-8]
+
+# Export bed file for each ontology group
+for group in df4['ontology_group'].unique():
+    df5 = df4[df4['ontology_group'] == group]
+    df5 = df5[['chr', 'pos']]
+    df5.columns = ['chr', 'start']
+    # drop entries without a position
+    df5.dropna(how='any', subset=['chr', 'start'], inplace=True)
+    df5['chr'] = ['chr' + str(int(i)) for i in df5['chr']]
+    df5['end'] = df5['start'] + 1
+
+    df5['start'] = df5['start'].astype(int)
+    df5['end'] = df5['end'].astype(int)
+
+    # write bed file
+    group = re.sub(" ", "_", group).lower()
+    df5.drop_duplicates().to_csv("gwas_catalog.%s.bed" % group, sep="\t", header=False, index=False)

@@ -1167,6 +1167,51 @@ def annotate_mutations(samples, clinical):
     return new_samples
 
 
+def state_enrichment_overlap(n=100):
+    cll_peaks = "~/cll_peaks.bed"
+    all_states = "all_states_all_lines.bed"
+
+    # states of interest:
+    # get names of all states
+    states = pd.read_csv(all_states, sep="\t", header=None)[3].unique().tolist()
+
+    # loop through states, merge intervals, count number intersepting CLL peaks, and not intersepting
+    cll_ints = pybedtools.BedTool(cll_peaks)
+
+    df = pd.DataFrame()
+    for state in states[-3:]:
+        state_bed = "{0}.bed".format(state)
+        os.system("grep {0} {1} > {2}".format(state, all_states, state_bed))
+
+        # merge all intervals (of the same type across cell types)
+        state_ints = pybedtools.BedTool(state_bed).sort().merge()
+
+        total = len(state_ints)
+        pos = len(state_ints.intersect(cll_ints))
+
+        # get mean of `n` shuffled cll sites
+        background = list()
+        for i in range(n):
+            background.append(len(state_ints.intersect(cll_ints.shuffle(genome='hg19', chrom=True))))
+
+        # append to df
+        df = df.append(pd.Series([total, pos, np.round(np.mean(background))]), ignore_index=True)
+    df.index = states
+    df.columns = ['total', 'pos', 'background']
+
+    df['state'] = df.index
+
+    df.to_csv("results/plots/chrom_state_overlap_all.csv", index=False)
+
+    df2 = pd.melt(df, id_vars='state')
+
+    df2.sort(['variable', 'value'], inplace=True)
+
+    fig, axis = plt.subplots(1)
+    sns.barplot(data=df2, x='state', y='value', hue='variable', ax=axis)
+    fig.savefig("results/plots/chrom_state_overlap_all.svg")
+
+
 def bed_to_fasta(bed_file, fasta_file):
     cmd = "bedtools getfasta -fi ~/resources/genomes/hg19/hg19.fa -bed {0} -fo {1}".format(bed_file, fasta_file)
     os.system(cmd)
