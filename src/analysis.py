@@ -1167,29 +1167,6 @@ def annotate_mutations(samples, clinical):
     return new_samples
 
 
-def hexbin(x, y, color, **kwargs):
-    cmap = sns.light_palette(color, as_cmap=True)
-    plt.hexbin(x, y, gridsize=15, cmap=cmap, **kwargs)
-
-
-def get_cluster_classes(dendrogram, label='ivl'):
-    from collections import defaultdict
-
-    cluster_idxs = defaultdict(list)
-    for c, pi in zip(dendrogram['color_list'], dendrogram['icoord']):
-        for leg in pi[1:3]:
-            i = (leg - 5.0) / 10.0
-            if abs(i - int(i)) < 1e-5:
-                cluster_idxs[c].append(int(i))
-
-    cluster_classes = {}
-    for c, l in cluster_idxs.items():
-        i_l = [dendrogram[label][j] for j in l]
-        cluster_classes[c] = i_l
-
-    return cluster_classes
-
-
 def bed_to_fasta(bed_file, fasta_file):
     cmd = "bedtools getfasta -fi ~/resources/genomes/hg19/hg19.fa -bed {0} -fo {1}".format(bed_file, fasta_file)
     os.system(cmd)
