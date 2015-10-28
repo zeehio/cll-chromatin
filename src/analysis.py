@@ -1201,7 +1201,7 @@ def state_enrichment_overlap(n=100):
 
     df['state'] = df.index
 
-    df.to_csv("results/plots/chrom_state_overlap_all.csv", index=False)
+    df.to_csv("chrom_state_overlap_all.csv", index=False)
 
     df2 = pd.melt(df, id_vars='state')
 
@@ -1209,7 +1209,35 @@ def state_enrichment_overlap(n=100):
 
     fig, axis = plt.subplots(1)
     sns.barplot(data=df2, x='state', y='value', hue='variable', ax=axis)
-    fig.savefig("results/plots/chrom_state_overlap_all.svg")
+    fig.savefig("chrom_state_overlap_all.svg", bbox_inches='tight')
+
+    # fraction of total
+    df['posF'] = df['pos'] / df['total']
+    df['backgroundF'] = df['background'] / df['total']
+    df3 = pd.melt(df[["state", "posF", "backgroundF"]], id_vars='state')
+    df3.sort(['variable', 'value'], inplace=True)
+
+    fig, axis = plt.subplots(1)
+    sns.barplot(data=df3, x='state', y='value', hue='variable', ax=axis)
+    fig.savefig("chrom_state_overlap_all.fraction_total.svg", bbox_inches='tight')
+
+    # fraction of total enriched over background
+    df['foldF'] = df['posF'] / df['backgroundF']
+    df4 = pd.melt(df[["state", "foldF"]], id_vars='state')
+    df4.sort(['variable', 'value'], inplace=True)
+
+    fig, axis = plt.subplots(1)
+    sns.barplot(data=df4, x='state', y='value', hue='variable', ax=axis)
+    fig.savefig("chrom_state_overlap_all.fraction_total.enriched.svg", bbox_inches='tight')
+
+    # same with log2
+    df['foldFlog'] = np.log2(df['foldF'])
+    df5 = pd.melt(df[["state", "foldFlog"]], id_vars='state')
+    df5.sort(['variable', 'value'], inplace=True)
+
+    fig, axis = plt.subplots(1)
+    sns.barplot(data=df5, x='state', y='value', hue='variable', ax=axis)
+    fig.savefig("chrom_state_overlap_all.fraction_total.enriched.log.svg", bbox_inches='tight')
 
 
 def bed_to_fasta(bed_file, fasta_file):
