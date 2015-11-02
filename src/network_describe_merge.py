@@ -563,12 +563,6 @@ Gf = filter_networks_edges(G, 3)
 graph_to_json_d3(Gf, os.path.join(data_dir, "networks_individual_mCLL_uCLL.subtraction-abs.json"))
 
 
-
-# iCLL
-
-
-#
-
 # Get networks from footprinting of merged samples
 base = os.path.join(data_dir, "_".join(["merged-samples", "mutated"]))
 
@@ -592,13 +586,60 @@ G = subtract_networks_edges(G2, G1)
 Gf = filter_networks_edges(G, 3)
 graph_to_json_d3(Gf, os.path.join(data_dir, "networks_merged_mCLL_uCLL.subtraction-abs.json"))
 
-
-
 G = subtract_networks_nodes(G1, G2)
 Gf = filter_networks_edges(G, 2)
 graph_to_json_d3(Gf, os.path.join(data_dir, "networks_merged_uCLL_mCLL.subtraction_nodes.json"))
 
-# classify nodes into regulator/regulated
-# color in visualization
 
-# run again with TF-gene interactions
+# ALL-SAMPLE NETWORK, infered from merged bam footprints
+graph_file = os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_all_all" + ".piq.TF-gene_interactions.tsv")
+G = create_graph(graph_file)
+
+# Describe network
+graph_desc, node_desc = describe_graph(G)
+# plot degree rank vs degree
+plt.scatter(node_desc["degree"].rank(ascending=False), node_desc["degree"])
+
+
+# Split into regulators-regulated
+regs = node_desc[node_desc["out_in_degree_fold_change"] > 0]
+noregs = node_desc[node_desc["out_in_degree_fold_change"] < 0]
+
+plt.scatter(regs["degree"].rank(ascending=False), regs["degree"], color="b")
+plt.scatter(noregs["degree"].rank(ascending=False), noregs["degree"], color="g")
+
+plt.scatter(regs["degree"], regs["out_in_degree_fold_change"])
+plt.scatter(noregs["degree"], noregs["out_in_degree_fold_change"])
+
+
+# ighv
+graph_file = os.path.join(data_dir, "merged-samples_mutated_False", "footprints", "merged-samples_mutated_False" + ".piq.TF-TF_interactions.filtered.tsv")
+uG = create_graph(graph_file)
+
+graph_file = os.path.join(data_dir, "merged-samples_mutated_False", "footprints", "merged-samples_mutated_False" + ".piq.TF-TF_interactions.filtered.tsv")
+mG = create_graph(graph_file)
+
+ugraph_desc, unode_desc = describe_graph(uG)
+mgraph_desc, mnode_desc = describe_graph(mG)
+
+plt.scatter(unode_desc["degree"].rank(ascending=False), unode_desc["degree"], color="red")
+plt.scatter(mnode_desc["degree"].rank(ascending=False), mnode_desc["degree"], color="blue")
+
+plt.scatter(unode_desc["degree"], unode_desc["out_in_degree_fold_change"], color="red")
+plt.scatter(mnode_desc["degree"], mnode_desc["out_in_degree_fold_change"], color="blue")
+
+
+# get change between u-mCLL
+unode_desc["TF"] = unode_desc.index
+mnode_desc["TF"] = mnode_desc.index
+
+# normalize degree within each network
+unode_desc["degree_n"] = unode_desc["degree"] / unode_desc["degree"].sum()
+mnode_desc["degree_n"] = mnode_desc["degree"] / mnode_desc["degree"].sum()
+
+# merge
+merge = pd.merge(unode_desc, mnode_desc, on="TF")
+merge["fc"] = np.log2(merge["degree_n_x"] / merge["degree_n_y"])
+
+
+plt.scatter(merge["fc"].rank(ascending=False), merge["fc"], color="blue")
