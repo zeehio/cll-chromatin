@@ -1,3 +1,9 @@
+#!/usr/bin/env python
+
+"""
+
+"""
+
 import os
 import pandas as pd
 import numpy as np
@@ -298,6 +304,23 @@ def describe_graph(G):
     return (graph_desc, pd.DataFrame(node_desc).T)
 
 
+def color_nodes_with_degree_ratio(G):
+    # Node in/out degree ratio
+    degree_ratio = pd.Series(G.in_degree()) - pd.Series(G.out_degree())
+
+    colors = dict()
+    for u in degree_ratio.index:
+        if degree_ratio.ix[u] > 0:
+            colors[u] = "#FF6666"
+        elif degree_ratio.ix[u] < 0:
+            colors[u] = "#CCCCFF"
+        else:
+            colors[u] = "#808080"
+
+    nx.set_node_attributes(G, 'color', colors)
+    return G
+
+
 def graph_to_json_d3(G, json_file):
     # write network to disk
     # this can be visualized with D3.js (e.g. http://bl.ocks.org/mbostock/4062045#index.html)
@@ -376,6 +399,68 @@ def plot_graph_attributes(graph, nodes, prefix):
     plt.savefig(prefix + ".nodes.stats.svg", bbox_inches="tight")
 
 
+def subtract_networks_nodes(G1, G2):
+    """
+    Subtract two graphs, by removing weights from common edges.
+    """
+    # the new graph
+    G3 = nx.DiGraph()
+
+    for u in G1.nodes_iter():
+        if u not in G2.nodes():
+            G3.add_node(u)
+    return G3
+
+
+def subtract_networks_edges(G1, G2):
+    """
+    Subtract two graphs, by removing common edges.
+    """
+    # the new graph
+    G3 = nx.DiGraph()
+
+    for u, v in G1.edges_iter():
+        weight1 = G1[u][v]['weight']
+        if (u, v) not in G2.edges():
+            G3.add_edge(u, v, weight=weight1)
+    return G3
+
+
+def subtract_networks_edges_weights(G1, G2):
+    """
+    Subtract two graphs, by removing weights from common edges.
+    """
+    # the new graph
+    G3 = nx.DiGraph()
+
+    for u, v in G1.edges_iter():
+        weight1 = G1[u][v]['weight']
+        if (u, v) in G2.edges():
+            weight2 = G2[u][v]['weight']
+            # sum weights
+            weight = weight1 - weight2
+
+            # add edge to new graph
+            G3.add_edge(u, v, weight=weight)
+        else:
+            G3.add_edge(u, v, weight=weight1)
+    return G3
+
+
+def filter_networks_edges(G, threshold):
+    """
+    Subtract two graphs, by removing common edges.
+    """
+    # the new graph
+    G2 = nx.DiGraph()
+
+    for u, v in G.edges_iter():
+        weight1 = G[u][v]['weight']
+        if weight1 >= threshold:
+            G2.add_edge(u, v, weight=weight1)
+    return G2
+
+
 # Get path configuration
 data_dir = os.path.join('.', "data")
 results_dir = os.path.join('.', "results")
@@ -449,6 +534,7 @@ unodes.to_csv(os.path.join(data_dir, "networks_individual_uCLL.attributes.nodes.
 
 # write network to disk
 graph_to_json_d3(uG, os.path.join(data_dir, "networks_individual_uCLL.intersection.json"))
+uG = json_to_graph(os.path.join(data_dir, "networks_individual_uCLL.intersection.json"))
 
 # mCLL
 mutated = [s for s in samples if s.mutated is True]
@@ -461,16 +547,56 @@ mgraph.to_csv(os.path.join(data_dir, "networks_individual_mCLL.attributes.csv"),
 mnodes.to_csv(os.path.join(data_dir, "networks_individual_mCLL.attributes.nodes.csv"), index=False)
 # write network to disk
 graph_to_json_d3(mG, os.path.join(data_dir, "networks_individual_mCLL.intersection.json"))
+mG = json_to_graph(os.path.join(data_dir, "networks_individual_mCLL.intersection.json"))
+
+
+# subtract graphs
+G = subtract_networks_edges_weights(uG, mG)
+graph_to_json_d3(G, os.path.join(data_dir, "networks_individual_uCLL_mCLL.subtraction.json"))
+
+G = subtract_networks_edges(uG, mG)
+Gf = filter_networks_edges(G, 3)
+graph_to_json_d3(Gf, os.path.join(data_dir, "networks_individual_uCLL_mCLL.subtraction-abs.json"))
+
+G = subtract_networks_edges(mG, uG)
+Gf = filter_networks_edges(G, 3)
+graph_to_json_d3(Gf, os.path.join(data_dir, "networks_individual_mCLL_uCLL.subtraction-abs.json"))
+
+
 
 # iCLL
 
 
 #
 
+# Get networks from footprinting of merged samples
+base = os.path.join(data_dir, "_".join(["merged-samples", "mutated"]))
 
-# idea:
+graph_file = os.path.join(base + "_False", "footprints", "merged-samples_mutated_False.piq.TF-TF_interactions.filtered.tsv")
+G1 = create_graph(graph_file)
+graph_to_json_d3(G1, os.path.join(data_dir, "networks_merged_uCLL.json"))
+
+graph_file = os.path.join(base + "_True", "footprints", "merged-samples_mutated_True.piq.TF-TF_interactions.filtered.tsv")
+G2 = create_graph(graph_file)
+graph_to_json_d3(G2, os.path.join(data_dir, "networks_merged_mCLL.json"))
 
 # subtract graphs
+G = subtract_networks_edges_weights(G1, G2)
+graph_to_json_d3(G, os.path.join(data_dir, "networks_merged_uCLL_mCLL.subtraction.json"))
+
+G = subtract_networks_edges(G1, G2)
+Gf = filter_networks_edges(G, 3)
+graph_to_json_d3(color_nodes_with_degree_ratio(Gf), os.path.join(data_dir, "networks_merged_uCLL_mCLL.subtraction-abs.json"))
+
+G = subtract_networks_edges(G2, G1)
+Gf = filter_networks_edges(G, 3)
+graph_to_json_d3(Gf, os.path.join(data_dir, "networks_merged_mCLL_uCLL.subtraction-abs.json"))
+
+
+
+G = subtract_networks_nodes(G1, G2)
+Gf = filter_networks_edges(G, 2)
+graph_to_json_d3(Gf, os.path.join(data_dir, "networks_merged_uCLL_mCLL.subtraction_nodes.json"))
 
 # classify nodes into regulator/regulated
 # color in visualization
