@@ -14,16 +14,9 @@ import numpy as np
 import textwrap
 import re
 import pybedtools
-from scipy.stats import mannwhitneyu
-from statsmodels.sandbox.stats.multicomp import multipletests
-import matplotlib.pyplot as plt
-import seaborn as sns
-
 
 # Set settings
 pd.set_option("date_dayfirst", True)
-sns.set_style("whitegrid")
-sns.set_context("paper")
 
 
 def name_to_repr(name):
@@ -473,6 +466,7 @@ def collect_networks(foots_dir, motif_numbers, label):
     # Write gene assignments to disk
     gene_assignments.to_csv(os.path.join(foots_dir, label + ".piq.TF-gene_interactions.gene_assignments.tsv"), sep="\t", index=False)
     # Write stats to disk
+    stats.index = [number2tf[tf] for tf in stats.index]
     stats.to_csv(os.path.join(foots_dir, label + ".piq.TF-gene_interactions.stats.tsv"), sep="\t", index=True)
 
     # Drop TFBS with no gene in the same chromosome (random chroms) - very rare cases
@@ -482,8 +476,13 @@ def collect_networks(foots_dir, motif_numbers, label):
     interactions['TF'] = [number2tf[tf] for tf in interactions['TF']]
     interactions['gene'] = [ensembl2gene[gene] for gene in interactions['gene']]
 
-    # Save all TF-gene interactions
+    # Add interaction type
     interactions['interaction_type'] = "pd"
+
+    # reorder columns
+    interactions = interactions[["TF", "gene", "interaction_type", "interaction_score"]]
+
+    # Save all TF-gene interactions
     interactions.to_csv(os.path.join(foots_dir, label + ".piq.TF-gene_interactions.tsv"), sep="\t", index=False)
 
     # Filter for TF-gene interactions stronger than 1
@@ -559,17 +558,17 @@ for cmd in cmds:
 
 
 # MERGE BAM FILES FROM SAMPLES, PREPARE R CACHE FOR PIQ
+# 'automatable' features
+features = {
+    "patient_gender": ("F", "M"),  # gender
+    "mutated": (True, False),  # ighv mutation
+}
+
 jobs = list()
 
 # all CLL samples
 jobs.append(run_merged("all", [sample.filtered for sample in samples], "all"))
 
-
-# "gender" and "mutated"
-features = {
-    "patient_gender": ("F", "M"),  # gender
-    "mutated": (True, False),  # ighv mutation
-}
 for i, (feature, (group1, group2)) in enumerate(features.items()):
     # example : i, (feature, (group1, group2)) = (0, (features.items()[0]))
     # get dataframe subset with groups
@@ -727,8 +726,8 @@ for job in jobs:
 
 
 # BUILD NETWORKS
-ensembl2gene = pd.read_csv("data/ensemblToGeneName.txt", sep="\t", header=None)
-ensembl2gene = dict(zip(ensembl2gene[0], ensembl2gene[1]))
+ensembl2gene = pd.read_table("data/GRCh37_hg19_ensembl_genes.bed", sep="\t", header=None)
+ensembl2gene = dict(zip(ensembl2gene[3], ensembl2gene[6]))
 
 # parse PIQ output,
 # connect each motif to a gene
