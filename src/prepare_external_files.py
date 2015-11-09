@@ -181,6 +181,42 @@ with open("data/jaspar_human_motifs.id_mapping.txt", "w") as handle:
     handle.write("\n".join(["\t".join([str(i), human_motifs[i - 1].base_id, human_motifs[i - 1].name.split(";")[1].upper()]) for i in range(1, 1 + len(human_motifs))]))
 
 
+# TFBS-gene assignment:
+# Get ensembl annotation (ensGenes) for mm10
+names = [
+    "name",  # Name of gene (usually transcript_id from GTF)
+    "chrom",  # Chromosome name
+    "strand",  # + or - for strand
+    "txStart",  # Transcription start position
+    "txEnd",  # Transcription end position
+    "cdsStart",  # Coding region start
+    "cdsEnd",  # Coding region end
+    "exonCount",  # Number of exons
+    "exonStarts",  # Exon start positions
+    "exonEnds",  # Exon end positions
+    "id",  # Unique identifier
+    "name2",  # Alternate name (e.g. gene_id from GTF)
+    "cdsStartStat",  # enum('none','unk','incmpl','cmpl')
+    "cdsEndStat",  # enum('none','unk','incmpl','cmpl')
+    "exonFra"  # Exon frame offsets {0,1,2}
+]
+genes = pd.read_table("data/ensGene.txt", names=names).reset_index(drop=True)
+genes = genes[['chrom', 'txStart', 'txEnd', 'name2', 'name', 'strand']]
+genes.columns = ['chrom', 'start', 'end', 'ensembl_gene', 'ensembl_transcript', 'strand']
+
+# get longest transcript of each gene
+indexes = genes.groupby("ensembl_gene").apply(lambda x: np.argmax(x['end'] - x['start']))
+genes = genes.ix[indexes.unique().tolist()]
+
+# make region with TSS
+tss = genes.apply(get_tss, axis=1)
+tss.to_csv("data/ensembl.tss.bed", sep="\t", index=False, header=False)
+
+# make region with promoter + gene body
+promoter_and_genesbody = genes.apply(get_promoter_and_genebody, axis=1)
+promoter_and_genesbody.to_csv("data/ensembl.promoter_and_genesbody.bed", sep="\t", index=False, header=False)
+
+
 # Get GOtermID - GOtermDescription mapping
 # download data from Biomart (for some reason the GOterm name cannot be get automatically - probably I cannot figure out how :s)
 # http://www.ensembl.org/biomart/martview/6451fcd5296302994382deee7bd9c8eb?VIRTUALSCHEMANAME=default&ATTRIBUTES=hsapiens_gene_ensembl.default.feature_page.name_1006|hsapiens_gene_ensembl.default.feature_page.go_id&FILTERS=&VISIBLEPANEL=resultspanel

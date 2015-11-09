@@ -38,15 +38,20 @@ def annotate_igvh_mutations(samples, clinical):
     return new_samples
 
 
-def piq_prepare_motifs(motif_file="~/workspace/piq-single/pwms/jasparfix.txt", n_motifs=1316):
+def piq_prepare_motifs(motif_file="data/jaspar_human_motifs.txt", n_motifs=366):
     """
     """
     cmds = list()
     for motif in range(1, n_motifs + 1):
+        a = os.path.exists("/scratch/users/arendeiro/piq/motif.matches/%i.pwmout.RData" % motif)
+        b = os.path.exists("/scratch/users/arendeiro/piq/motif.matches/%i.pwmout.rc.RData" % motif)
+        if a and b:
+            continue
+
         cmd = """
     Rscript ~/workspace/piq-single/pwmmatch.exact.r"""
         cmd += " ~/workspace/piq-single/common.r"
-        cmd += " {0}".format(motif_file)
+        cmd += " {0}".format(os.path.abspath(motif_file))
         cmd += " " + str(motif)
         cmd += """ /scratch/users/arendeiro/piq/motif.matches/
     """
@@ -211,8 +216,28 @@ samples = [s for s in prj.samples if type(s) == ATACseqSample and s.name not in 
 samples = annotate_igvh_mutations(samples, clinical)
 
 # FOOTPRINTING
-motifs_file = "~/workspace/piq-single/pwms/jasparfix.txt"
-n_motifs = 1316
+motifs_file = "data/jaspar_human_motifs.txt"
+n_motifs = 366
+
+# prepare motifs for footprinting (done once)
+cmds = piq_prepare_motifs(motifs_file, n_motifs)
+for cmd in cmds:
+    cmd2 = tk.slurmHeader("PIQ_preparemotifs", os.path.join("/home/arendeiro/", "piq_preparemotifs.slurm.log"), cpusPerTask=1, queue="shortq")
+
+    # stupid PIQ hard-coded links
+    cmd2 += """
+    cd /home/arendeiro/workspace/piq-single/
+    """
+
+    # add the piq command
+    cmd2 += cmd
+
+    # write job to file
+    with open("/home/arendeiro/tmp.sh", 'w') as handle:
+        handle.writelines(textwrap.dedent(cmd2))
+
+    tk.slurmSubmitJob("/home/arendeiro/tmp.sh")
+
 
 # read list of tfs to do
 df = pd.read_csv("data/tf_gene_matching.txt", sep="\t", header=None)
@@ -229,24 +254,10 @@ refseq2gene = dict(zip(refseq2gene[0], refseq2gene[1]))
 # stupid PIQ hard-coded links
 os.chdir("/home/arendeiro/workspace/piq-single/")
 
-# prepare motifs for footprinting (done once)
-cmds = piq_prepare_motifs(motifs_file, n_motifs)
-for cmd in cmds:
-    cmd2 = tk.slurmHeader("PIQ_preparemotifs", os.path.join("/home/arendeiro/", "piq_preparemotifs.slurm.log"), cpusPerTask=1, queue="shortq")
-
-    # stupid PIQ hard-coded links
-    cmd2 += cmd
-
-    # write job to file
-    with open("/home/arendeiro/tmp.sh", 'w') as handle:
-        handle.writelines(textwrap.dedent(cmd2))
-
-    tk.slurmSubmitJob("/home/arendeiro/tmp.sh")
-
-
 # for each sample create R cache with bam file
 jobs = list()
 for sample in samples:
+    os.system("rm data/%s/footprints/*" % sample.name)
     if sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
         continue
 
@@ -288,7 +299,7 @@ for job in jobs:
     tk.slurmSubmitJob(job)
 
 
-# for each sample launch several jobs (>500) to footprint
+# for each sample launch several jobs (366) to footprint
 jobs = list()
 for sample in samples:
     if sample.technique != "ATAC-seq" or sample.cellLine != "CLL":

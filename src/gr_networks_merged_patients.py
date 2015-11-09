@@ -1,3 +1,10 @@
+#!/usr/bin/env python
+
+"""
+This script builds patient group-specific
+gene regulatory networks infered from transcription-factor footprints
+in ATAC-seq data.
+"""
 
 import os
 from pipelines.models import Project
@@ -278,6 +285,7 @@ def footprint(feature, group_label, motif_numbers):
     jobs = list()
     for motif in motif_numbers:
         if not os.path.exists("/scratch/users/arendeiro/piq/motif.matches/%i.pwmout.RData" % motif):
+            print("piq file for motif %i does not exist" % motif)
             continue
 
         t_dir = os.path.join(scratch_dir, label)
@@ -312,6 +320,40 @@ def footprint(feature, group_label, motif_numbers):
     return jobs
 
 
+def tfbs_to_gene(bed_file):
+    # read in gene body + promoter info
+    promoter_and_genesbody = pybedtools.BedTool("data/ensembl.promoter_and_genesbody.bed")
+    # read in TSS info
+    tss = pybedtools.BedTool("data/ensembl.tss.bed")
+    # columns
+    columns = ["chrom", "start", "end", "pwm", "shape", "strand", "score", "purity",
+               "chrom_gene", "start_gene", "end_gene", "gene", "transcript", "strand_gene"]
+
+    # Assign TFBS to gene if they overlap with gene body or promoter (5kb around TSS -> 2.5kb upstream)
+    gene_assignments = pybedtools.BedTool(os.path.join(bed_file)).intersect(promoter_and_genesbody, wa=True, wb=True).to_dataframe().reset_index()
+    gene_assignments.columns = columns
+
+    # For the remaining TFBSs, assign TFBS to closest TSS regardless of distance
+    # (distance is not so important for assignment because distance is a penalyzing effect during TF-gene interaction score calculation)
+    # 1. get genes not assigned previously
+    all_ = pybedtools.BedTool(os.path.join(bed_file)).to_dataframe().reset_index()
+    merged = pd.merge(all_, gene_assignments, how="left", on=['chrom', 'start', 'end'])
+    remaining = merged[merged['gene'].isnull()]
+    remaining.icol(range(1, 9)).to_csv(os.path.join("tmp_rest.bed"), sep="\t", index=False, header=False)
+
+    # 2. assign to nearest
+    closest_tss = pybedtools.BedTool(os.path.join("tmp_rest.bed")).closest(tss, d=True).to_dataframe().reset_index()
+    closest_tss.columns = columns + ['distance']
+
+    # put the two together
+    gene_assignments = pd.concat([gene_assignments, closest_tss])
+
+    # set overlapping distance to 0
+    gene_assignments.loc[gene_assignments['distance'].isnull(), 'distance'] = 0
+
+    return gene_assignments
+
+
 def piq_to_network(results_dir, motif_numbers):
     """
     Parse PIQ output, filter footprints.
@@ -321,11 +363,15 @@ def piq_to_network(results_dir, motif_numbers):
     files = os.listdir(results_dir)
     # get all cll peaks to filter data
     all_peaks = pybedtools.BedTool("data/cll_peaks.bed")
-    # read in gene info
-    refseq_mrna_tss = pybedtools.BedTool("data/hg19.refSeq.TSS.mRNA.deduplicated.bed")
 
-    # dict to store TF->gene interactions
+    # dataframe to store TFBS assignment to genes
+    assignments = pd.DataFrame()
+
+    # dataframe to store TF->gene interactions
     interactions = pd.DataFrame()
+
+    # dataframe to store stats about the TFBS and the interactions
+    stats = pd.DataFrame()
 
     # loop through motifs/TFs, filter and establish relationship between TF and gene
     for motif in motif_numbers:
@@ -344,45 +390,60 @@ def piq_to_network(results_dir, motif_numbers):
             # fix coordinates
             if "RC-calls.csv" not in result_file:
                 df["end"] = df["start"] + 1
+                df['strand'] = "+"
             else:
                 df["end"] = df["start"]
                 df["start"] = df["start"] - 1
+                df['strand'] = "-"
             # concatenate
             if i == 0:
                 df2 = df
             else:
                 df2 = pd.concat([df, df2])
 
+        # add total TFBS to stats
+        stats.loc[motif, "TFBS"] = len(df2)
+        stats.loc[motif, "TFBS_+"] = len(df2[df2['strand'] == "+"])
+        stats.loc[motif, "TFBS_-"] = len(df2[df2['strand'] == "-"])
+
         # Filter for purity
         footprints = df2[df2["purity"] > 0.7]
+        stats.loc[motif, "pur0.7"] = len(footprints)
 
-        # If empty give 0 to every gene for this TF
+        # If less than 500 significant interactions, ignore TF
         if len(footprints) < 500:
             continue
 
-        footprints[['chr', 'start', 'end', 'pwm', 'shape', 'score', 'purity']].to_csv(os.path.join("tmp.bed"), sep="\t", index=False, header=False)
+        footprints[['chr', 'start', 'end', 'pwm', 'shape', 'strand', 'score', 'purity']].to_csv(os.path.join("tmp.bed"), sep="\t", index=False, header=False)
 
         # filter for motifs overlapping CLL peaks
         footprints = pybedtools.BedTool(os.path.join("tmp.bed")).intersect(all_peaks, wa=True).to_dataframe()
-        footprints.columns = ["chrom", "start", "end", "pwm", "shape", "score", "purity"]
+        footprints.columns = ['chr', 'start', 'end', 'pwm', 'shape', 'strand', 'score', 'purity']
         footprints.to_csv(os.path.join("tmp.bed"), sep="\t", index=False, header=False)
+        stats.loc[motif, "overlap_cll"] = len(footprints)
 
-        # Get closest gene
-        closest_tss = pybedtools.BedTool(os.path.join("tmp.bed")).closest(refseq_mrna_tss, d=True).to_dataframe()
-        closest_tss.columns = ["chrom", "start", "end", "pwm", "shape", "score", "purity", "chrom_gene", "start_gene", "end_gene", "gene", "distance"]
+        # assign TFBS to gene
+        gene_assignments = tfbs_to_gene(os.path.join("tmp.bed"))
+        stats.loc[motif, "gene_overlap_count"] = len(gene_assignments[gene_assignments['distance'] == 0])
+        stats.loc[motif, "dist_gene_median"] = gene_assignments['distance'].median()
+        stats.loc[motif, "dist_gene_std"] = gene_assignments['distance'].std()
 
         # Get weighted values
         # weigh with footprint purity and distance to tss
-        scores = closest_tss
-        scores['interaction_score'] = scores.apply(lambda x: 2 * (x['purity'] - 0.5) * 10 ** -(x['distance'] / 1000000.), axis=1)
+        gene_assignments['interaction_score'] = gene_assignments.apply(lambda x: 2 * (x['purity'] - 0.5) * 10 ** -(x['distance'] / 1000000.), axis=1)
         # sum scores for each gene
-        scores = scores.groupby(['gene'])['interaction_score'].apply(sum).reset_index()
-
+        scores = gene_assignments.groupby(['gene'])['interaction_score'].apply(sum).reset_index()
         scores["TF"] = motif
 
-        interactions = pd.concat([interactions, scores])
+        # add mean score for each gene
+        stats.loc[motif, "score_gene_mean"] = scores['interaction_score'].mean()
+        stats.loc[motif, "score_gene_std"] = scores['interaction_score'].std()
 
-    return interactions
+        # add to dataframe with all TF-gene interactions
+        interactions = pd.concat([interactions, scores])
+        assignments = pd.concat([assignments, gene_assignments])
+
+    return (assignments, interactions, stats)
 
 
 def piq_to_change(results_dir1, results_dir2, motif_numbers):
@@ -455,27 +516,38 @@ def piq_to_change(results_dir1, results_dir2, motif_numbers):
 
 
 def collect_networks(foots_dir, motif_numbers, label):
-    interactions = piq_to_network(foots_dir, motif_numbers)
+    gene_assignments, interactions, stats = piq_to_network(foots_dir, motif_numbers)
+
+    # Write gene assignments to disk
+    gene_assignments.to_csv(os.path.join(foots_dir, label + ".piq.TF-gene_interactions.gene_assignments.tsv"), sep="\t", index=False)
+    # Write stats to disk
+    stats.to_csv(os.path.join(foots_dir, label + ".piq.TF-gene_interactions.stats.tsv"), sep="\t", index=False)
 
     # Drop TFBS with no gene in the same chromosome (random chroms) - very rare cases
     interactions = interactions[interactions['gene'] != '.']
 
     # Get original TF name and gene symbol
     interactions['TF'] = [number2tf[tf] for tf in interactions['TF']]
-    interactions['gene'] = [refseq2gene[gene] for gene in interactions['gene']]
+    interactions['gene'] = [ensembl2gene[gene] for gene in interactions['transcript']]
 
+    # Save all TF-gene interactions
     interactions['interaction_type'] = "pd"
     interactions.to_csv(os.path.join(foots_dir, label + ".piq.TF-gene_interactions.tsv"), sep="\t", index=False)
 
+    # Filter for TF-gene interactions stronger than 1
+    interactions_filtered = interactions[interactions['interaction_score'] >= 1]
+    interactions_filtered.to_csv(os.path.join(foots_dir, label + ".piq.TF-TF_interactions.filtered.tsv"), sep="\t", index=False)
+
     # Filter for TF-> TF interactions
-    interactions_TF = interactions[interactions['gene'].isin(tfs)]
+    interactions_TF = interactions[interactions['gene'].isin(number2tf.values())]
     interactions_TF.to_csv(os.path.join(foots_dir, label + ".piq.TF-TF_interactions.tsv"), sep="\t", index=False)
 
-    # Filter for nodes with more than 2 edges
+    # Filter for TF-TF interactions stronger than 1
     interactions_TF_filtered = interactions_TF[interactions_TF['interaction_score'] >= 1]
     interactions_TF_filtered.to_csv(os.path.join(foots_dir, label + ".piq.TF-TF_interactions.filtered.tsv"), sep="\t", index=False)
 
 
+# INIT
 # Get path configuration
 data_dir = os.path.join('.', "data")
 results_dir = os.path.join('.', "results")
@@ -508,8 +580,9 @@ samples_to_exclude = [
     'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19']  # 'CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19']
 samples = [sample for sample in prj.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq" and sample.name not in samples_to_exclude]
 
-jobs = list()
 
+# MERGE BAM FILES FROM SAMPLES, PREPARE R CACHE FOR PIQ
+jobs = list()
 
 # all CLL samples
 jobs.append(run_merged("all", [sample.filtered for sample in samples], "all"))
@@ -551,15 +624,12 @@ for job in jobs:
 
 # FOOTPRINT
 # get motifs
-motifs_file = "~/workspace/piq-single/pwms/jasparfix.txt"
-n_motifs = 1316
+n_motifs = 366
+motif_numbers = range(1, n_motifs + 1)
+motifs_mapping = "data/jaspar_human_motifs.id_mapping.txt"
+df = pd.read_table(motifs_mapping, header=None)
+number2tf = dict(zip(df[0], df[2]))
 
-# read list of tfs to do
-df = pd.read_csv("data/tf_gene_matching.txt", sep="\t", header=None)
-df[1] = [x.upper() for x in df[1]]
-tfs = df[1]
-number2tf = dict(zip(df[0], df[1]))
-motif_numbers = df[0]
 
 # send out jobs
 jobs = list()
@@ -587,8 +657,8 @@ for job in jobs:
 
 
 # BUILD NETWORKS
-refseq2gene = pd.read_csv("data/Refseq2Gene.txt", sep="\t", header=None)
-refseq2gene = dict(zip(refseq2gene[0], refseq2gene[1]))
+ensembl2gene = pd.read_csv("data/ensemblToGeneName.txt", sep="\t", header=None)
+ensembl2gene = dict(zip(ensembl2gene[0], ensembl2gene[1]))
 
 # parse PIQ output,
 # connect each motif to a gene
