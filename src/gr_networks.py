@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 """
-This script builds patient group-specific
+This script builds patient- or patient group-specific
 gene regulatory networks infered from transcription-factor footprints
 in ATAC-seq data.
 """
@@ -200,6 +200,27 @@ def annotate_mutations(samples, clinical):
             sample.mutations = None
         new_samples.append(sample)
     return new_samples
+
+
+def piq_prepare_motifs(motif_file="data/jaspar_human_motifs.txt", n_motifs=366):
+    """
+    """
+    cmds = list()
+    for motif in range(1, n_motifs + 1):
+        a = os.path.exists("/scratch/users/arendeiro/piq/motif.matches/%i.pwmout.RData" % motif)
+        b = os.path.exists("/scratch/users/arendeiro/piq/motif.matches/%i.pwmout.rc.RData" % motif)
+        if a and b:
+            continue
+
+        cmd = """
+    Rscript ~/workspace/piq-single/pwmmatch.exact.r"""
+        cmd += " ~/workspace/piq-single/common.r"
+        cmd += " {0}".format(os.path.abspath(motif_file))
+        cmd += " " + str(motif)
+        cmd += """ /scratch/users/arendeiro/piq/motif.matches/
+    """
+        cmds.append(cmd)
+    return cmds
 
 
 def piq_prepare_bams(bams, output_cache):
@@ -528,7 +549,7 @@ def collect_networks(foots_dir, motif_numbers, label):
 
     # Get original TF name and gene symbol
     interactions['TF'] = [number2tf[tf] for tf in interactions['TF']]
-    interactions['gene'] = [ensembl2gene[gene] for gene in interactions['transcript']]
+    interactions['gene'] = [ensembl2gene[gene] for gene in interactions['gene']]
 
     # Save all TF-gene interactions
     interactions['interaction_type'] = "pd"
@@ -550,6 +571,7 @@ def collect_networks(foots_dir, motif_numbers, label):
 # INIT
 # Get path configuration
 data_dir = os.path.join('.', "data")
+scratch_dir = os.path.join("/scratch/users/arendeiro/piq")
 results_dir = os.path.join('.', "results")
 plots_dir = os.path.join(results_dir, "plots")
 
@@ -579,6 +601,30 @@ samples_to_exclude = [
     'CLL_ATAC-seq_5147_1-5-48105_ATAC17-2_hg19',
     'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19']  # 'CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19']
 samples = [sample for sample in prj.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq" and sample.name not in samples_to_exclude]
+
+
+# MOTIFS FOR PIQ
+motifs_file = "data/jaspar_human_motifs.txt"
+n_motifs = 366
+
+# prepare motifs for footprinting (done once)
+cmds = piq_prepare_motifs(motifs_file, n_motifs)
+for cmd in cmds:
+    cmd2 = tk.slurmHeader("PIQ_preparemotifs", os.path.join("/home/arendeiro/", "piq_preparemotifs.slurm.log"), cpusPerTask=1, queue="shortq")
+
+    # stupid PIQ hard-coded links
+    cmd2 += """
+    cd /home/arendeiro/workspace/piq-single/
+    """
+
+    # add the piq command
+    cmd2 += cmd
+
+    # write job to file
+    with open("/home/arendeiro/tmp.sh", 'w') as handle:
+        handle.writelines(textwrap.dedent(cmd2))
+
+    tk.slurmSubmitJob("/home/arendeiro/tmp.sh")
 
 
 # MERGE BAM FILES FROM SAMPLES, PREPARE R CACHE FOR PIQ
@@ -618,6 +664,47 @@ g2 = [sample.filtered for sample in samples if sample.diagnosis_disease == "MBL"
 jobs.append(run_merged("CLL_vs_MBL", g1, "CLL"))
 jobs.append(run_merged("CLL_vs_MBL", g2, "MBL"))
 
+# individual samples
+# for each sample create R cache with bam file
+for sample in samples:
+    os.system("rm data/%s/footprints/*" % sample.name)
+    if sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
+        continue
+
+    foots_dir = os.path.join(sample.dirs.sampleRoot, "footprints")
+    r_data = os.path.join(foots_dir, sample.name + ".filteredshifted.RData")
+    if os.path.isfile(r_data):
+        continue
+    if not os.path.exists(foots_dir):
+        os.mkdir(foots_dir)
+
+    tmp_dir = os.path.join(scratch_dir, sample.name)
+    if not os.path.exists(tmp_dir):
+        os.mkdir(tmp_dir)
+    job_file = os.path.join(foots_dir, "slurm_job.sh")
+
+    # prepare slurm job header
+    cmd = tk.slurmHeader(sample.name + "_PIQ_prepareBam", os.path.join(foots_dir, "slurm.log"), cpusPerTask=2, queue="shortq")
+
+    # stupid PIQ hard-coded links
+    cmd += """
+    cd /home/arendeiro/workspace/piq-single/
+    """
+
+    # prepare bams
+    cmd += piq_prepare_bams([sample.filteredshifted], r_data)
+
+    # slurm footer
+    cmd += tk.slurmFooter()
+
+    # write job to file
+    with open(job_file, 'w') as handle:
+        handle.writelines(textwrap.dedent(cmd))
+
+    # append file to jobs
+    jobs.append(job_file)
+
+# submit jobs (to create bam file caches)
 for job in jobs:
     tk.slurmSubmitJob(job)
 
@@ -652,6 +739,58 @@ jobs += footprint("untreated_vs_1stline", "1stlinetreatment", motif_numbers)
 jobs += footprint("CLL_vs_MBL", "CLL", motif_numbers)
 jobs += footprint("CLL_vs_MBL", "MBL", motif_numbers)
 
+# individual samples
+# for each sample launch several jobs (366) to footprint
+for sample in samples:
+    if sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
+        continue
+
+    foots_dir = os.path.join(sample.dirs.sampleRoot, "footprints")
+    if not os.path.exists(foots_dir):
+        os.mkdir(foots_dir)
+    r_data = os.path.join(foots_dir, sample.name + ".filteredshifted.RData")
+
+    # if footprint files exist, skip sample:
+    if os.path.exists(os.path.join(foots_dir, "936-PB00421Mafk1-diag.pdf")):  # this is an example
+        continue
+    else:
+        print(sample.name)
+
+    for motif in motif_numbers:
+        if not os.path.exists("/scratch/users/arendeiro/piq/motif.matches/%i.pwmout.RData" % motif):
+            continue
+
+        t_dir = os.path.join(scratch_dir, sample.name)
+        if not os.path.exists(t_dir):
+            os.mkdir(t_dir)
+        tmp_dir = os.path.join(scratch_dir, sample.name, str(motif))
+        # if not os.path.exists(tmp_dir):
+        #     os.mkdir(tmp_dir)
+        job_file = os.path.join(foots_dir, "slurm_job_motif%i.sh" % motif)
+        slurm_log = os.path.join(foots_dir, "slurm_motif%i.log" % motif)
+
+        # prepare slurm job header
+        cmd = tk.slurmHeader(sample.name + "_PIQ_footprinting_motif%i" % motif, slurm_log, cpusPerTask=2, queue="shortq", memPerCpu=8000)
+
+        # stupid PIQ hard-coded links
+        cmd += """
+    cd /home/arendeiro/workspace/piq-single/
+        """
+
+        # footprint
+        cmd += piq_footprint_single(r_data, motif, tmp_dir, results_dir=foots_dir)
+
+        # slurm footer
+        cmd += tk.slurmFooter()
+
+        # write job to file
+        with open(job_file, 'w') as handle:
+            handle.writelines(textwrap.dedent(cmd))
+
+        # append file to jobs
+        jobs.append(job_file)
+
+# submit jobs (to footprint)
 for job in jobs:
     tk.slurmSubmitJob(job)
 
@@ -687,9 +826,22 @@ collect_networks(foots_dir, motif_numbers, "_".join(["merged-samples", "untreate
 foots_dir = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", "CLL_vs_MBL", "CLL"]), "footprints"))
 collect_networks(foots_dir, motif_numbers, "_".join(["merged-samples", "CLL_vs_MBL", "MBL"]))
 
+# individual samples
+# connect each motif to a gene
+for sample in samples:
+    if sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
+        continue
 
-# FOLD-CHANGE PLOT
+    if os.path.exists(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-gene_interactions.tsv")):
+        continue
+
+    print sample
+    collect_networks(os.path.join(os.path.join(sample.dirs.sampleRoot, "footprints"), motif_numbers, sample.name))
+
+
+# NETWORK "COMPARISON"
 # u/mCLL
+# node degree fold-change plot
 i, (feature, (group1, group2)) = (0, (features.items()[0]))
 
 foots_dir1 = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", feature, str(group1)]), "footprints"))
@@ -743,3 +895,21 @@ plt.ylim((0.5, 1))
 plt.plot([0, 1], [0, 1], '--', color='black')
 
 plt.savefig(os.path.join(plots_dir, "_".join(["merged-samples", feature, str(group1), str(group2), "fold_change.svg"])))
+
+
+# CIS-REGULATORY MODULE USAGE BETWEEN CLL TYPES
+# Get CLL groups
+# Select genome region of relevance
+# Get reads for regions at e.g. 1kb resolution
+# Correlate genome positions in each group
+
+# Get differential between groups
+
+
+# Examples:
+# Open chromatin defined by DNaseI and FAIREidentifies regulatory elements that shape cell-type identity
+# Lingyun Song et al.
+# Figure 6A
+
+# Patterns of regulatory activity across diverse human cell types predict tissue identity, transcription factor binding, and long-range interactions
+# Nathan C. Sheffield et al.
