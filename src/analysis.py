@@ -393,6 +393,21 @@ class Analysis(object):
             "BLNK": "ENSG00000095585",
             "BLK": "ENSG00000136573",
 
+            # signaling important for B cells
+            "NOTCH1": "ENSG00000148400",
+            "NFKB1": "ENSG00000109320",
+
+            # downstream of BCR signaling / proliferation
+            "AKT1": "ENSG00000142208",
+            "AIMP2": "ENSG00000106305",  # p38
+            "mTOR": "ENSG00000198793",
+            "ERK1": "ENSG00000102882",
+            "PIK3CA": "ENSG00000121879",
+
+            #
+            "MYC": "ENSG00000136997",
+            "MYCN": "ENSG00000134323",
+
             # transcriptional regulators
             "EBF1": "ENSG00000164330",
             "PAX5": "ENSG00000196092",
@@ -402,9 +417,11 @@ class Analysis(object):
             "IRF4": "ENSG00000137265",
             "IRF8": "ENSG00000140968",
             "CEBPB": "ENSG00000172216",
+            "BCL6": "ENSG00000113916",
 
             # others
-            "BCL6": "ENSG00000113916",
+            "ZAP70": "ENSG00000115085",
+            "IL2": "ENSG00000109471",
         }
 
         # get distance to gene and ensembl gene id annotation in whole matrix
