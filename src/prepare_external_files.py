@@ -5,14 +5,7 @@ import numpy as np
 import pandas as pd
 import pybedtools
 import re
-
-
-def get_tss(entry):
-    if entry['strand'] == "+":
-        entry['end'] = entry['start'] + 1
-    elif entry['strand'] == "-":
-        entry['start'] = entry['end'] - 1
-    return entry
+from Bio import motifs
 
 
 def sra2bam(sra_acession, output_bam):
@@ -33,6 +26,34 @@ def sra2bam(sra_acession, output_bam):
 
     # Submit
     tk.slurmSubmitJob(job_file)
+
+
+def get_tss(x):
+    if x['strand'] == "+":
+        x['end'] = x['start'] + 1
+    elif x['strand'] == "-":
+        x['start'] = x['end'] - 1
+    return x
+
+
+def get_promoter(x, radius=2500):
+    if x['strand'] == "+":
+        x['start'] = x['start'] - radius if x['start'] - radius > 0 else 0
+        x['end'] = x['start'] + (radius * 2)
+        return x
+    elif x['strand'] == "-":
+        x['end'] += radius
+        x['start'] = x['end'] - (radius * 2) if x['end'] - (radius * 2) > 0 else 0
+        return x
+
+
+def get_promoter_and_genebody(x, radius=2500):
+    if x['strand'] == "+":
+        x['start'] = x['start'] - radius if x['start'] - radius > 0 else 0
+        return x
+    elif x['strand'] == "-":
+        x['end'] += radius
+        return x
 
 
 # Get encode blacklisted regions
@@ -124,8 +145,44 @@ os.system("gzip -d {0}".format(roadmap_15statesHMM_CD19))
 os.system("mv E032_15_coreMarks_mnemonics.bed ../data/E032_15_coreMarks_mnemonics.bed")
 
 
+# Footprinting
+# get all jaspar motifs
+"wget http://jaspar.genereg.net/html/DOWNLOAD/JASPAR_CORE/pfm/nonredundant/pfm_all.txt"
+jaspar = motifs.parse(open("data/pfm_all.txt", 'r'), "jaspar")
+# motif annotation
+"wget http://jaspar.genereg.net/html/DOWNLOAD/database/MATRIX.txt"
+annot = pd.read_table("data/MATRIX.txt", names=["index", "db", "id", 0, "TF"])
+# get species annotation
+"wget http://jaspar.genereg.net/html/DOWNLOAD/database/MATRIX_SPECIES.txt"
+spec = pd.read_table("data/MATRIX_SPECIES.txt", names=["index", "species_id"])
+# merge both
+annot = pd.merge(annot, spec, on=['index'])
+
+# get ids of only human motifs
+human_annot = annot[annot['species_id'] == "9606"]
+
+# filter out any not uniquely mappable gene name
+human_annot = human_annot[
+    (~human_annot['TF'].str.contains("\(")) &
+    (~human_annot['TF'].str.contains(":")) &
+    (~human_annot['TF'].str.contains("LM\d")) &  # filter out LM* motifs
+    (human_annot['TF'] != "EWSR1-FLI1")
+]
+
+# get these from all jaspar motifs
+human_motifs = [m for m in jaspar if m.base_id in human_annot['id'].tolist()]
+
+# write back
+with open("data/jaspar_human_motifs.txt", "w") as handle:
+    handle.write(motifs.jaspar.write(human_motifs, format='jaspar'))
+
+# write mapping of TF index and name
+with open("data/jaspar_human_motifs.id_mapping.txt", "w") as handle:
+    handle.write("\n".join(["\t".join([str(i), human_motifs[i - 1].base_id, human_motifs[i - 1].name.split(";")[1].upper()]) for i in range(1, 1 + len(human_motifs))]))
+
+
 # Get GOtermID - GOtermDescription mapping
-# download data from Biomart (for some reason the GOterm name cannot be get automatically)
+# download data from Biomart (for some reason the GOterm name cannot be get automatically - probably I cannot figure out how :s)
 # http://www.ensembl.org/biomart/martview/6451fcd5296302994382deee7bd9c8eb?VIRTUALSCHEMANAME=default&ATTRIBUTES=hsapiens_gene_ensembl.default.feature_page.name_1006|hsapiens_gene_ensembl.default.feature_page.go_id&FILTERS=&VISIBLEPANEL=resultspanel
 "mv x data/goID_goName.csv"
 
