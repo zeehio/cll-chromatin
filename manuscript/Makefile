@@ -9,6 +9,10 @@ pdf: latex
 autopdf:
 	scholdoc settings.yaml main.md --citeproc --to=latex --output=main_generatedByScholdoc.pdf
 
+doc: latex
+	latex2rtf main.tex  # outputs main.rst
+	pandoc -f latex -t docx -o main.docx main.tex  # does not see references and other stuff
+
 clean:
 	rm -f main.aux
 	rm -f main.blg
@@ -21,5 +25,7 @@ clean:
 	rm -f main.pdf
 	rm -f main.html
 	rm -f main_generatedByScholdoc.pdf
+	rm -f main.rst
+	rm -f main.doc
 
 .PHONY: html latex pdf autopdf clean
