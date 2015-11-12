@@ -537,6 +537,31 @@ class Analysis(object):
         sns.violinplot(data=boxplot_data, x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
         fig.savefig(os.path.join("results", "plots", "relevant_genes.full.violinplot.funcorder.svg"), bbox_inches='tight')
 
+        # Get counts of B-cell/CLL genes in the quantiles of promoter or enhancer dynamic ranges
+        # divide promoters and enhancers in quartiles
+        borders = [.2, .4, .6, .8]
+        qts = enhancers['amplitude'].quantile(borders)
+
+        # count genes per quantile
+        counts = pd.DataFrame()
+        counts.loc[1, "promoters"] = len([x for x in sel_genes.values() if x in promoters[promoters['amplitude'] < qts[0.2]]['ensembl_gene_id'].tolist()])
+        counts.loc[2, "promoters"] = len([x for x in sel_genes.values() if x in promoters[(promoters['amplitude'] > qts[0.2]) & (promoters['amplitude'] < qts[0.4])]['ensembl_gene_id'].tolist()])
+        counts.loc[3, "promoters"] = len([x for x in sel_genes.values() if x in promoters[(promoters['amplitude'] > qts[0.4]) & (promoters['amplitude'] < qts[0.6])]['ensembl_gene_id'].tolist()])
+        counts.loc[4, "promoters"] = len([x for x in sel_genes.values() if x in promoters[(promoters['amplitude'] > qts[0.6]) & (promoters['amplitude'] < qts[0.8])]['ensembl_gene_id'].tolist()])
+        counts.loc[5, "promoters"] = len([x for x in sel_genes.values() if x in promoters[promoters['amplitude'] > qts[0.8]]['ensembl_gene_id'].tolist()])
+        counts.loc[1, "enhancers"] = len([x for x in sel_genes.values() if x in enhancers[enhancers['amplitude'] < qts[0.2]]['ensembl_gene_id'].tolist()])
+        counts.loc[2, "enhancers"] = len([x for x in sel_genes.values() if x in enhancers[(enhancers['amplitude'] > qts[0.2]) & (enhancers['amplitude'] < qts[0.4])]['ensembl_gene_id'].tolist()])
+        counts.loc[3, "enhancers"] = len([x for x in sel_genes.values() if x in enhancers[(enhancers['amplitude'] > qts[0.4]) & (enhancers['amplitude'] < qts[0.6])]['ensembl_gene_id'].tolist()])
+        counts.loc[4, "enhancers"] = len([x for x in sel_genes.values() if x in enhancers[(enhancers['amplitude'] > qts[0.6]) & (enhancers['amplitude'] < qts[0.8])]['ensembl_gene_id'].tolist()])
+        counts.loc[5, "enhancers"] = len([x for x in sel_genes.values() if x in enhancers[enhancers['amplitude'] > qts[0.8]]['ensembl_gene_id'].tolist()])
+        counts['quartile'] = counts.index
+        counts = pd.melt(counts, id_vars=['quartile'])
+
+        # barplot
+        fig, axis = plt.subplots(1)
+        sns.barplot(data=counts, x="quartile", y="value", hue="variable", ax=axis)
+        fig.savefig(os.path.join("results", "plots", "relevant_genes.quartile_enrichment.svg"), bbox_inches='tight')
+
     def correlate_expression(self):
         # get expression
         expression_matrix = pd.read_csv(os.path.join("data", "CLL.geneReadcount.txt"), sep=" ")
