@@ -363,12 +363,14 @@ class Analysis(object):
         Annotates peaks with closest gene.
         Needs files downloaded by prepare_external_files.py
         """
+        from collections import OrderedDict
+
         sns.set(style="whitegrid", palette="pastel", color_codes=True)
 
         names = [s.name for s in self.samples]
 
         # genes of interest
-        sel_genes = {
+        sel_genes = OrderedDict({
             # main B cell surface markers
             "CD19": "ENSG00000177455",
             "CD21": "ENSG00000117322",
@@ -422,20 +424,72 @@ class Analysis(object):
             # others
             "ZAP70": "ENSG00000115085",
             "IL2": "ENSG00000109471",
-        }
+
+            # CLL mutated genes
+            # notch pathway
+            "FBXW7": "ENSG00000109670",
+            "SPEN": "ENSMUSG00000040761",
+            "CREBBP": "ENSG00000005339",
+            # b cell signaling
+            "TLR2": "ENSG00000137462",
+            "BCOR": "ENSG00000183337",
+            "KLHL6": "ENSG00000172578",
+            "IKZF3": "ENSG00000161405",
+            # dna repair
+            "ATM": "ENSG00000149311",
+            "ATR": "ENSG00000175054",
+            "POT1": "ENSG00000128513",
+            "TP53": "ENSG00000141510",
+            # chromatin
+            "ARID1A": "ENSG00000117713",
+            "SETD1A": "ENSG00000099381",
+            "HIST1H1B": "ENSG00000168298",
+            "ZMYM3": "ENSG00000147130",
+            "SETD2": "ENSG00000181555",
+            "KMT2D": "ENSG00000167548",  # MLL2
+            "CHD2": "ENSG00000173575",
+            "SYNE1": "ENSG00000234577",
+            "ASXL1": "ENSG00000171456",
+            # cell cycle
+            "PTPN11": "ENSG00000179295",
+            "KRAS": "ENSG00000133703",
+            "NRAS": "ENSG00000213281",
+            "BRAF": "ENSG00000157764",
+            "CDKN1B": "ENSG00000111276",
+            "CDKN2A": "ENSG00000147889",
+            "CCND2": "ENSG00000118971",
+            # apoptosis
+            "BAX": "ENSG00000087088",
+            "ANKHD1": "ENSG00000254996 ",
+            # rna metabolism
+            "MGA": "ENSG00000174197",
+            "CNOT3": "ENSG00000088038 ",
+            "MED12": "ENSG00000184634 ",
+            "NXF1": "ENSG00000162231 ",
+            "ZNF292": "ENSG00000188994",
+            "SF3B1": "ENSG00000115524",
+            "DDX3X": "ENSG00000215301",
+            "XPO1": "ENSG00000082898",
+            "TRAF3": "ENSG00000131323",
+            "BIRC3": "ENSG00000023445",
+            "NFKB2": "ENSG00000077150 ",
+            "EGR2": "ENSG00000122877 ",
+            "NFKBIE": "ENSG00000146232",
+            "NKAP": "ENSG00000101882",
+        })
 
         # get distance to gene and ensembl gene id annotation in whole matrix
         df = pd.merge(self.coverage_qnorm_annotated, self.gene_annotation, on=['chrom', 'start', 'end', 'gene_name'])
 
         # GET 1(!) element per gene
         # get peaks around promoter (+/- 1kb)
-        df2 = df[df['distance'] <= 1000]
+        df2 = df[df['distance'] <= 2500]
         # promoters
         promoter_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
         promoters = df2.ix[promoter_index]
 
         # get peaks away from promoters (> 1kb)
-        df2 = df[df['distance'] > 1000]
+        df2 = df[df['distance'] > 2500]
         # enhancers
         enhancer_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
         enhancers = df2.ix[enhancer_index]
@@ -470,68 +524,18 @@ class Analysis(object):
 
         boxplot_data = pd.concat([promoter_data, enhancer_data])
 
-        fig, axis = plt.subplots(1, figsize=(15, 10))
+        fig, axis = plt.subplots(1, figsize=(45, 10))
         sns.violinplot(data=boxplot_data.sort('openness'), x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
-        fig.savefig(os.path.join("results", "plots", "relevant_genes.violinplot.svg"), bbox_inches='tight')
+        fig.savefig(os.path.join("results", "plots", "relevant_genes.full.violinplot.svg"), bbox_inches='tight')
 
-        #
+        # sort by predifined order (functioal classes)
+        sorterIndex = dict(zip(sel_genes.keys(), range(len(sel_genes.keys()))))
+        boxplot_data['order'] = boxplot_data['gene'].map(sorterIndex)
+        boxplot_data.sort('order', ascending=False, inplace=True)
 
-        #
-        # Other alternative: average across elements
-        #
-
-        #
-
-        # GET mean of ALL elements per gene
-        # get peaks around promoter (+/- 1kb)
-        df2 = df[df['distance'] <= 1000]
-        # promoters
-        promoter_mean = df2.groupby(["ensembl_gene_id"]).apply(lambda x: x[names].mean(axis=0).set_value("gene_name", x["gene_name"].astype(str)))
-        promoter_mean["ensembl_gene_id"] = promoter_mean.index
-
-        # get peaks away from promoters (> 1kb)
-        df2 = df[df['distance'] > 1000]
-        # enhancers (get mean openness across all enhancers of same gene)
-        enhancer_mean = df2.groupby(["ensembl_gene_id"]).apply(lambda x: x[names].mean(axis=0))
-        enhancer_mean["ensembl_gene_id"] = enhancer_mean.index
-
-        # Calculate quantiles
-        quant95 = promoter_mean[names].apply(np.percentile, args=[95], axis=1)
-        quant5 = promoter_mean[names].apply(np.percentile, args=[5], axis=1)
-        promoter_mean['amplitude'] = quant95 - quant5
-
-        quant95 = enhancer_mean[names].apply(np.percentile, args=[95], axis=1)
-        quant5 = enhancer_mean[names].apply(np.percentile, args=[5], axis=1)
-        enhancer_mean['amplitude'] = quant95 - quant5
-
-        # Plot distributions of amplitude (fold_change)
-        fig, axis = plt.subplots(1, figsize=(15, 10))
-        sns.distplot(promoter_mean['amplitude'], color="b", ax=axis)
-        sns.distplot(enhancer_mean['amplitude'], color="y", ax=axis)
-        sns.despine(left=True)
-        fig.savefig(os.path.join("results", "plots", "all_genes.distplot.mean.svg"), bbox_inches='tight')
-
-        # Plot whole diversity
-        # get ensembl - symbol mapping
-        ensembl_gene = df2.groupby(["ensembl_gene_id"]).apply(lambda x: x['gene_name'].reset_index(drop=True).ix[0])
-
-        # get interesting genes
-        gene_values = promoter_mean[promoter_mean['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in self.samples]].T
-        gene_values.columns = ensembl_gene.ix[gene_values.columns]
-        promoter_data = pd.melt(gene_values, var_name="gene", value_name="openness")
-        promoter_data['region'] = 'promoter'
-
-        gene_values = enhancer_mean[enhancer_mean['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in self.samples]].T
-        gene_values.columns = ensembl_gene.ix[gene_values.columns]
-        enhancer_data = pd.melt(gene_values, var_name="gene", value_name="openness")
-        enhancer_data['region'] = 'enhancer'
-
-        boxplot_data = pd.concat([promoter_data, enhancer_data])
-
-        fig, axis = plt.subplots(1, figsize=(15, 10))
-        sns.violinplot(data=boxplot_data.sort('openness'), x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, ax=axis)
-        sns.despine(left=True)
-        fig.savefig(os.path.join("results", "plots", "relevant_genes.violinplot.mean.svg"), bbox_inches='tight')
+        fig, axis = plt.subplots(1, figsize=(45, 10))
+        sns.violinplot(data=boxplot_data, x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
+        fig.savefig(os.path.join("results", "plots", "relevant_genes.full.violinplot.funcorder.svg"), bbox_inches='tight')
 
     def correlate_expression(self):
         # get expression
