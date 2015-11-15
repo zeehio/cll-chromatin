@@ -40,7 +40,7 @@ As defined in [`pipelines`](https://github.com/afrendeiro/pipelines):
 This will produce intermediate files and the manuscript's panel figures.
 
 # Manuscript
-The manuscript is written in [scholarly markdown](http://scholarlymarkdown.com/), therefore you need [Scholdoc](https://github.com/timtylin/scholdoc).
+The manuscript is written in [scholarly markdown](http://scholarlymarkdown.com/), therefore you need [Scholdoc](https://github.com/timtylin/scholdoc) to render the markdown into a pdf, rst, word or html manuscript.
 
 You can [see it here](manuscript/main.md) along with the figures [here](manuscript/figures/).
 

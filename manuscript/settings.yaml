@@ -16,6 +16,10 @@ latex-header-includes:
     - \newcommand{\initiateLandscape}{\begin{landscape}}
     - \newcommand{\terminateLandscape}{\end{landscape}}
 natbib-options:
-    - numbers
-    - sort&compress
+    - super
+    - comma
+# \bibliographystyle{unsrtnat}
+csl: scholdoc.csl
+css: scholmd.min.css
+
 ...

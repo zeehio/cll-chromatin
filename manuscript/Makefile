@@ -13,6 +13,9 @@ doc: latex
 	latex2rtf main.tex  # outputs main.rst
 	pandoc -f latex -t docx -o main.docx main.tex  # does not see references and other stuff
 
+html:
+	scholdoc settings.yaml main.md --citeproc --output=main.html
+
 clean:
 	rm -f main.aux
 	rm -f main.blg
