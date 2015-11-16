@@ -144,6 +144,48 @@ class Analysis(object):
         # Store
         df.to_csv(os.path.join(self.data_dir, "cll_peaks.cum_peak_count.95CI.csv"), index=False)
 
+    def estimate_reads_sequenced(self, n=100):
+        """
+        Randomizes sample order n times and measures the number of unique peaks after adding each sample after the other.
+        Plots this.
+        """
+        import random
+        from scipy import stats
+
+        # GET CONSENSUS SITES ACROSS CLL ATAC-SEQ SAMPLES
+        samples = [sample for sample in self.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"]
+
+        read_count = np.zeros((len(samples), n))
+        for i in range(n):
+            samples_copy = samples[:]
+            random.shuffle(samples_copy)
+            for j, sample in enumerate(samples_copy):
+                print(sample.name)
+                # Count number of filtered read pairs
+                read_count[j, i] = read_count[j - 1, i] + int(pysam.Samfile(sample.filtered).mapped)
+
+        # Make data frame
+        df = pd.DataFrame(read_count)
+
+        # Calculate confidence intervals
+        ci = df.apply(lambda x: pd.Series(stats.norm.interval(0.95, loc=x.mean(), scale=x.std() / np.sqrt(len(x)))), axis=1)
+        ci.columns = ['low', 'high']
+
+        # Add sample number
+        ci['samples'] = np.array(range(len(samples))) + 1
+
+        # Plot
+        fig, axis = plt.subplots(1)
+        axis.plot(ci['samples'], ci['low'])
+        axis.plot(ci['samples'], ci['high'])
+        axis.set_xlabel("# samples")
+        axis.set_ylabel("# reads")
+        plt.legend(loc='best')
+        fig.savefig(os.path.join(self.plots_dir, "cll_samples.cum_read_count.95CI.svg"), bbox_inches="tight")
+
+        # Store
+        df.to_csv(os.path.join(self.data_dir, "cll_samples.cum_read_count.95CI.csv"), index=False)
+
     def calculate_peak_support(self):
         samples = [s for s in self.samples if s.technique == "ATAC-seq" and s.cellLine == "CLL"]
         # calculate support (number of samples overlaping each merged peak)
@@ -641,15 +683,19 @@ class Analysis(object):
         background = pd.DataFrame([background.keys(), background.values()]).T
         background = background.ix[data.index]  # same sort order as in the real data
 
-        fig, axis = plt.subplots(2, sharex=True, sharey=True)
+        # plot individually
+        fig, axis = plt.subplots(3, sharex=True, sharey=False)
         sns.barplot(x=0, y=1, data=data, ax=axis[0])
         sns.barplot(x=0, y=1, data=background, ax=axis[1])
+        sns.barplot(x=0, y=1, data=pd.DataFrame([data[0], (data[1] / background[1])]).T, ax=axis[2])
         axis[0].set_title("ATAC-seq peaks")
         axis[1].set_title("genome background")
+        axis[2].set_title("peaks over background")
         axis[1].set_xlabel("genomic region")
+        axis[2].set_xlabel("genomic region")
         axis[0].set_ylabel("frequency")
         axis[1].set_ylabel("frequency")
-
+        axis[2].set_ylabel("fold-change")
         fig.autofmt_xdate()
         fig.tight_layout()
         fig.savefig(os.path.join(self.plots_dir, "cll_peaks.genomic_regions.svg"), bbox_inches="tight")
@@ -668,18 +714,42 @@ class Analysis(object):
         background = pd.DataFrame([background.keys(), background.values()]).T
         background = background.ix[data.index]  # same sort order as in the real data
 
-        fig, axis = plt.subplots(2, sharex=True, sharey=True)
+        fig, axis = plt.subplots(3, sharex=True, sharey=False)
         sns.barplot(x=0, y=1, data=data, ax=axis[0])
         sns.barplot(x=0, y=1, data=background, ax=axis[1])
+        sns.barplot(x=0, y=1, data=pd.DataFrame([data[0], (data[1] / background[1])]).T, ax=axis[2])
         axis[0].set_title("ATAC-seq peaks")
         axis[1].set_title("genome background")
+        axis[2].set_title("peaks over background")
         axis[1].set_xlabel("chromatin state")
+        axis[2].set_xlabel("chromatin state")
         axis[0].set_ylabel("frequency")
         axis[1].set_ylabel("frequency")
-
+        axis[2].set_ylabel("fold-change")
         fig.autofmt_xdate()
         fig.tight_layout()
         fig.savefig(os.path.join(self.plots_dir, "cll_peaks.chromatin_states.svg"), bbox_inches="tight")
+
+        # distribution of count attributes
+        data = self.coverage_qnorm_annotated.copy()
+
+        sns.distplot(data["mean"], rug=False)
+        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.mean.distplot.svg"), bbox_inches="tight")
+        plt.close()
+
+        sns.distplot(data["qv2"], rug=False)
+        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.qv2.distplot.svg"), bbox_inches="tight")
+        plt.close()
+
+        sns.distplot(data["dispersion"], rug=False)
+        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.dispersion.distplot.svg"), bbox_inches="tight")
+        plt.close()
+
+        # this is loaded now
+        df = pd.read_csv(os.path.join(self.data_dir, "cll_peaks.support.csv"))
+        sns.distplot(df["support"], rug=False)
+        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.support.distplot.svg"), bbox_inches="tight")
+        plt.close()
 
     def plot_coverage(self):
         data = self.coverage_qnorm_annotated.copy()
@@ -715,7 +785,6 @@ class Analysis(object):
         sns.violinplot("genomic_region", "dispersion", data=data_melted)
         plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.per_genomic_region.violinplot.svg"), bbox_inches="tight")
         plt.close()
-
         sns.violinplot("genomic_region", "dispersion", data=data_melted)
         plt.savefig(os.path.join(self.plots_dir, "norm_counts.dispersion.chromatin_state.violinplot.svg"), bbox_inches="tight")
         plt.close()
@@ -752,26 +821,26 @@ class Analysis(object):
         plt.close()
 
     def plot_variance(self):
-        sns.jointplot('mean', "dispersion", data=self.rpkm_annotated)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.dispersion.svg"), bbox_inches="tight")
+        sns.jointplot('mean', "dispersion", data=self.coverage_qnorm_annotated, kind="kde")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts_per_sample.dispersion.svg"), bbox_inches="tight")
         plt.close('all')
 
-        sns.jointplot('mean', "qv2", data=self.rpkm_annotated)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.qv2_vs_mean.svg"), bbox_inches="tight")
+        sns.jointplot('mean', "qv2", data=self.coverage_qnorm_annotated)
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts_per_sample.qv2_vs_mean.svg"), bbox_inches="tight")
         plt.close('all')
 
-        sns.jointplot('support', "qv2", data=self.rpkm_annotated)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.support_vs_qv2.svg"), bbox_inches="tight")
+        sns.jointplot('support', "qv2", data=self.coverage_qnorm_annotated)
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts_per_sample.support_vs_qv2.svg"), bbox_inches="tight")
         plt.close('all')
 
         # Filter out regions which the maximum across all samples is below a treshold
-        filtered = self.rpkm_annotated[self.rpkm_annotated[[sample.name for sample in self.samples]].apply(max, axis=1) > 3]
+        filtered = self.coverage_qnorm_annotated[self.coverage_qnorm_annotated[[sample.name for sample in self.samples]].apply(max, axis=1) > 3]
 
         sns.jointplot('mean', "dispersion", data=filtered)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.dispersion.filtered.svg"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts_per_sample.dispersion.filtered.svg"), bbox_inches="tight")
         plt.close('all')
         sns.jointplot('mean', "qv2", data=filtered)
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.support_vs_qv2.filtered.svg"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts_per_sample.support_vs_qv2.filtered.svg"), bbox_inches="tight")
 
     def plot_qnorm_comparison(self):
         # Compare raw counts vs qnormalized data
