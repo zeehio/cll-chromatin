@@ -560,7 +560,7 @@ for cmd in cmds:
 # MERGE BAM FILES FROM SAMPLES, PREPARE R CACHE FOR PIQ
 # 'automatable' features
 features = {
-    "patient_gender": ("F", "M"),  # gender
+    # "patient_gender": ("F", "M"),  # gender
     "mutated": (True, False),  # ighv mutation
 }
 
@@ -597,7 +597,6 @@ jobs.append(run_merged("CLL_vs_MBL", g2, "MBL"))
 # individual samples
 # for each sample create R cache with bam file
 for sample in samples:
-    os.system("rm data/%s/footprints/*" % sample.name)
     if sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
         continue
 
@@ -676,12 +675,13 @@ for sample in samples:
         continue
 
     foots_dir = os.path.join(sample.dirs.sampleRoot, "footprints")
+    # os.system("rm %s/*" % os.path.join(foots_dir))
     if not os.path.exists(foots_dir):
         os.mkdir(foots_dir)
-    r_data = os.path.join(foots_dir, sample.name + ".filteredshifted.RData")
+    r_data = os.path.join("data", "footprints", sample.name + ".filteredshifted.RData")
 
     # if footprint files exist, skip sample:
-    if os.path.exists(os.path.join(foots_dir, "936-PB00421Mafk1-diag.pdf")):  # this is an example
+    if os.path.exists(os.path.join(foots_dir, "1-MA00022RUNX1.RC-diag.pdf")):  # this is an example
         continue
     else:
         print(sample.name)

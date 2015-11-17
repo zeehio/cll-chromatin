@@ -591,55 +591,125 @@ Gf = filter_networks_edges(G, 2)
 graph_to_json_d3(Gf, os.path.join(data_dir, "networks_merged_uCLL_mCLL.subtraction_nodes.json"))
 
 
-# ALL-SAMPLE NETWORK, infered from merged bam footprints
-graph_file = os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_all_all" + ".piq.TF-gene_interactions.tsv")
-G = create_graph(graph_file)
-
-# Describe network
-graph_desc, node_desc = describe_graph(G)
-# plot degree rank vs degree
-plt.scatter(node_desc["degree"].rank(ascending=False), node_desc["degree"])
+# MERGED SAMPLE NETWORKS - infered from merged bam footprints
+# graph_file = os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_all_all" + ".piq.TF-gene_interactions.tsv")
+# filtered_graph_file = os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_all_all" + ".piq.TF-gene_interactions.filtered.tsv")
+# os.system("""awk '{if ($2 > 1.0) print}' %s > %s""" % (graph_file, filtered_graph_file))
 
 
-# Split into regulators-regulated
-regs = node_desc[node_desc["out_in_degree_fold_change"] > 0]
-noregs = node_desc[node_desc["out_in_degree_fold_change"] < 0]
+inputs = {
+    "network.merged_samples.TF-TF": os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_all_all.piq.TF-TF_interactions.filtered.tsv"),
+    "network.merged_samples.TF-gene": os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_all_all.piq.TF-gene_interactions.filtered.tsv"),
+    "network.uCLL.TF-TF": os.path.join(data_dir, "merged-samples_mutated_False", "footprints", "merged-samples_mutated_False.piq.TF-TF_interactions.filtered.tsv"),
+    "network.uCLL.TF-gene": os.path.join(data_dir, "merged-samples_mutated_False", "footprints", "merged-samples_mutated_False.piq.TF-gene_interactions.filtered.tsv"),
+    "network.mCLL.TF-TF": os.path.join(data_dir, "merged-samples_mutated_True", "footprints", "merged-samples_mutated_True.piq.TF-TF_interactions.filtered.tsv"),
+    "network.mCLL.TF-gene": os.path.join(data_dir, "merged-samples_mutated_True", "footprints", "merged-samples_mutated_True.piq.TF-gene_interactions.filtered.tsv")
+}
 
-plt.scatter(regs["degree"].rank(ascending=False), regs["degree"], color="b")
-plt.scatter(noregs["degree"].rank(ascending=False), noregs["degree"], color="g")
+for name, graph_file in inputs.items():
+    # Create network
+    G = create_graph(graph_file)
 
-plt.scatter(regs["degree"], regs["out_in_degree_fold_change"])
-plt.scatter(noregs["degree"], noregs["out_in_degree_fold_change"])
+    # Export to gephi format
+    nx.write_gexf(G, os.path.join(plots_dir, "%s.gexf" % name))
+
+    # Describe network
+    graph_desc, node_desc = describe_graph(G)
+
+    node_desc['TF'] = node_desc.index
+
+    node_desc.sort("degree", inplace=True)
+
+    # plot degree rank vs degree
+    fig, axis = plt.subplots(1)
+    axis.scatter(node_desc["degree"].rank(method="first", ascending=False), np.log2(node_desc["degree"]))
+    sns.despine()
+    fig.savefig(os.path.join(plots_dir, "%s.degree.svg" % name))
+
+    sns.despine()
+    fig, axis = plt.subplots(1)
+    sns.despine()
+    axis.scatter(node_desc["degree"].rank(method="first", ascending=False)[-100:], np.log2(node_desc["degree"])[-100:])
+    axis.set_xlim((0, 100))
+    axis.set_ylim((8, 14))
+    sns.despine()
+    fig.savefig(os.path.join(plots_dir, "%s.degree.top100.svg" % name))
+
+    # plot in vs out degree
+    plt.scatter(node_desc["in_degree"], node_desc["out_degree"])
+
+    # Split into regulators-regulated
+    regs = node_desc[node_desc["out_in_degree_fold_change"] < 0]
+    noregs = node_desc[node_desc["out_in_degree_fold_change"] > 0]
+
+    plt.scatter(regs["degree"].rank(ascending=False), regs["degree"], color="b")
+    plt.scatter(noregs["degree"].rank(ascending=False), noregs["degree"], color="g")
+
+    plt.scatter(regs["degree"], regs["out_in_degree_fold_change"])
+    plt.scatter(noregs["degree"], noregs["out_in_degree_fold_change"])
 
 
-# ighv
-graph_file = os.path.join(data_dir, "merged-samples_mutated_False", "footprints", "merged-samples_mutated_False" + ".piq.TF-TF_interactions.filtered.tsv")
-uG = create_graph(graph_file)
+# IGHV-SPECIFIC NETWORKS
+inputs = {
+    "network.u-mCLL-comparison.TF-TF": [
+        os.path.join(data_dir, "merged-samples_mutated_False", "footprints", "merged-samples_mutated_False" + ".piq.TF-TF_interactions.filtered.tsv"),
+        os.path.join(data_dir, "merged-samples_mutated_True", "footprints", "merged-samples_mutated_True" + ".piq.TF-TF_interactions.filtered.tsv")
+    ],
+    "network.u-mCLL-comparison.TF-gene": [
+        os.path.join(data_dir, "merged-samples_mutated_False", "footprints", "merged-samples_mutated_False" + ".piq.TF-gene_interactions.filtered.tsv"),
+        os.path.join(data_dir, "merged-samples_mutated_True", "footprints", "merged-samples_mutated_True" + ".piq.TF-gene_interactions.filtered.tsv")
+    ]
+}
 
-graph_file = os.path.join(data_dir, "merged-samples_mutated_False", "footprints", "merged-samples_mutated_False" + ".piq.TF-TF_interactions.filtered.tsv")
-mG = create_graph(graph_file)
+for name, graph_files in inputs.items():
+    # read in network
+    uG = create_graph(graph_files[0])
+    mG = create_graph(graph_files[1])
 
-ugraph_desc, unode_desc = describe_graph(uG)
-mgraph_desc, mnode_desc = describe_graph(mG)
+    # describe network
+    ugraph_desc, unode_desc = describe_graph(uG)
+    unode_desc["TF"] = unode_desc.index
+    mgraph_desc, mnode_desc = describe_graph(mG)
+    mnode_desc["TF"] = mnode_desc.index
 
-plt.scatter(unode_desc["degree"].rank(ascending=False), unode_desc["degree"], color="red")
-plt.scatter(mnode_desc["degree"].rank(ascending=False), mnode_desc["degree"], color="blue")
+    # plot
+    fig, axis = plt.subplots(2, sharex=True)
+    axis[0].scatter(unode_desc["degree"].rank(ascending=False), unode_desc["degree"], color="red")
+    axis[1].scatter(mnode_desc["degree"].rank(ascending=False), mnode_desc["degree"], color="blue")
+    fig.savefig(os.path.join(plots_dir, "%s.degree.svg" % name))
 
-plt.scatter(unode_desc["degree"], unode_desc["out_in_degree_fold_change"], color="red")
-plt.scatter(mnode_desc["degree"], mnode_desc["out_in_degree_fold_change"], color="blue")
+    fig, axis = plt.subplots(2, sharex=True)
+    axis[0].scatter(unode_desc["degree"], unode_desc["out_in_degree_fold_change"], color="red")
+    axis[1].scatter(mnode_desc["degree"], mnode_desc["out_in_degree_fold_change"], color="blue")
+    fig.savefig(os.path.join(plots_dir, "%s.out_in_degree_fold_change.svg" % name))
 
+    # get change between u-mCLL
+    # normalize degree within each network
+    unode_desc["degree_n"] = unode_desc["degree"] / unode_desc["degree"].sum()
+    mnode_desc["degree_n"] = mnode_desc["degree"] / mnode_desc["degree"].sum()
 
-# get change between u-mCLL
-unode_desc["TF"] = unode_desc.index
-mnode_desc["TF"] = mnode_desc.index
+    # merge
+    merge = pd.merge(unode_desc, mnode_desc, on="TF", how='outer')
+    merge["fc"] = np.log2(merge["degree_n_x"] / merge["degree_n_y"])
+    merge.index = merge['TF']
 
-# normalize degree within each network
-unode_desc["degree_n"] = unode_desc["degree"] / unode_desc["degree"].sum()
-mnode_desc["degree_n"] = mnode_desc["degree"] / mnode_desc["degree"].sum()
+    fig, axis = plt.subplots(1)
+    plt.scatter(merge["fc"].rank(method="dense", ascending=False), merge["fc"], color="blue")
+    fig.savefig(os.path.join(plots_dir, "%s.networks_fold_change.svg" % name))
 
-# merge
-merge = pd.merge(unode_desc, mnode_desc, on="TF")
-merge["fc"] = np.log2(merge["degree_n_x"] / merge["degree_n_y"])
+    # export all-samples CLL TF-TF network
+    # with nodes with fold-change as atribute
+    # 1. load all sample TF-TF netx
+    G = create_graph(os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_all_all.piq.TF-TF_interactions.filtered.tsv"))
 
+    # remove nodes not in these netx
+    G2 = nx.subgraph(G, merge['TF'].tolist())
 
-plt.scatter(merge["fc"].rank(ascending=False), merge["fc"], color="blue")
+    # add fold-change attribute to each node
+    fc = {k: float(v) for k, v in merge[["fc"]].to_dict()['fc'].items() if k in G.nodes()}
+    c = {k: abs(float(v)) for k, v in merge[["fc"]].to_dict()['fc'].items() if k in G.nodes()}
+    nx.set_node_attributes(G2, "fold_change", fc)
+    nx.set_node_attributes(G2, "abs_change", c)
+
+    # write to gefx format
+    nx.write_gexf(G2, os.path.join(plots_dir, "%s.merged_samples_fold_change.gexf" % name))
