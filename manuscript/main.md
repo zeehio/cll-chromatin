@@ -27,33 +27,26 @@ bibliography: /home/afr/Documents/library.bib
 <!--
 250 words or fewer
 -->
-Chronic lymphocytic leukemia (CLL) is the most abundant hematopoietic malignancy in adults.
-Epigenetics has been show to be useful for patient stratification and for dissection of the molecular determinants.
-Here we describe the chromatin accessibility landscape of CLL by profiling chromatin acessibility in a CLL cohort and saturating the CLL regions across the cohort in what is the first broad-scale application of chromatin accessibility profiling to a cancer cohort. Clinical annotation-guided machine learning of chromatin features allowed us to uncover genomic regions important in which show differential enhacer usage and molecular pathways which might be of relevance to the neoplasia. Additionally, patient stratification on these regions reveals structure in samples...
-We use the ATAC-seq data to infer gene regulatory networks from the binding of transcription factors to chromatin and uncover novel and known genes being deifferntially regulated between CLL groups which have been shown to be of clinical importance.
-
+Recent advances in fast, low-input and cost-effective epigenome profiling technologies allow more comprehensive enquiry into the diversity of chromatin regulation in large cohorts of patients. Using ATAC-seq on a large cohort of Chronic Lymphocytic Leukemia (CLL) cases, we've characterized the chromatin landscape of CLL, finding substantial epigenetic heterogeneity.
+With a supervised machine learning approach guided on clinical annotations, we've uncovered regulatory regions associated with the IGHV mutation status – the largest molecular determinant of CLL classification. Usage of these regions reflects the likely cell-of-origin of each group during the differentiation of normal B cells. Enrichment analysis of these regions reveals differentially used pathways that may be driving disease progression and contribute to the distinction between aggressive and indolent cases. This classification approach allowed us to find additional sample structure, which we used to stratify patients, finding groups with distinct molecular phenotypes, which highlights the heterogeneity of CLL at the chromatin level.
+To gain deeper insights into the molecular wiring of CLL, we've inferred gene regulatory networks (GRN) from transcription factor footprints, and describe the first GRN of this kind for a cancer. Comparing the inferred interaction networks from the previously identified molecular subgroups, we uncover novel differentially used network modules which include previously described differential interactions.
+This work describes the heterogeneity of the CLL regulatory landscape, finding groups of molecular phenotypes with distinct usage of regulatory regions and signaling pathways, as well as specific regulatory interactions of potential therapeutical relevance.
 
 ## Introduction
-Chronic lymphocytic leukemia (CLL) is a B-cell neoplasm with two major clinical and molecular subtypes related to the mutational status of IGHV, which encodes the immunoglobulin heavy chain variable region [@Zenz2010]. CLLs bearing a high level of IGHV somatic hypermutation (mCLLs) have a favorable clinical prognosis, whereas CLLs with a low or absent IGHV mutational load (uCLLs) have a worse outcome [@Zenz2010]. Although the precise identification of the normal cell counterpart of these CLL subtypes is still controversial [@Seifert2012], IGHV mutational status is thought to reflect the differentiation stage of the cells from which these CLL subtypes derive."
+"Chronic lymphocytic leukemia (CLL) is a B-cell neoplasm with two major clinical and molecular subtypes related to the mutational status of IGHV, which encodes the immunoglobulin heavy chain variable region [@Zenz2010]. CLLs bearing a high level of IGHV somatic hypermutation (mCLLs) have a favorable clinical prognosis, whereas CLLs with a low or absent IGHV mutational load (uCLLs) have a worse outcome [@Zenz2010]. Although the precise identification of the normal cell counterpart of these CLL subtypes is still controversial [@Seifert2012], IGHV mutational status is thought to reflect the differentiation stage of the cells from which these CLL subtypes derive."
 
-After extensive enquiry into the genetic basis of CLL in the form of somatic mutations [@Puente2011; @Quesada2011; @Puente2015; @Landau2015], the number of recurently mutated genes in CLL is relatively low compared with other neoplasias and recently, the drivers of the neoplasia evolution are numbered at 44 [@Landau2015].
+After extensive enquiry into the genetic basis of CLL in the form of somatic mutations [@Puente2011; @Quesada2011; @Puente2015; @Landau2015], the number of recurently mutated genes in CLL is relatively low compared with other neoplasias. Furthermore, genetic factors contributing to the origin and progression are even of smaller number, being recently estimated at 44 [@Landau2015].
 
-Since CLL shows substantial heterogeneity of molecular and clinical phenotypes (reviewed in by Gui and Wu [@Gui2015]), the exploration of molecular heterogeneity allows stratification of disease groups in the hope of producing precision medicine.
+Epigenetic alterations are ubiquitous in cancer and continue to accumulate during the progress of disease, while in the meanwhile the mechanisms that promote changes in the tumor epigenome are not yet clear.
 
-"Epigenetic alterations are pervasive in cancer and continually develop during disease progression; however, the mechanisms that promote changes in the tumor epigenome at large are currently undefined. The current work provides insight into the coevolution of genetic and epigenetic aber- rations and highlights the infl uential role of genetic aberrations in the selection of novel methylation patterns.""
+[epigenetics gives window into past, present and future]
 
-    - epigenetics gives window into past, present and future
+Previous studies of epigenetics in the context of CLL, perhaps for technical reasons, have focused on DNA methylation [@Kulis2012; @Pei2012; @Oakes2014; @Queiros2014] (reviewed in @Cahill2013) in which methylation outside the traditional CpG island promoters context seems crucial in regulating gene expression in cancer but also during B cell maturation.
+While, DNA methylation has been shown capable of uncovering CLL groups with clinical significance [@Kulis2012; @Queiros2014], it is still a costly assay if completeness of coverage genome-wide is paramount and therefore not applyiable to large-scale clinical settings.
 
-For technical reasons, previous studies have focused on DNA methylation [@Kulis2012; @Pei2012; @Oakes2014; @Queiros2014] (reviewed in [@Cahill2013]) in which methylation outside the traditional CpG island promoters context seems crucial in regulating gene expression. Furthermore, DNA methylation has been shown capable of uncovering CLL groups with clinical significance [@Kulis2012; @Queiros2014]
+Recent technological breakthroughs enable chromatin profiling in large cohorts [@Buenrostro2013] or in rare cell populations by requiring less input material [@Lara-Astiaso2014b; @Schmidl2015] or with faster sample-to-result times [@Schmidl2015] and bring great promise for large scale chromatin profiling in clinical settings.
 
-
-Nonetheless, DNA methylation is still a costly assay if completeness of coverage genome-wide is paramount.
-
-
-Recent technological breakthroughs enable chromatin profiling in large cohorts [@Buenrostro2013] or in rare cell populations by requiring less input material [@ichip; @Schmidl2015] or with faster sample-to-result times [@Schmidl2015; @] and bring great promise for large scale chromatin profiling in clinical settings.
-
-Here we take a more comprehensive look at chromatin states in CLL patients
-
+Since CLL shows substantial heterogeneity of molecular and clinical phenotypes (reviewed in by Gui and Wu [@Gui2015]), we decided to explore the heterogeneity of its chromatin regulation. We performed the assay of transposase-acessible chromatin followed by next-generation sequencing (ATAC-seq)[@Buenrostro2013] in primary lymphocytes of 86 CLL cases, establishing a comprehensive map of epigenetic regulation which reveals the epigenetic variation in regulatory elements across the cohort. With a supervised machine learning approach that incorporates clinical annotations, we uncovered regulatory regions associated with the IGHV mutation status, treatment response and relapse of CLL cases. Chromatin patterns at the most predictive regions reflects the differentiation status of normal B cells, the likely cell-of-origin of each group and differentially active pathways that may distinguish between aggressive and indolent cases. By detecting transcription factor (TF) footprints in the ATAC-seq data, we infer gene regulatory networks (GRNs) of TF-gene interations to gain deeper insights into the molecular wiring of CLL and describe the first GRNs of its kind for any cancer. GRN comparison between the IGHV molecular subgroups uncovers differentially used TFs with known differential regulation and novel interactions that may shed light on the molecular basis of the groups of clinical phenotypes.
 
 ## Materials and methods
 ### Sample acquisition
@@ -110,9 +103,9 @@ If we need to justify this:
 
 To infer gene regulatory networks, we calculated an interaction score in a similar way as previously done [@Qu2015]: the interaction score between a transcription factor $t$ and a gene $g$ ($S_{t,g}$) is given by the sum of all TF binding sites (of length $n$) from TF $t$ assigned to gene $g$:
 ~~~math #interaction-score
-S_{t,g} = \sum_{i=0}^{n}2 * (P_{i} - 0.5) * 10 ^{-(\frac{d_{i, g}}{1000000})}
+S_{t,g} = \sum_{i=0}^{n}2 * (P_{i} - 0.5) * 10 ^{-(d_{i, g})}
 ~~~
-where $P$ is the PIQ purity score and $d_{i, g}$ is the distance of a particular TF binding site $i$ to gene $g$. This establishes a unidirectional (TF to gene), weigthed (based on the interaction score) relationship, which forms the edges of a graph.
+where $P$ is the PIQ purity score and $d_{i, g}$ is the distance of a particular TF binding site $i$ to gene $g$ in megabases. This establishes a unidirectional (TF to gene), weigthed (based on the interaction score) relationship, which forms the edges of a graph.
 
 We infered gene regulatory networks for each sample individually, for all samples, and for groups of samples depending on its IGHV mutation stats if known. In the case of the later sample groups, this was performed by using a concatenation of all of the group's bam files as input to PIQ. In order to compare the infered IGHV-unmutated and IGHV-mutated networks, we the logarithm of base two of the difference between the degree of each node between the two networks.
 
@@ -124,20 +117,11 @@ The entirety of the source code used in the analysis is available at [github.com
 ### The chromatin accessibility landscape of CLL
 To establish the chromatin acessibility landscape of CLL and investigate its variation across disease subtypes and particular cases, we chose to use the assay of transposase-acessible chromatin followed by next-generation sequencing (ATAC-seq)[@Buenrostro2013] to profile primary lymphocytes of CLL patients and generate patient-specific chromatin acessibility profiles of CLL cases (Figure [#Figure1]a), primarily due to the relative experimental ease but importantly, its high information content. 
 
-~~~
-With this aproach, we aimed at exploring the chromatin acessibility landscape of CLL across all of the disease's diversity.
-~~~
+We sequenced an average of 11.8 million read pairs per sample - a total of 2.1 billion read across 86 samples (Table [#TableS1] and Supplementary Figure [#FigureS1]), producing sequencing libraries of high quality (Supplementary Figure [#FigureS2]). These were sequenced with enough depth to discover most accessibility regions in each sample (Supplementary Figure [#FigureS3]). With 86 CLL samples across the whole clinical range of CLL (see Supplementary Figure [#FigureS1]), we manage to cumulatively capture all unique sites of open chromatin to saturation (Figure [#Figure1]b).
 
-We sequenced an average of X million paired-end reads per sample - a total of X million read pairs across 86 samples (Table [#TableS1] and Supplementary Figure [#FigureS1]), producing sequencing libraries of high quality (Supplementary Figure [#FigureS2]). These were sequenced with enough depth to discover most accessibility regions in each sample (Supplementary Figure [#FigureS3]). With 86 CLL samples across the whole clinical range of CLL (see Supplementary Figure [#FigureS1]), we manage to cumulatively capture all unique sites of open chromatin to saturation (Figure [#Figure1]b).
+To establish a defined region set that characterizes all regions of chromatin acessibility in CLL, we created a set of unique regions of chromatin acessibility based on the individual ATAC-seq peaks of all samples, consisting of 112168 regions which are mainly positioned in gene promoters and introns as well as intergenic space (Figure [#Figure1]c, and Supplementary Figure [#FigureS1]).
 
-To establish 
-we created a set of unique CLL regions of chromatin acessibility based on the individual ATAC-seq peaks of all samples, consisting of 112168 regions which are mainly positioned in gene promoters and introns as well as intergenic space (Figure).
-
-Virtually all (X %) of previously known DNAse hypersensitivity sites (DHS) produced by DNAse hypersensitivity sequencing (DNase-seq) in a CLL sample [@Sheffield2013] were recovered, ilustrating the great overlap between the ATAC-seq and DNase-seq (Figure).
-
-Figure [#Figure1]c
-
-Figure [#Figure1]d
+These regions are located mostly in intergenic space, gene introns and promoters (Figure [#Figure1]d) as has been described due to the nature of the ATAC-seq assay [@Buenrostro2013]. We decided to investigate the chromatin state of this set of regions regarding a whole CD19+ B cell population. Consistent with its genomic location, most peaks are located in known enhancers and transcription start sites (TSSs) of active genes in B cells. We do find however a considerable amount of regions overlaping quiescent chromatin (without any enriched histone modification in particular) and transcriptional domains of B cells.
 
 ### Sample heterogeneity in the CLL chromatin accessibility landscape
 Since phenotypes are the product of gene expression and this is dependent on gene regulation  - to which chromatin accessibility contributes to [@Natarajan2012] [@Marstrand2014], we sought to characterize the  of variation in the chromatin accessibility of regulatory elements associated with genes. To this end, for each CLL region, we quantified the dynamic range of chromatin accessibility by measuring the difference between the extremes of the distribution (5th to 95th percentiles).
@@ -169,67 +153,29 @@ Being cellular signaling pathways a very important and their activation often a 
 The sample structure created by hierarchical clustering of all samples in all of the 1504 IGHV-specific regions (Figure [#Figure3]C) is mostly as expected, with cases with the same IGHV mutation status being found together. Nonetheless, a gradient of signal across samples (in inverse directions dependent on the cluster of regions) can be detected, suggesting that the sample structure is not hermetic but heterogenious, and that further molecular groups of the disease may exist. To further structure CLL cases in the previously discovered IGHV-specific regions (Figure [#Figure3]C), we performed hierarchical clustering on the correlation of chromatin acessibility signal (Figure [#Figure3]G) in these regions, as well as principal component analysis (PCA) on the chromatin acessibility signal (Figure [#Figure3]H). The sample structure reveals three major groups, corresponding to uCLL and mCLL and a third intermediate group (iCLL) stemming mostly from the mCLL group, but having a mixture of IGHV mutation status. Interestingly, another intermediate group of samples stemming from the uCLL group is observed, with most samples bearing a mutated IGHV locus, despite its very small size (n = 3).
 
 
-<!--
-Extra stuff
-
-positive regulation of interleukin-2 production [doi:10.1038/312641a0](http://dx.doi.org/doi:10.1038/312641a0)
-Go term enrichment:
-"Rho guanyl-nucleotide exchange factor activity" and
-"GTPase binding" -> proliferation [doi:10.1038/onc.2013.362](http://dx.doi.org/doi:10.1038/onc.2013.362)
-
-### Treatments
-
-###### untreat vs treated
-overal:
-    lola:
-        H3K4me1
-        H3K4me1 macrophages
-        H3K4me1 activated macrophages
-        H3K4me1 macrophages during inflamation
-        CD38-negative naive B cell H3K4me1
-        blueprint CD14-positive, CD16-negative classical monocyte H3K4me1
-        blueprint monocyte H3K4me1
-    go:
-        toll-like receptor signaling pathways
-        MyD88-dependent toll-like receptor signaling pathway
-        some chromatin terms (lots of HATs)
-    pathways:
-        IL-1 production (inate immunity)
-
-
-Toll-like pathways are part of the inate immune system, but can be activated in B cell malignancies, specially through the 'lock-on' state of MYD88 when mutated [see this](http://www.ncbi.nlm.nih.gov/pmc/articles/PMC2770679/)
--->
-
-
-### Gene regulatory network inference based on TF footprints
+### Gene regulatory network inference from TF footprints
 Due to the tagmentation-based nature of the ATAC-seq assay, chromatin locations bound by proteins can hinder the action of the transposase enzyme, reducing the acessibility signal in a locally. This protection therefore leaves an impression of the binding of TFs on the chromatin called footprints which can be detected through specialized analysis of the accessibility signal in specific positions containing TF motifs [@Buenrostro2013]. We applyied a TF footprint detection algorithm to a set of 366 human transcription factors and interogated the binding sites of these TFs that overlap the set of all CLL accessible sites for the ocupation of the respective TF (Figure [#Figure4]a). This allowed us to establish a relationship between the binding TF and genes in proximity of its binding sites through an interaction score (more in the Methods section), which we use to reconstruct gene regulatory networks (GRN).
 
-We first started by an attempt to reconstruct a GRN representing all regulatory interations mediated by TFs in CLL, by infering the binding of all TFs in all CLL samples together (Figure [#Figure4]b). In such al
+We first started with an attempt to reconstruct a GRN representing all TF-gene interations mediated by TFs in CLL, by infering the binding of all detectable TFs from the acessibility profiles of all CLL samples together (Figure [#Figure4]b). In this general CLL GRN, TFs are the most well-connected nodes (Figure [#Figure4]c), among which some general regulators (SP1/2, CTCF), but also families of prominent regulators of proliferation (EGR, KLF) and cell cycle (E2F), and some factors of relevance for B cell maturation (SPI1, PAX5, BCL6).
 
-
-statistics about networks: Supplementary Figure [#FigureS15]
-
-
-
-
-
-
-(Figure [#Figure4]d)
-
-(Figure [#Figure4]e)
-
+We reasoned that the same approach could be used to infer GRNs of specific CLL molecular subtypes, by considering regulatory interactions predicted from TF footprints in groups of samples. To gain deeper insights into the molecular wiring of CLL groups with different IGHV mutation status, we therefore infered GRNs specific to each group independently (Supplementary Figure [#FigureS4]a/b). Although the overal structure of the networks are similar (Supplementary Figure [#FigureS4]c), by comparison of the node connectivity between the IGHV-specific networks, we find a range of TFs which interaction degree is changing (Figure [#Figure4]d), among these, prominently a group of Homeobox genes of the HOXA cluster. These and other differentially regulated genes have noticeable variation in chromatin acessibility (Figure [#Figure4]e) consistent with the differential accessibility and likely, differential TF binding in their regulatory elements.
 
 
 ## Discussion
 
 ###### fig1
-We've performed....
-Development of NGS methods to large-scale makes this approach the way to go
+By performing ATAC-seq on a large set of primary CLL samples, we have for the first time characterized the chromatin acessibility landscape of CLL across the whole range of clinical subtypes of the disease.
+With this approach, we could reach saturation of chromatin acessibility sites in the genome, in a relatively cost-effective manner, highlighting that chromatin acessibility profiling in a large cohort of cancer samples directly from primary patient samples is feasable, and likely to become more prevalent.
 
-We are close to saturation
+The existence of a considerable amount of regions outside the expected context of promoters and known enhancers of whole B cell populations might indicate that these are either novel, CLL-specific enhancers or enhancers of more specific cell populations throughout B cell differentiation. Such a question would be answered with more complete epigenome profiling of B cell populations through their differentiation course.
+
 
 ###### fig2
+With this project, we aimed to investigate the variation in chromatin regulation
 Most genes have considerable chromatin variation
+
+The finding that genes relevant in the context of CLL (such as recurently mutated genes[@Puente2015]) display lower variability at the chromatin level may suggest that a likely requirement to achieve the molecular phenotype leading to the manifestation of CLL is the consistent .
+
 
 ###### fig3
 The identificatin of IGHV-specific regions highlighted the genomic and epigenetic differences between the two major molecular subtypes of CLL: uCLL and mCLL. The functional investigation into these differentially used regions revealed that these likely reflect the potential cell-of-origin of the CLL cells: the mCLL group was enriched in enhancers of B cell lines and in TF binding sites of known factors required for diferentiation into memory B cells (BATF, BCL6), while the uCLL group was enriched in regions used by naïve B cells and other hematopoietic cells, likely reflecting the more undiferentiated state of these cells. A common for both groups is the enrichemnt in regions used specifically for transcription (with the histone mark H3K36me3) in other cell types. We speculate that these are likely novel, CLL-excluusive enhancer regions, an hypotesis that would be clarified by histone mark profiling in the different CLL groups and normal B cell populations.
@@ -241,19 +187,17 @@ The sample substructure we found when measuring chromatin acessibility in IGHV-s
 Supervised machine-learning approaches based on clinical annotations seems therefore valuable in uncovering sample substructure and characterization of regions contributing to the distinshion between sample grouups and therefore should be applyied to new groups of cases with features of clinical relevance (*e.g.* different therapies, overal survival).
 
 ###### fig4
-Although reverse engineering of regulatory networks in human cells has been a goal for a while (for example in B cells [@Basso2005])
-Large-scale detection of regulatory interactions in a patient-specific manner has never been achieved.
-This is thus the first application of GRN inference through TF footprinting at the individual level in a cancer setting cancer.
-We revealed ...
+Although reverse engineering of regulatory networks in human cells has been a goal for a while (inclusively in B cells [@Basso2005; @Lefebvre2010]) large-scale detection of regulatory interactions in a patient-specific manner has never been achieved. This work presents thus the first application of GRN inference through TF footprinting in a cancer setting cancer.
 
+While the network infered from all CLL samples might reveal general cellular activity or pan-cancer signals, some B cell-specific TFs are also shown to have high regulatory activity. Such examples include important factors for B cell maturation such as BCL6, PAX5 and SPI1, but other factors known to be markers of CLL progression such as E2F4 [@Falt2005].
 
-
-Nonetheless, two of the most differentially regulated genes have been shown to have IGHV mutation status-dependent regulation: the HOXA4 gene is regulated by X10 TFs in uCLL (RUNX1, BCL6, among others) contrasting with only a basal transcription factor (SP1) binding its regulatory elements - since the HOXA4 locus has been shown to be hypermethylated in mCLL [@Strathdee2006] we hypotesise that DNA methylation at its locus in mCLL and prevents the binding of TFs either directly or by recruitment of chromatin modifiers which repress the locus' chromatin. Similarly, TP63 has higher degree of connections in uCLL  and has been shown to be downregulated in CLL compared to normal B cells, probably through DNA methylation of its promoter [@Humphries2013]. Nonetheless, its expression was higher in uCLL, the group where we detect higher number of connections in the uCLL-specific GRN.
+Among the most differentially regulated TFs between uCLL and mCLL, we have detected a few known cases that have IGHV mutation status-dependent regulation: 
+several genes in the HOXA cluster are among the most differentialy regulated genes, although interestingly, in opposing directions. Since this locus has been shown to be hypermethylated in mCLL [@Strathdee2006] we hypotesise that DNA methylation at its locus in mCLL and prevents the binding of TFs either directly or by recruitment of chromatin modifiers which repress the locus' chromatin. 
 
 Inference of GRNs through TF foootprinting seems therefore capable of retrieving known regulatory interactions in disease subgroups and due to the genome-wide nature nature of ATAC-seq data, is likely to reveal many new interactions of potential clinical relevance. This approach should be of particular use in cancer, where where the gene regulatory program of cells is often changed, but also in percision medicine in the context of several diseases since it is possible to infer GRNs with relative confidence albeit with low sensitivity from a single ATAC-seq sample.
 
-
-Final concluding phrase.
+###### end
+This work systematically dissects the regulatory patterns and inter-patient heterogeneity of CLL based on chromatin data for a large patient cohort – finding groups of molecular phenotypes with distinct usage of regulatory regions and signalling pathways, and specific regulatory interactions of potential therapeutic relevance.
 
 
 ## Acknowledgements
@@ -314,10 +258,6 @@ Caption: *Gene regulatory network inference from transcription factor footprints
 ## Supplemental data
 ### Figures
 
-```latex
-- \setcounter{figure}{0}
-```
-
 #### Figure: {#FigureS1}
 Sequencing statistics
 
@@ -340,7 +280,6 @@ Features of the CLL cohort region set: support, qv2, etc...
 Heterogenity in chromatin accessibility in B-cell and CLL related genes.
 
 #### Figure: {#FigureS8}
-![](figures/FigureS3.pdf){height=100%}
 Feature of IGHV mutation status regions: support, qv2, chromosomal locations.
 
 #### Figure: {#FigureS9}
