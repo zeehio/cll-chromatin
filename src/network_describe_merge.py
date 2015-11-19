@@ -596,7 +596,6 @@ graph_to_json_d3(Gf, os.path.join(data_dir, "networks_merged_uCLL_mCLL.subtracti
 # filtered_graph_file = os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_all_all" + ".piq.TF-gene_interactions.filtered.tsv")
 # os.system("""awk '{if ($2 > 1.0) print}' %s > %s""" % (graph_file, filtered_graph_file))
 
-
 inputs = {
     "network.merged_samples.TF-TF": os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_all_all.piq.TF-TF_interactions.filtered.tsv"),
     "network.merged_samples.TF-gene": os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_all_all.piq.TF-gene_interactions.filtered.tsv"),
@@ -713,3 +712,33 @@ for name, graph_files in inputs.items():
 
     # write to gefx format
     nx.write_gexf(G2, os.path.join(plots_dir, "%s.merged_samples_fold_change.gexf" % name))
+
+
+# simpler ighv network comparison
+graph_file = os.path.join(data_dir, "merged-samples_mutated_False" + ".piq.TF-gene_interactions.filtered.tsv")
+uG = create_graph(graph_file)
+
+graph_file = os.path.join(data_dir, "merged-samples_mutated_True" + ".piq.TF-gene_interactions.filtered.tsv")
+mG = create_graph(graph_file)
+
+unode_degree = pd.Series(uG.degree(), name="degree")
+mnode_degree = pd.Series(mG.degree(), name="degree")
+
+# normalize degree within each network
+unode_degreeZ = unode_degree / unode_degree.sum()
+mnode_degreeZ = mnode_degree / mnode_degree.sum()
+
+# merge
+merge = pd.DataFrame([unode_degreeZ, mnode_degreeZ]).T
+merge.columns = ["u", "m"]
+fc = np.log2(merge["u"] / merge["m"])
+
+plt.scatter(fc.rank(ascending=False), fc, color="blue")
+
+
+# make network with differential
+diff_reg_genes = fc[(-1 > fc) | (fc > 1)].index
+G = mG.subgraph(diff_reg_genes)
+
+nx.draw(G)
+plt.show()
