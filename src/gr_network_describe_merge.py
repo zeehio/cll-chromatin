@@ -715,10 +715,10 @@ for name, graph_files in inputs.items():
 
 
 # simpler ighv network comparison
-graph_file = os.path.join(data_dir, "merged-samples_mutated_False" + ".piq.TF-gene_interactions.filtered.tsv")
+graph_file = os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_mutated_False" + ".piq.TF-gene_interactions.filtered.tsv")
 uG = create_graph(graph_file)
 
-graph_file = os.path.join(data_dir, "merged-samples_mutated_True" + ".piq.TF-gene_interactions.filtered.tsv")
+graph_file = os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_mutated_True" + ".piq.TF-gene_interactions.filtered.tsv")
 mG = create_graph(graph_file)
 
 unode_degree = pd.Series(uG.degree(), name="degree")
