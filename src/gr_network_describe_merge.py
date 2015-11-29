@@ -269,8 +269,8 @@ def describe_graph(G):
     # density
     graph_desc["average_shortest_path_length"] = nx.average_shortest_path_length(G)
     # connectivity
-    graph_desc.append(pd.Series(nx.degree_assortativity_coefficient(G), name="degree_assortativity_coefficient"))
-    graph_desc.append(pd.Series(nx.degree_pearson_correlation_coefficient(G), name="degree_pearson_correlation_coefficient"))
+    # graph_desc.append(pd.Series(nx.degree_assortativity_coefficient(G), name="degree_assortativity_coefficient"))
+    graph_desc["degree_pearson_correlation_coefficient"] = nx.degree_pearson_correlation_coefficient(G)
 
     # NODE DESCRIPTION
     node_desc = list()
@@ -293,13 +293,13 @@ def describe_graph(G):
     node_desc.append(pd.Series(nx.in_degree_centrality(G), name="in_degree_centrality"))
     node_desc.append(pd.Series(nx.out_degree_centrality(G), name="out_degree_centrality"))
     # closest-path based
-    node_desc.append(pd.Series(nx.closeness_centrality(G), name="closeness_centrality"))
-    node_desc.append(pd.Series(nx.betweenness_centrality(G), name="betweenness_centrality"))
-    # eigenvector-based
-    node_desc.append(pd.Series(nx.eigenvector_centrality(G), name="eigenvector_centrality"))
-    node_desc.append(pd.Series(nx.katz_centrality_numpy(G), name="katz_centrality"))
-    # load-based
-    node_desc.append(pd.Series(nx.load_centrality(G), name="load_centrality"))
+    # node_desc.append(pd.Series(nx.closeness_centrality(G), name="closeness_centrality"))
+    # node_desc.append(pd.Series(nx.betweenness_centrality(G), name="betweenness_centrality"))
+    # # eigenvector-based
+    # node_desc.append(pd.Series(nx.eigenvector_centrality(G), name="eigenvector_centrality"))
+    # node_desc.append(pd.Series(nx.katz_centrality_numpy(G), name="katz_centrality"))
+    # # load-based
+    # node_desc.append(pd.Series(nx.load_centrality(G), name="load_centrality"))
 
     return (graph_desc, pd.DataFrame(node_desc).T)
 
@@ -466,279 +466,247 @@ data_dir = os.path.join('.', "data")
 results_dir = os.path.join('.', "results")
 plots_dir = os.path.join(results_dir, "plots")
 
-# Get clinical info
-clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation.csv"))
-
-# Start project
-# prj = pickle.load(open("prj.pickle", 'rb'))
-prj = Project("cll-patients")
-prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
-
-# Annotate with clinical data
-prj.samples = annotate_igvh_mutations(prj.samples, clinical)
-prj.samples = annotate_treatments(prj.samples, clinical)
-prj.samples = annotate_mutations(prj.samples, clinical)
-prj.samples = annotate_gender(prj.samples, clinical)
-
-# Start analysis object
-# only with ATAC-seq samples that passed QC
-samples_to_exclude = [
-    'CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19',
-    'CLL_ATAC-seq_5186_1-5-57350_ATAC17-4_hg19',
-    'CLL_ATAC-seq_4784_1-5-52817_ATAC17-6_hg19',
-    'CLL_ATAC-seq_981_1-5-42480_ATAC16-6_hg19',
-    'CLL_ATAC-seq_5277_1-5-57269_ATAC17-8_hg19',
-    'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19',
-    'CLL_ATAC-seq_5147_1-5-48105_ATAC17-2_hg19',
-    'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19']
-samples = [sample for sample in prj.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq" and sample.name not in samples_to_exclude]
-
-
-# All samples
-# describe
-G, graph, nodes = samples_to_networks(samples)
-# Plot
-plot_graph_attributes(graph, nodes, os.path.join(plots_dir, "networks_individual.attributes"))
-# save to disk
-graph.to_csv(os.path.join(data_dir, "networks_individual.attributes.csv"), index=False)
-nodes.to_csv(os.path.join(data_dir, "networks_individual.attributes.nodes.csv"), index=False)
-
-
-# MERGED NETWORK
-# Average edge's weights
-# describe master graph
-all_graph, all_node = describe_graph(G)
-plot_graph_attributes(all_graph, all_node, os.path.join(plots_dir, "networks_individual"))
-# write network to disk
-graph_to_json_d3(G, os.path.join(data_dir, "networks_individual.intersection.json"))
-
-# Drawing
-# with edge weights as colormap
-nx.draw_networkx(
-    G, pos=nx.spring_layout(G), alpha=.5,
-    arrows=False,
-    edge_color=[G[u][v]['weight'] for u, v in G.edges()],
-    edge_cmap=plt.get_cmap('gray_r')  # white to gray
-)
-
-# COMPARISON: Compare uCLL/mCLL networks
-# uCLL
-unmutated = [s for s in samples if s.mutated is False]
-# describe and intersect
-uG, ugraph, unodes = samples_to_networks(unmutated)
-# plot
-plot_graph_attributes(ugraph, unodes, os.path.join(plots_dir, "networks_individual_uCLL.attributes"))
-# save to disk
-ugraph.to_csv(os.path.join(data_dir, "networks_individual_uCLL.attributes.csv"), index=False)
-unodes.to_csv(os.path.join(data_dir, "networks_individual_uCLL.attributes.nodes.csv"), index=False)
-
-# write network to disk
-graph_to_json_d3(uG, os.path.join(data_dir, "networks_individual_uCLL.intersection.json"))
-uG = json_to_graph(os.path.join(data_dir, "networks_individual_uCLL.intersection.json"))
-
-# mCLL
-mutated = [s for s in samples if s.mutated is True]
-# describe and intersect
-mG, mgraph, mnodes = samples_to_networks(mutated)
-# plot
-plot_graph_attributes(mgraph, mnodes, os.path.join(plots_dir, "networks_individual_mCLL.attributes"))
-# save to disk
-mgraph.to_csv(os.path.join(data_dir, "networks_individual_mCLL.attributes.csv"), index=False)
-mnodes.to_csv(os.path.join(data_dir, "networks_individual_mCLL.attributes.nodes.csv"), index=False)
-# write network to disk
-graph_to_json_d3(mG, os.path.join(data_dir, "networks_individual_mCLL.intersection.json"))
-mG = json_to_graph(os.path.join(data_dir, "networks_individual_mCLL.intersection.json"))
-
-
-# subtract graphs
-G = subtract_networks_edges_weights(uG, mG)
-graph_to_json_d3(G, os.path.join(data_dir, "networks_individual_uCLL_mCLL.subtraction.json"))
-
-G = subtract_networks_edges(uG, mG)
-Gf = filter_networks_edges(G, 3)
-graph_to_json_d3(Gf, os.path.join(data_dir, "networks_individual_uCLL_mCLL.subtraction-abs.json"))
-
-G = subtract_networks_edges(mG, uG)
-Gf = filter_networks_edges(G, 3)
-graph_to_json_d3(Gf, os.path.join(data_dir, "networks_individual_mCLL_uCLL.subtraction-abs.json"))
-
-
-# Get networks from footprinting of merged samples
-base = os.path.join(data_dir, "_".join(["merged-samples", "mutated"]))
-
-graph_file = os.path.join(base + "_False", "footprints", "merged-samples_mutated_False.piq.TF-TF_interactions.filtered.tsv")
-G1 = create_graph(graph_file)
-graph_to_json_d3(G1, os.path.join(data_dir, "networks_merged_uCLL.json"))
-
-graph_file = os.path.join(base + "_True", "footprints", "merged-samples_mutated_True.piq.TF-TF_interactions.filtered.tsv")
-G2 = create_graph(graph_file)
-graph_to_json_d3(G2, os.path.join(data_dir, "networks_merged_mCLL.json"))
-
-# subtract graphs
-G = subtract_networks_edges_weights(G1, G2)
-graph_to_json_d3(G, os.path.join(data_dir, "networks_merged_uCLL_mCLL.subtraction.json"))
-
-G = subtract_networks_edges(G1, G2)
-Gf = filter_networks_edges(G, 3)
-graph_to_json_d3(color_nodes_with_degree_ratio(Gf), os.path.join(data_dir, "networks_merged_uCLL_mCLL.subtraction-abs.json"))
-
-G = subtract_networks_edges(G2, G1)
-Gf = filter_networks_edges(G, 3)
-graph_to_json_d3(Gf, os.path.join(data_dir, "networks_merged_mCLL_uCLL.subtraction-abs.json"))
-
-G = subtract_networks_nodes(G1, G2)
-Gf = filter_networks_edges(G, 2)
-graph_to_json_d3(Gf, os.path.join(data_dir, "networks_merged_uCLL_mCLL.subtraction_nodes.json"))
-
-
-# MERGED SAMPLE NETWORKS - infered from merged bam footprints
-# graph_file = os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_all_all" + ".piq.TF-gene_interactions.tsv")
-# filtered_graph_file = os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_all_all" + ".piq.TF-gene_interactions.filtered.tsv")
-# os.system("""awk '{if ($2 > 1.0) print}' %s > %s""" % (graph_file, filtered_graph_file))
-
-inputs = {
-    "network.merged_samples.TF-TF": os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_all_all.piq.TF-TF_interactions.filtered.tsv"),
-    "network.merged_samples.TF-gene": os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_all_all.piq.TF-gene_interactions.filtered.tsv"),
-    "network.uCLL.TF-TF": os.path.join(data_dir, "merged-samples_mutated_False", "footprints", "merged-samples_mutated_False.piq.TF-TF_interactions.filtered.tsv"),
-    "network.uCLL.TF-gene": os.path.join(data_dir, "merged-samples_mutated_False", "footprints", "merged-samples_mutated_False.piq.TF-gene_interactions.filtered.tsv"),
-    "network.mCLL.TF-TF": os.path.join(data_dir, "merged-samples_mutated_True", "footprints", "merged-samples_mutated_True.piq.TF-TF_interactions.filtered.tsv"),
-    "network.mCLL.TF-gene": os.path.join(data_dir, "merged-samples_mutated_True", "footprints", "merged-samples_mutated_True.piq.TF-gene_interactions.filtered.tsv")
-}
-
-for name, graph_file in inputs.items():
-    # Create network
-    G = create_graph(graph_file)
-
-    # Export to gephi format
-    nx.write_gexf(G, os.path.join(plots_dir, "%s.gexf" % name))
-
-    # Describe network
-    graph_desc, node_desc = describe_graph(G)
-
-    node_desc['TF'] = node_desc.index
-
-    node_desc.sort("degree", inplace=True)
-
-    # plot degree rank vs degree
-    fig, axis = plt.subplots(1)
-    axis.scatter(node_desc["degree"].rank(method="first", ascending=False), np.log2(node_desc["degree"]))
-    sns.despine()
-    fig.savefig(os.path.join(plots_dir, "%s.degree.svg" % name))
-
-    sns.despine()
-    fig, axis = plt.subplots(1)
-    sns.despine()
-    axis.scatter(node_desc["degree"].rank(method="first", ascending=False)[-100:], np.log2(node_desc["degree"])[-100:])
-    axis.set_xlim((0, 100))
-    axis.set_ylim((8, 14))
-    sns.despine()
-    fig.savefig(os.path.join(plots_dir, "%s.degree.top100.svg" % name))
-
-    # plot in vs out degree
-    plt.scatter(node_desc["in_degree"], node_desc["out_degree"])
-
-    # Split into regulators-regulated
-    regs = node_desc[node_desc["out_in_degree_fold_change"] < 0]
-    noregs = node_desc[node_desc["out_in_degree_fold_change"] > 0]
-
-    plt.scatter(regs["degree"].rank(ascending=False), regs["degree"], color="b")
-    plt.scatter(noregs["degree"].rank(ascending=False), noregs["degree"], color="g")
-
-    plt.scatter(regs["degree"], regs["out_in_degree_fold_change"])
-    plt.scatter(noregs["degree"], noregs["out_in_degree_fold_change"])
-
-
-# IGHV-SPECIFIC NETWORKS
-inputs = {
-    "network.u-mCLL-comparison.TF-TF": [
-        os.path.join(data_dir, "merged-samples_mutated_False", "footprints", "merged-samples_mutated_False" + ".piq.TF-TF_interactions.filtered.tsv"),
-        os.path.join(data_dir, "merged-samples_mutated_True", "footprints", "merged-samples_mutated_True" + ".piq.TF-TF_interactions.filtered.tsv")
-    ],
-    "network.u-mCLL-comparison.TF-gene": [
-        os.path.join(data_dir, "merged-samples_mutated_False", "footprints", "merged-samples_mutated_False" + ".piq.TF-gene_interactions.filtered.tsv"),
-        os.path.join(data_dir, "merged-samples_mutated_True", "footprints", "merged-samples_mutated_True" + ".piq.TF-gene_interactions.filtered.tsv")
-    ]
-}
-
-for name, graph_files in inputs.items():
-    # read in network
-    uG = create_graph(graph_files[0])
-    mG = create_graph(graph_files[1])
-
-    # describe network
-    ugraph_desc, unode_desc = describe_graph(uG)
-    unode_desc["TF"] = unode_desc.index
-    mgraph_desc, mnode_desc = describe_graph(mG)
-    mnode_desc["TF"] = mnode_desc.index
-
-    # plot
-    fig, axis = plt.subplots(2, sharex=True)
-    axis[0].scatter(unode_desc["degree"].rank(ascending=False), unode_desc["degree"], color="red")
-    axis[1].scatter(mnode_desc["degree"].rank(ascending=False), mnode_desc["degree"], color="blue")
-    fig.savefig(os.path.join(plots_dir, "%s.degree.svg" % name))
-
-    fig, axis = plt.subplots(2, sharex=True)
-    axis[0].scatter(unode_desc["degree"], unode_desc["out_in_degree_fold_change"], color="red")
-    axis[1].scatter(mnode_desc["degree"], mnode_desc["out_in_degree_fold_change"], color="blue")
-    fig.savefig(os.path.join(plots_dir, "%s.out_in_degree_fold_change.svg" % name))
-
-    # get change between u-mCLL
-    # normalize degree within each network
-    unode_desc["degree_n"] = unode_desc["degree"] / unode_desc["degree"].sum()
-    mnode_desc["degree_n"] = mnode_desc["degree"] / mnode_desc["degree"].sum()
-
-    # merge
-    merge = pd.merge(unode_desc, mnode_desc, on="TF", how='outer')
-    merge["fc"] = np.log2(merge["degree_n_x"] / merge["degree_n_y"])
-    merge.index = merge['TF']
-
-    fig, axis = plt.subplots(1)
-    plt.scatter(merge["fc"].rank(method="dense", ascending=False), merge["fc"], color="blue")
-    fig.savefig(os.path.join(plots_dir, "%s.networks_fold_change.svg" % name))
-
-    # export all-samples CLL TF-TF network
-    # with nodes with fold-change as atribute
-    # 1. load all sample TF-TF netx
-    G = create_graph(os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_all_all.piq.TF-TF_interactions.filtered.tsv"))
-
-    # remove nodes not in these netx
-    G2 = nx.subgraph(G, merge['TF'].tolist())
-
-    # add fold-change attribute to each node
-    fc = {k: float(v) for k, v in merge[["fc"]].to_dict()['fc'].items() if k in G.nodes()}
-    c = {k: abs(float(v)) for k, v in merge[["fc"]].to_dict()['fc'].items() if k in G.nodes()}
-    nx.set_node_attributes(G2, "fold_change", fc)
-    nx.set_node_attributes(G2, "abs_change", c)
-
-    # write to gefx format
-    nx.write_gexf(G2, os.path.join(plots_dir, "%s.merged_samples_fold_change.gexf" % name))
-
 
 # simpler ighv network comparison
-graph_file = os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_mutated_False" + ".piq.TF-gene_interactions.filtered.tsv")
+new_graph_file = os.path.join("netx/merged-samples_all_all.piq.TF-gene_interactions.filtered.tsv")
+G = create_graph(new_graph_file)
+
+tfs = pd.read_table(new_graph_file)['TF'].tolist()
+
+# degree of all nodes
+d = pd.Series(G.degree())
+d.sort()
+fig, axis = plt.subplots(1)
+colors = ["#d7191c" if i in tfs else "#669fb8" for i in d.index]
+axis.scatter(d.rank(ascending=False, method='first'), np.log2(d), linewidth=0, color=colors)
+fig.savefig("all.degree.svg", bbox_inches="tight")
+
+# subnetwork of most connected nodes
+# get subgraph
+g = G.subgraph(d[d > 200].index)
+nx.set_node_attributes(g, 'abs_degree', {n: int(d.to_dict()[n]) for n in g.nodes()})
+nx.write_gexf(g, "merged-samples_all_all.piq.TF-gene_interactions.filtered.top.gexf")
+
+
+# IGHV comparison
+graph_file = os.path.join(data_dir, "merged-samples_mutated_False.piq.TF-gene_interactions.filtered.tsv")
 uG = create_graph(graph_file)
 
-graph_file = os.path.join(data_dir, "merged-samples_all_all", "footprints", "merged-samples_mutated_True" + ".piq.TF-gene_interactions.filtered.tsv")
+graph_file = os.path.join(data_dir, "merged-samples_mutated_True.piq.TF-gene_interactions.filtered.tsv")
 mG = create_graph(graph_file)
+
+g = uG.subgraph(d[d > 200].index)
+nx.set_node_attributes(g, 'abs_degree', {n: int(d.to_dict()[n]) for n in g.nodes()})
+nx.write_gexf(g, "merged-samples_mutated_False.piq.TF-gene_interactions.filtered.top.gexf")
+
+g = mG.subgraph(d[d > 200].index)
+nx.set_node_attributes(g, 'abs_degree', {n: int(d.to_dict()[n]) for n in g.nodes()})
+nx.write_gexf(g, "merged-samples_mutated_True.piq.TF-gene_interactions.filtered.top.gexf")
+
 
 unode_degree = pd.Series(uG.degree(), name="degree")
 mnode_degree = pd.Series(mG.degree(), name="degree")
 
-# normalize degree within each network
-unode_degreeZ = unode_degree / unode_degree.sum()
-mnode_degreeZ = mnode_degree / mnode_degree.sum()
+# Compare nodes
+df = pd.DataFrame([unode_degree, mnode_degree]).T
+df.columns = ['u', 'm']
+# normalize
+df = df.apply(lambda x: (x - x.mean() / x.std()), axis=0)
+#
+df = np.log2(1 + df.fillna(0))
+plt.scatter(df['m'], df['u'])
+plt.plot([0, 4], [0, 4], '--')
 
-# merge
-merge = pd.DataFrame([unode_degreeZ, mnode_degreeZ]).T
-merge.columns = ["u", "m"]
-fc = np.log2(merge["u"] / merge["m"])
 
-plt.scatter(fc.rank(ascending=False), fc, color="blue")
+# let's look at the difference now
+diff = df['u'] - df['m']
+
+# coverage_qnorm_annotated = pd.read_csv(os.path.join("data", "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
+# names = coverage_qnorm_annotated.columns[coverage_qnorm_annotated.columns.str.contains("CLL")]
+# # average openness across samples, sum oppenness across different elements of same gene
+# weights = np.log10(coverage_qnorm_annotated[names + ["gene_name"]].groupby(['gene_name']).apply(np.mean, axis=1).groupby(level=[0]).sum())
+
+# weights = (weights - weights.min()) / (weights.max() - weights.min())
+
+# score = diff * weights
+# score = score.dropna()
+
+fig, axis = plt.subplots(1)
+sns.distplot(diff, ax=axis)
+fig.savefig("all_fc.distplot.svg", bbox_inches="tight")
+
+fig, axis = plt.subplots(1)
+colors = list()
+for i in diff:
+    if i > 1:
+        colors.append("#d55e00")
+    elif i < -1:
+        colors.append("#0072b2")
+    else:
+        colors.append("gray")
+
+axis.scatter(diff.rank(ascending=False, method='first'), diff, linewidth=0, color=colors)
+fig.savefig("all_fc.rank_fc.svg", bbox_inches="tight")
+
+# cll genes' change
+diffcll = diff.ix[cllgenes]
+diffcll.sort(ascending=False)
+fig, axis = plt.subplots(1)
+colors = list()
+for i in diffcll:
+    if i > 1:
+        colors.append("#d55e00")
+    elif i < -1:
+        colors.append("#0072b2")
+    else:
+        colors.append("gray")
+axis.scatter(diffcll.rank(ascending=False), diffcll, linewidth=0, color=colors)
+fig.savefig("all_fc.rank_fc.cllgenes.svg", bbox_inches="tight")
 
 
+# Visualize single nodes in the two networks
+examples = ["PAX9", "CD9", "CD38", "CD22"]
+
+tfs = G.nodes()
+
+for gene in examples:
+    p = nx.spring_layout(G.subgraph([n for n in [i for i in nx.all_neighbors(uG, gene)] if n in tfs] + [gene]))
+    nx.draw(
+        uG.subgraph([n for n in [i for i in nx.all_neighbors(uG, gene)] if n in tfs] + [gene]),
+        pos=p
+    )
+    nx.draw_networkx_labels(
+        uG.subgraph([n for n in [i for i in nx.all_neighbors(uG, gene)] if n in tfs] + [gene]),
+        pos=p
+    )
+    nx.write_gexf(uG.subgraph([n for n in [i for i in nx.all_neighbors(uG, gene)] if n in tfs] + [gene]), "graph_modules.%s.uCLL.gexf" % gene)
+
+    #
+    p = nx.spring_layout(G.subgraph([n for n in [i for i in nx.all_neighbors(mG, gene)] if n in tfs] + [gene]))
+    nx.draw(
+        mG.subgraph([n for n in [i for i in nx.all_neighbors(mG, gene)] if n in tfs] + [gene]),
+        pos=p
+    )
+    nx.draw_networkx_labels(
+        mG.subgraph([n for n in [i for i in nx.all_neighbors(mG, gene)] if n in tfs] + [gene]),
+        pos=p
+    )
+    nx.write_gexf(mG.subgraph([n for n in [i for i in nx.all_neighbors(mG, gene)] if n in tfs] + [gene]), "graph_modules.%s.mCLL.gexf" % gene)
+
+
+# Visualize network of changes in big network of all interactions
 # make network with differential
-diff_reg_genes = fc[(-1 > fc) | (fc > 1)].index
-G = mG.subgraph(diff_reg_genes)
+diff_reg_genes = diff[(diff > 3) | (diff < -2)].index.tolist()
 
-nx.draw(G)
-plt.show()
+diff_reg_genes_p = diff[(diff > 3)]
+diff_reg_genes_n = diff[(diff < -2)]
+fc_std_p = (diff_reg_genes_p - diff_reg_genes_p.min()) / (diff_reg_genes_p.max() - diff_reg_genes_p.min()) + 1
+fc_std_n = (diff_reg_genes_n - diff_reg_genes_n.min()) / (diff_reg_genes_n.max() - diff_reg_genes_n.min())
+fc_std_n -= 2
+fc_std = fc_std_n.append(fc_std_p)
+
+# get neighbours
+p = [item for sublist in [G.predecessors(i) for i in diff_reg_genes if i in G.nodes()] for item in sublist] + diff_reg_genes
+# s = [item for sublist in [G.successors(i) for i in diff_reg_genes if i in G.nodes()] for item in sublist]
+
+# get subgraph
+g = G.subgraph(p)
+
+# add fold-change attribute
+fc_dict = {node: float(change) for node, change in fc_std.to_dict().items() if change < 10 and node in g.nodes()}
+absfc_dict = {node: abs(float(change)) for node, change in fc_std.to_dict().items() if change < 10 and node in g.nodes()}
+
+for node in g.nodes():
+    if node not in fc_dict.keys():
+        fc_dict[node] = 0
+        absfc_dict[node] = 0
+
+nx.set_node_attributes(g, 'fold_change', fc_dict)
+nx.set_node_attributes(g, 'absfold_change', absfc_dict)
+nx.write_gexf(g, "netx.fold_change.string.gexf")
+
+
+# Test enrichment of oncogenes/tumour suppressors in lists
+from scipy.stats import fisher_exact
+# read in tumour suppresor list
+ts = pd.read_table("tumour_suppressors.txt", header=None)[0].tolist()
+onc = pd.read_table("oncogenes.txt", header=None)[0].tolist()
+
+# store results
+df2 = pd.DataFrame()
+# read in tumour suppresor list
+# uCLL
+print("uCLL")
+a = len([i for i in diff[diff > 1].index if i in onc])
+b = len([i for i in diff[diff > 1].index if i not in onc])
+c = len([i for i in diff[diff < 1].index if i in onc])
+d = len([i for i in diff[diff < 1].index if i not in onc])
+o, p = fisher_exact([[a, b], [c, d]])
+df2 = df2.append(pd.Series([a / float(b), o, p, "onc", "u"]), ignore_index=True)
+
+a = len([i for i in diff[diff > 1].index if i in ts])
+b = len([i for i in diff[diff > 1].index if i not in ts])
+c = len([i for i in diff[diff < 1].index if i in ts])
+d = len([i for i in diff[diff < 1].index if i not in ts])
+o, p = fisher_exact([[a, b], [c, d]])
+df2 = df2.append(pd.Series([a / float(b), o, p, "ts", "u"]), ignore_index=True)
+
+# mCLL
+print("mCLL")
+a = len([i for i in diff[diff < -1].index if i in onc])
+b = len([i for i in diff[diff < -1].index if i not in onc])
+c = len([i for i in diff[diff > -1].index if i in onc])
+d = len([i for i in diff[diff > -1].index if i not in onc])
+o, p = fisher_exact([[a, b], [c, d]])
+df2 = df2.append(pd.Series([a / float(b), o, p, "onc", "m"]), ignore_index=True)
+
+a = len([i for i in diff[diff < -1].index if i in ts])
+b = len([i for i in diff[diff < -1].index if i not in ts])
+c = len([i for i in diff[diff > -1].index if i in ts])
+d = len([i for i in diff[diff > -1].index if i not in ts])
+o, p = fisher_exact([[a, b], [c, d]])
+df2 = df2.append(pd.Series([a / float(b), o, p, "ts", "m"]), ignore_index=True)
+df2.columns = ["count", "odds", "pvalue", "comparison", "cluster"]
+
+fig, axis = plt.subplots(1)
+sns.barplot('cluster', 'count', hue='comparison', data=df2, ax=axis)
+fig.savefig("oncogene_tumour-suppressors.enrichment.svg")
+
+
+# Exclusive nodes
+fc[fc.isnull()]
+
+ex = fc[fc.isnull()].index.tolist()
+
+orphans = dict()
+for gene in ex:
+    if gene in unode_degree.index:
+        orphans[gene] = unode_degree.ix[gene]
+    if gene in mnode_degree.index:
+        orphans[gene] = -mnode_degree.ix[gene]
+
+orphans = pd.Series(orphans)
+orphans.sort()
+
+sns.distplot(orphans)
+plt.savefig("orphans.distplot.svg", bbox_inches="tight")
+
+plt.scatter(orphans.rank(ascending=False, method='first'), orphans)
+plt.savefig("orphans.rank_degree.svg", bbox_inches="tight")
+
+
+# Exclusive interactions
+
+# simpler ighv network comparison
+graph_file = os.path.join(data_dir, "merged-samples_mutated_False.piq.TF-gene_interactions.filtered.tsv")
+uG = create_graph(graph_file)
+
+graph_file = os.path.join(data_dir, "merged-samples_mutated_True.piq.TF-gene_interactions.filtered.tsv")
+mG = create_graph(graph_file)
+
+
+uI = set(["-".join([i, j]) for i, j in uG.edges()])
+mI = set(["-".join([i, j]) for i, j in mG.edges()])
+
+uE = uI.difference(mI)
+mE = mI.difference(uI)
