@@ -600,8 +600,8 @@ for sample in samples:
     if sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
         continue
 
-    foots_dir = os.path.join(sample.dirs.sampleRoot, "footprints")
-    r_data = os.path.join(foots_dir, sample.name + ".filteredshifted.RData")
+    foots_dir = os.path.join(data_dir, "footprints")
+    r_data = os.path.abspath(os.path.join(foots_dir, sample.name + ".filteredshifted.RData"))
     if os.path.isfile(r_data):
         continue
     if not os.path.exists(foots_dir):
@@ -671,23 +671,25 @@ jobs += footprint("CLL_vs_MBL", "MBL", motif_numbers)
 # individual samples
 # for each sample launch several jobs (366) to footprint
 for sample in samples:
+    print(sample.name)
     if sample.technique != "ATAC-seq" or sample.cellLine != "CLL":
         continue
 
     foots_dir = os.path.join(sample.dirs.sampleRoot, "footprints")
+    files = os.listdir(foots_dir)
     # os.system("rm %s/*" % os.path.join(foots_dir))
     if not os.path.exists(foots_dir):
         os.mkdir(foots_dir)
-    r_data = os.path.join("data", "footprints", sample.name + ".filteredshifted.RData")
-
-    # if footprint files exist, skip sample:
-    if os.path.exists(os.path.join(foots_dir, "1-MA00022RUNX1.RC-diag.pdf")):  # this is an example
-        continue
-    else:
-        print(sample.name)
+    r_data = os.path.abspath(os.path.join("data", "footprints", sample.name + ".filteredshifted.RData"))
 
     for motif in motif_numbers:
+        # Check R cache for this motif exists
         if not os.path.exists("/scratch/users/arendeiro/piq/motif.matches/%i.pwmout.RData" % motif):
+            print("Missing cache for motif %i" % motif)
+            continue
+
+        # if footprint files exist, skip motif:
+        if len([files[i] for i in range(len(files)) if re.search("^%i-.*\.pdf$" % motif, files[i]) is not None]) == 2:
             continue
 
         t_dir = os.path.join(scratch_dir, sample.name)
@@ -721,8 +723,22 @@ for sample in samples:
         jobs.append(job_file)
 
 # submit jobs (to footprint)
-for job in jobs:
-    tk.slurmSubmitJob(job)
+try:
+    for job in jobs[500:]:
+        import time
+        from subprocess import Popen, PIPE
+
+        process = Popen(["squeue"], stdout=PIPE)
+        (output, err) = process.communicate()
+
+        if len(output.split("\n")) - 2 > 2000:
+            time.sleep(60)
+            if len(output.split("\n")) - 2 > 2000:
+                continue
+
+        tk.slurmSubmitJob(job)
+except KeyboardInterrupt("Interrupted"), e:
+    raise e
 
 
 # BUILD NETWORKS
@@ -765,8 +781,8 @@ for sample in samples:
     if os.path.exists(os.path.join(data_dir, "footprints", sample.name + ".piq.TF-gene_interactions.tsv")):
         continue
 
-    print sample
-    collect_networks(os.path.join(os.path.join(sample.dirs.sampleRoot, "footprints"), motif_numbers, sample.name))
+    print(sample.name)
+    collect_networks(os.path.join(sample.dirs.sampleRoot, "footprints"), motif_numbers, sample.name)
 
 
 # CIS-REGULATORY MODULE USAGE BETWEEN CLL TYPES

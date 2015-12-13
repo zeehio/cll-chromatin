@@ -64,10 +64,10 @@ if not os.path.exists(output_dir):
     os.mkdir(output_dir)
 
 # q-value thresholds to count at
-thresholds = [1e-2, 1e-4, 1e-8, 1e-16, 1e-32]
+thresholds = [1e-2]  # , 1e-4, 1e-8, 1e-16, 1e-32]
 
 # M reads to subsample
-millions = [1, 2, 4, 8, 16, 24, 28, 32]
+millions = range(1, 33)
 
 # Loop through samples, make job
 jobs = list()

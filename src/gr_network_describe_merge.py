@@ -10,7 +10,6 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import seaborn as sns
-from pipelines.models import Project
 from networkx.readwrite import json_graph
 import json
 
@@ -466,12 +465,14 @@ data_dir = os.path.join('.', "data")
 results_dir = os.path.join('.', "results")
 plots_dir = os.path.join(results_dir, "plots")
 
+# list of sex chromosome genes
+sex_genes = pd.read_csv("sex_genes.csv")['name'].unique().tolist()
 
 # simpler ighv network comparison
 new_graph_file = os.path.join("netx/merged-samples_all_all.piq.TF-gene_interactions.filtered.tsv")
 G = create_graph(new_graph_file)
 
-tfs = pd.read_table(new_graph_file)['TF'].tolist()
+tfs = pd.read_table(new_graph_file)['TF'].unique().tolist()
 
 # degree of all nodes
 d = pd.Series(G.degree())

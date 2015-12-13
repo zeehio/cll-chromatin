@@ -33,6 +33,10 @@ pd.set_option("date_dayfirst", True)
 sns.set_style("whitegrid")
 sns.set_context("paper")
 sns.set_palette(sns.color_palette("colorblind"))
+matplotlib.rcParams['svg.fonttype'] = 'none'
+matplotlib.rc('font', family='sans-serif')
+matplotlib.rc('font', serif='Helvetica Neue')
+matplotlib.rc('text', usetex='false')
 
 
 def pickle_me(function):
@@ -400,12 +404,245 @@ class Analysis(object):
 
         self.coverage_qnorm_annotated.to_csv(os.path.join(self.data_dir, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t", index=False)
 
+    def variability(self):
+        # Variable region analysis
+        df = self.coverage_qnorm_annotated
+        # separate in three groups
+        out = dict()
+        out[1] = df[df['dispersion'] < 0.35]
+        out[2] = df[
+            (df['dispersion'] > 0.35) &
+            (df['dispersion'] < 0.9)]
+        out[3] = df[df['dispersion'] > 0.9]
+        out[4] = df[df['dispersion'] > 1.5]
+
+        # get regions of groups, write bed file
+        out[1][['chrom', 'start', 'end']].to_csv("f1.bed", index=False, sep="\t", header=False)
+        out[2][['chrom', 'start', 'end']].to_csv("f2.bed", index=False, sep="\t", header=False)
+        out[3][['chrom', 'start', 'end']].to_csv("f3.bed", index=False, sep="\t", header=False)
+        out[4][['chrom', 'start', 'end']].to_csv("f4.bed", index=False, sep="\t", header=False)
+
+        # universe
+        df[['chrom', 'start', 'end']].to_csv("universe.bed", index=False, sep="\t", header=False)
+
+        # run lola
+        lola("f4.bed", "universe.bed", "data/variability-4")
+        lola("f3.bed", "universe.bed", "data/variability-3")
+        lola("f2.bed", "universe.bed", "data/variability-2")
+        lola("f1.bed", "universe.bed", "data/variability-1")
+
+        # get genes of groups
+        out2 = dict()
+        out2[1] = out[1]['gene_name'].unique()
+        out2[2] = out[2]['gene_name'].unique()
+        out2[3] = out[3]['gene_name'].unique()
+        out2[4] = out[4]['gene_name'].unique()
+        # write gene names to file
+        for i, d in out2.items():
+            with open("f%i-genes.txt" % i, 'w') as handle:
+                handle.writelines("\n".join(d.tolist()))
+
+    def inspect_variability(self):
+        """
+        Investigate variability within sample groups.
+        """
+        from statsmodels.sandbox.stats.multicomp import multipletests
+
+        def f_test_pvalue_rpy2(d1, d2):
+            import rpy2.robjects as robjects
+
+            rd1 = (robjects.FloatVector(d1))
+            rd2 = (robjects.FloatVector(d2))
+            rvtest = robjects.r['var.test']
+            return rvtest(rd1, rd2)[2][0]
+
+        # plot mean vs qv2
+        plt.scatter(self.coverage_qnorm_annotated["mean"], self.coverage_qnorm_annotated["qv2"])
+        plt.savefig(os.path.join(self.plots_dir, "mean_qv2.svg"), bbox_inches="tight")
+        # plot mean vs dispersion
+        plt.scatter(self.coverage_qnorm_annotated["mean"], self.coverage_qnorm_annotated["std"])
+        plt.savefig(os.path.join(self.plots_dir, "mean_dispersion.svg"), bbox_inches="tight")
+
+        # divide samples per IGHV status
+        ighv_u = [s.name for s in self.samples if not s.mutated]
+        ighv_m = [s.name for s in self.samples if s.mutated]
+
+        df_u = self.coverage_qnorm_annotated[ighv_u]
+        df_m = self.coverage_qnorm_annotated[ighv_m]
+
+        # for each element calculate variability
+        u = pd.DataFrame()
+        m = pd.DataFrame()
+
+        u["mean"] = df_m.apply(np.mean, axis=1)
+        u["std"] = df_m.apply(np.std, axis=1)
+        u["var"] = df_m.apply(np.var, axis=1)
+        u["dispersion"] = u["var"] / u["mean"]
+        u["qv2"] = (u["std"] / u["mean"]) ** 2
+
+        m["mean"] = df_u.apply(np.mean, axis=1)
+        m["std"] = df_u.apply(np.std, axis=1)
+        m["var"] = df_u.apply(np.var, axis=1)
+        m["dispersion"] = m["var"] / m["mean"]
+        m["qv2"] = (m["std"] / m["mean"]) ** 2
+
+        u_m = pd.melt(u)
+        u_m["subtype"] = "u"
+        m_m = pd.melt(m)
+        m_m["subtype"] = "m"
+
+        df = u_m.append(m_m, ignore_index=True)
+        # plot mean, dispersion, variance, qv2 in uCLL vs mCLL
+        # boxplot
+        g = sns.FacetGrid(df, col="variable", sharey=False)
+        g.map(sns.violinplot, "subtype", "value", palette="pastel")
+        plt.savefig(os.path.join(self.plots_dir, "ighv_mutation_variable_comparison.violin.svg"), bbox_inches="tight")
+        plt.close("all")
+
+        # hexbin plots
+        g = sns.FacetGrid(df, col="variable", sharex=False, sharey=False)
+        for i, variable in enumerate(df["variable"].unique()):
+            a = df[
+                (df["variable"] == variable) &
+                (df["subtype"] == "u")
+            ]["value"]
+            b = df[
+                (df["variable"] == variable) &
+                (df["subtype"] == "m")
+            ]["value"]
+            if i > 1:
+                a = np.log2(1 + a)
+                b = np.log2(1 + b)
+
+            g.axes[0][i].hexbin(
+                a,
+                b,
+                bins="log"
+            )
+            # x=y line
+            lims = [
+                np.min([g.axes[0][i].get_xlim(), g.axes[0][i].get_ylim()]),  # min of both axes
+                np.max([g.axes[0][i].get_xlim(), g.axes[0][i].get_ylim()]),  # max of both axes
+            ]
+            g.axes[0][i].plot(lims, lims, 'k-', alpha=0.75, zorder=0)
+            g.axes[0][i].plot()
+            g.axes[0][i].set_aspect('equal')
+            g.axes[0][i].set_xlim(lims)
+            g.axes[0][i].set_ylim(lims)
+        g.savefig(os.path.join(self.plots_dir, "ighv_mutation_variable_comparison.hexbin.svg"), bbox_inches="tight")
+        plt.close("all")
+
+        # get significantly variable regions
+        # F-test
+        p_values = dict()
+        for i in df_u.index:
+            p_values[i] = f_test_pvalue_rpy2(df_u.ix[i], df_m.ix[i])
+        # plot uncorrected p_values
+        sns.distplot(-np.log10(np.array(p_values.values())), hist=False)
+        plt.savefig(os.path.join(self.plots_dir, "ighv_mutation_variable_comparison.p_values.svg"), bbox_inches="tight")
+        plt.close("all")
+        # volcano plot
+        plt.scatter(np.log2(u['dispersion'] / m['dispersion']), -np.log10(np.array(p_values.values())))
+        plt.savefig(os.path.join(self.plots_dir, "ighv_mutation_variable_comparison.volcano.svg"), bbox_inches="tight")
+        plt.close("all")
+
+        # correct p-values
+        p_values = dict(zip(p_values.keys(), multipletests(p_values.values())[1]))
+        # plot p-value distribution
+        sns.distplot(-np.log10(np.array(p_values.values())), hist=False)
+        plt.savefig(os.path.join(self.plots_dir, "ighv_mutation_variable_comparison.p_values-corrected.svg"), bbox_inches="tight")
+        plt.close("all")
+        # volcano plot
+        plt.scatter(np.log2(u['dispersion'] / m['dispersion']), -np.log10(np.array(p_values.values())))
+        plt.savefig(os.path.join(self.plots_dir, "ighv_mutation_variable_comparison.volcano-corrected.svg"), bbox_inches="tight")
+        plt.close("all")
+
+        # significantly variable regions
+        # by threshold
+        indexes = [i for i, p in p_values.items() if -np.log10(p) > 1.3]
+
+        # by n-most variable
+        n = 1000
+        indexes = [i for i, k in sorted(p_values.items(), key=lambda x: x[1])[:n]]
+
+        # filter out regions with mean across all samples lower than 1
+        indexes = [i for i in indexes if self.coverage_qnorm_annotated.ix[i]["mean"] > 1]
+
+        # hexbin plots
+        g = sns.FacetGrid(df, col="variable", sharex=False, sharey=False)
+        for i, variable in enumerate(df["variable"].unique()):
+            a = df[
+                (df["variable"] == variable) &
+                (df["subtype"] == "u")
+            ]["value"]
+            b = df[
+                (df["variable"] == variable) &
+                (df["subtype"] == "m")
+            ]["value"]
+            if i > 1:
+                a = np.log2(1 + a)
+                b = np.log2(1 + b)
+
+            g.axes[0][i].hexbin(
+                a,
+                b,
+                bins="log"
+            )
+
+            # significant as scatter
+            if i > 1:
+                g.axes[0][i].scatter(np.log2(1 + u.ix[indexes][variable]), np.log2(1 + m.ix[indexes][variable]), color="orange")
+            else:
+                g.axes[0][i].scatter(u.ix[indexes][variable], m.ix[indexes][variable], color="orange")
+
+            # x=y line
+            lims = [
+                np.min([g.axes[0][i].get_xlim(), g.axes[0][i].get_ylim()]),  # min of both axes
+                np.max([g.axes[0][i].get_xlim(), g.axes[0][i].get_ylim()]),  # max of both axes
+            ]
+            g.axes[0][i].plot(lims, lims, 'k-', alpha=0.75, zorder=0)
+            g.axes[0][i].set_aspect('equal')
+            # g.axes[0][i].set_xlim(lims)
+            # g.axes[0][i].set_ylim(lims)
+
+            g.savefig(os.path.join(self.plots_dir, "ighv_mutation_variable_comparison.hexbin.significant.svg"), bbox_inches="tight")
+            plt.close("all")
+
+        # investigate:
+        # get bed files for u/mCLL specifically
+        v_u = list()
+        v_m = list()
+        for i in indexes:
+            if (self.coverage_qnorm_annotated.ix[i]["mean"] > 1):
+                if u.ix[i]['dispersion'] > m.ix[i]['dispersion']:
+                    v_u.append(i)
+                else:
+                    v_m.append(i)
+        self.coverage_qnorm_annotated.ix[v_u][['chrom', 'start', 'end']].to_csv("ighv_mutation_variable_comparison.significant-uCLL.bed", index=False, sep="\t", header=False)
+        self.coverage_qnorm_annotated.ix[v_m][['chrom', 'start', 'end']].to_csv("ighv_mutation_variable_comparison.significant-mCLL.bed", index=False, sep="\t", header=False)
+
+        universe = "data/cll_peaks.bed"
+
+        # run lola
+        lola("ighv_mutation_variable_comparison.significant-uCLL.bed", universe, "data/ighv_mutation_variable_comparison/uCLL")
+        lola("ighv_mutation_variable_comparison.significant-mCLL.bed", universe, "data/ighv_mutation_variable_comparison/mCLL")
+
+        # get gene names
+        out = dict()
+        out['u'] = self.coverage_qnorm_annotated.ix[v_u]['gene_name'].unique()
+        out['m'] = self.coverage_qnorm_annotated.ix[v_m]['gene_name'].unique()
+        # write gene names to file
+        for c, genes in out.items():
+            with open("data/ighv_mutation_variable_comparison/%sCLL/genes.txt" % c, 'w') as handle:
+                handle.writelines("\n".join(genes.tolist()))
+
     def gene_oppeness_across_samples(self):
         """
         Annotates peaks with closest gene.
         Needs files downloaded by prepare_external_files.py
         """
         from collections import OrderedDict
+        from scipy.stats import ks_2samp
 
         sns.set(style="whitegrid", palette="pastel", color_codes=True)
 
@@ -536,14 +773,22 @@ class Analysis(object):
         enhancer_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
         enhancers = df2.ix[enhancer_index]
 
-        # Calculate quantiles
-        quant95 = promoters[[sample.name for sample in self.samples]].apply(np.percentile, args=[95], axis=1)
-        quant5 = promoters[[sample.name for sample in self.samples]].apply(np.percentile, args=[5], axis=1)
-        promoters['amplitude'] = quant95 - quant5
+        # Figure 2a - variability
+        # 81 genes on top of all genes
+        genes_str = "|".join(sel_genes.values())
+        p_values = promoters[promoters['ensembl_gene_id'].str.contains(genes_str)]['variance']
+        e_values = enhancers[enhancers['ensembl_gene_id'].str.contains(genes_str)]['variance']
 
-        quant95 = enhancers[[sample.name for sample in self.samples]].apply(np.percentile, args=[95], axis=1)
-        quant5 = enhancers[[sample.name for sample in self.samples]].apply(np.percentile, args=[5], axis=1)
-        enhancers['amplitude'] = quant95 - quant5
+        fig, axis = plt.subplots(2, sharex=True, sharey=True)
+        sns.distplot(np.log2(1 + promoters['variance']), ax=axis[0], bins=100)
+        sns.distplot(np.log2(1 + enhancers['variance']), ax=axis[1], bins=100)
+        sns.distplot(np.log2(1 + p_values), ax=axis[0], rug=True, bins=20)
+        sns.distplot(np.log2(1 + e_values), ax=axis[1], rug=True, bins=20)
+        fig.savefig("prom-enh.variance.log2.svg", bbox_inches="tight")
+
+        # test difference in distributions
+        D, p = ks_2samp(promoters['variance'], p_values)
+        D, p = ks_2samp(enhancers['variance'], e_values)
 
         # Plot distributions of amplitude (fold_change)
         fig, axis = plt.subplots(1, figsize=(15, 10))
@@ -552,8 +797,6 @@ class Analysis(object):
         fig.savefig(os.path.join("results", "plots", "all_genes.distplot.svg"), bbox_inches='tight')
 
         # plot aditional boxplots for selected genes
-        genes_str = "|".join(sel_genes.values())
-
         gene_values = promoters[promoters['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in self.samples]].T
         gene_values.columns = promoters.ix[gene_values.columns]['gene_name']
         promoter_data = pd.melt(gene_values, var_name="gene", value_name="openness")
@@ -570,7 +813,7 @@ class Analysis(object):
         sns.violinplot(data=boxplot_data.sort('openness'), x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
         fig.savefig(os.path.join("results", "plots", "relevant_genes.full.violinplot.svg"), bbox_inches='tight')
 
-        # sort by predifined order (functioal classes)
+        # sort by predefined order (intensity/functional classes)
         sorterIndex = dict(zip(sel_genes.keys(), range(len(sel_genes.keys()))))
         boxplot_data['order'] = boxplot_data['gene'].map(sorterIndex)
         boxplot_data.sort('order', ascending=False, inplace=True)
@@ -578,31 +821,6 @@ class Analysis(object):
         fig, axis = plt.subplots(1, figsize=(45, 10))
         sns.violinplot(data=boxplot_data, x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
         fig.savefig(os.path.join("results", "plots", "relevant_genes.full.violinplot.funcorder.svg"), bbox_inches='tight')
-
-        # Get counts of B-cell/CLL genes in the quantiles of promoter or enhancer dynamic ranges
-        # divide promoters and enhancers in quartiles
-        borders = [.2, .4, .6, .8]
-        qts = enhancers['amplitude'].quantile(borders)
-
-        # count genes per quantile
-        counts = pd.DataFrame()
-        counts.loc[1, "promoters"] = len([x for x in sel_genes.values() if x in promoters[promoters['amplitude'] < qts[0.2]]['ensembl_gene_id'].tolist()])
-        counts.loc[2, "promoters"] = len([x for x in sel_genes.values() if x in promoters[(promoters['amplitude'] > qts[0.2]) & (promoters['amplitude'] < qts[0.4])]['ensembl_gene_id'].tolist()])
-        counts.loc[3, "promoters"] = len([x for x in sel_genes.values() if x in promoters[(promoters['amplitude'] > qts[0.4]) & (promoters['amplitude'] < qts[0.6])]['ensembl_gene_id'].tolist()])
-        counts.loc[4, "promoters"] = len([x for x in sel_genes.values() if x in promoters[(promoters['amplitude'] > qts[0.6]) & (promoters['amplitude'] < qts[0.8])]['ensembl_gene_id'].tolist()])
-        counts.loc[5, "promoters"] = len([x for x in sel_genes.values() if x in promoters[promoters['amplitude'] > qts[0.8]]['ensembl_gene_id'].tolist()])
-        counts.loc[1, "enhancers"] = len([x for x in sel_genes.values() if x in enhancers[enhancers['amplitude'] < qts[0.2]]['ensembl_gene_id'].tolist()])
-        counts.loc[2, "enhancers"] = len([x for x in sel_genes.values() if x in enhancers[(enhancers['amplitude'] > qts[0.2]) & (enhancers['amplitude'] < qts[0.4])]['ensembl_gene_id'].tolist()])
-        counts.loc[3, "enhancers"] = len([x for x in sel_genes.values() if x in enhancers[(enhancers['amplitude'] > qts[0.4]) & (enhancers['amplitude'] < qts[0.6])]['ensembl_gene_id'].tolist()])
-        counts.loc[4, "enhancers"] = len([x for x in sel_genes.values() if x in enhancers[(enhancers['amplitude'] > qts[0.6]) & (enhancers['amplitude'] < qts[0.8])]['ensembl_gene_id'].tolist()])
-        counts.loc[5, "enhancers"] = len([x for x in sel_genes.values() if x in enhancers[enhancers['amplitude'] > qts[0.8]]['ensembl_gene_id'].tolist()])
-        counts['quartile'] = counts.index
-        counts = pd.melt(counts, id_vars=['quartile'])
-
-        # barplot
-        fig, axis = plt.subplots(1)
-        sns.barplot(data=counts, x="quartile", y="value", hue="variable", ax=axis)
-        fig.savefig(os.path.join("results", "plots", "relevant_genes.quartile_enrichment.svg"), bbox_inches='tight')
 
     def correlate_expression(self):
         # get expression
@@ -1059,6 +1277,23 @@ def samples_to_color(samples, method="mutation"):
                 else:
                     colors.append('black')
         return colors
+    # dependent on ighv status
+    if method == "homology":
+        # This uses sns summer colormap
+        cmap = plt.get_cmap('summer')
+        # scale colormap to min and max ighv homology
+        norm = matplotlib.colors.Normalize(vmin=86, vmax=100)
+        m = cm.ScalarMappable(norm=norm, cmap=cmap)
+        colors = list()
+        for sample in samples:
+            if 86 < sample.ighv_homology < 100:
+                colors.append(m.to_rgba(sample.ighv_homology))
+            else:
+                if sample.cellLine == "CLL":
+                    colors.append('gray')
+                else:
+                    colors.append('black')
+                return colors
     # unique color per patient
     elif method == "unique":
         # per patient
@@ -1115,11 +1350,12 @@ def samples_to_color(samples, method="mutation"):
 
 def all_sample_colors(samples, order=""):
     return [
-        # samples_to_color(samples, "unique"),
-        samples_to_color(samples, "gender"),
         samples_to_color(samples, "mutation"),
-        samples_to_color(samples, "treatment"),
-        samples_to_color(samples, "disease")
+        samples_to_color(samples, "homology"),
+        # samples_to_color(samples, "treatment"),
+        # samples_to_color(samples, "disease")
+        # samples_to_color(samples, "unique"),
+        samples_to_color(samples, "gender")
     ]
 
 
@@ -1129,6 +1365,7 @@ def annotate_igvh_mutations(samples, clinical):
     for sample in samples:
         if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
             _id = name_to_sample_id(sample.name)
+            sample.ighv_homology = clinical.loc[clinical['sample_id'] == _id, 'igvh_homology'].tolist()[0]
             if clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 1:
                 sample.mutated = True
             elif clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 2:
@@ -1136,6 +1373,7 @@ def annotate_igvh_mutations(samples, clinical):
             else:
                 sample.mutated = None
         else:
+            sample.ighv_homology = None
             sample.mutated = None
         new_samples.append(sample)
     return new_samples
@@ -1727,8 +1965,8 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
 
         # Plot ROC and PRC curves
         fig, axis = plt.subplots(1, 2, figsize=(12, 5))
-        axis[0].plot(fpr, tpr, label='ROC (area = {0:0.2f})'.format(roc_auc))
-        axis[1].plot(precision, recall, label='PRC (average precision = {0:0.2f})'.format(aps))
+        axis[0].plot(fpr, tpr, label='ROC (AUC = {0:0.2f})'.format(roc_auc))
+        axis[1].plot(recall, precision, label='PRC (AUC = {0:0.2f})'.format(aps))
         axis[0].plot((0, 1), (0, 1), '--', color='gray')
         axis[0].set_xlim([-0.05, 1.0])
         axis[0].set_ylim([0.0, 1.05])
@@ -1737,8 +1975,8 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
         axis[0].legend(loc="lower right")
         axis[1].set_xlim([-0.05, 1.0])
         axis[1].set_ylim([0.0, 1.05])
-        axis[1].set_xlabel('Precision')
-        axis[1].set_ylabel('Recall')
+        axis[1].set_xlabel('Recall')
+        axis[1].set_ylabel('Precision')
         axis[1].legend(loc="lower right")
         fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.ROC_PRC.svg" % comparison), bbox_inches="tight")
 
@@ -1784,8 +2022,8 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
         # sample correlation dendrogram
         sns.clustermap(
             x.corr(),
-            col_colors=all_sample_colors(all_samples) + [colors],
-            row_colors=all_sample_colors(all_samples) + [colors])
+            col_colors=all_sample_colors(all_samples),
+            row_colors=all_sample_colors(all_samples))
         plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_correlation.svg" % comparison), bbox_inches="tight")
         plt.close('all')
 
