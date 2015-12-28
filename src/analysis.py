@@ -1955,6 +1955,26 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
                 y_all_scores = np.vstack([y_all_scores, y_score])
                 importance = np.vstack([importance, classifier.feature_importances_])
 
+        # Metrics
+        binary_labels = [0 if x == classifier.classes_[0] else 1 for x in y_all_test]
+        binary_scores = [0 if x > 0.5 else 1 for x in y_all_scores[:, 0]]
+        # Specificity (TN / N)
+        tn = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 1) and (binary_scores[i] == 1)])
+        n = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 1])
+        TNR = tn / float(n)
+        # Sensitivity (TP / P)
+        tp = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 0) and (binary_scores[i] == 0)])
+        p = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 0])
+        TPR = tp / float(p)
+        # FPR (FP / P)
+        fn = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 0) and (binary_scores[i] == 1)])
+        p = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 0])
+        FPR = fn / float(p)
+        # FNR (FN / P)
+        fn = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 1) and (binary_scores[i] == 0)])
+        p = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 1])
+        FNR = fn / float(p)
+
         # Compute ROC curve and ROC area for each class
         fpr, tpr, _ = roc_curve(y_all_test, y_all_scores[:, 1], pos_label=classifier.classes_[1])
         roc_auc = auc(fpr, tpr, reorder=True)
@@ -1978,6 +1998,8 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
         axis[1].set_xlabel('Recall')
         axis[1].set_ylabel('Precision')
         axis[1].legend(loc="lower right")
+        # plot specificity (tpr) and sensitivity (1-tnr)
+        axis[0].plot(1 - TNR, TPR, 'o', color='gray')#, s=50)
         fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.ROC_PRC.svg" % comparison), bbox_inches="tight")
 
         # Display training and prediction of pre-labeled samples of most informative features:

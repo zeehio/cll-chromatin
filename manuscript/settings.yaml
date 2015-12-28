@@ -15,11 +15,20 @@ latex-header-includes:
     - \pagestyle{myheadings}
     - \newcommand{\initiateLandscape}{\begin{landscape}}
     - \newcommand{\terminateLandscape}{\end{landscape}}
+    - \DeclareUnicodeCharacter{00A0}{ }
 natbib-options:
     - super
     - comma
-# \bibliographystyle{unsrtnat}
 csl: scholdoc.csl
 css: scholmd.min.css
 
+# This commands have to be added manually for Nature-style citations:
+# \usepackage[super,comma]{natbib}
+# \bibpunct{}{}{,}{s}{}{\textsuperscript{,}}
+# \renewcommand\bibnumfmt[1]{#1.}
+# \bibliographystyle{naturemag}
+
+# Also add \pagebreak after the last main Figure
+
 ...
+

@@ -12,6 +12,7 @@ import textwrap
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy import stats
 
 sns.set_style("whitegrid")
 sns.set_context("paper")
@@ -133,8 +134,11 @@ for sample in prj.samples:
             output_file = os.path.join(output_dir, run_name + ".tsv")
 
             # read outfile
-            with open(output_file, "r") as handle:
-                lines = handle.readlines()
+            try:
+                with open(output_file, "r") as handle:
+                    lines = handle.readlines()
+            except:
+                continue
 
             # parse
             for line in lines:
@@ -145,23 +149,19 @@ for sample in prj.samples:
                 counts = counts.append(series, ignore_index=True)
 
 cc = counts[
-    (counts['peak_count'] > 0)
+    (counts['peak_count'] > 100) &
+    (counts['threshold'] == 2)
 ]
 
-cc['reads'] = np.log2(cc['reads'])
-cc['peak_count'] = np.log2(cc['peak_count'])
-
 # save
-# cc.to_csv(os.path.join(results_dir, "read_subsampling_peak_number.csv"), index=False)
-
+cc.to_csv(os.path.join(results_dir, "read_subsampling_peak_number.csv"), index=False)
 
 # average over samples
-c = cc.groupby(['reads', 'threshold']).aggregate(np.mean)
-c = c.reset_index()
+ccc = cc.groupby(['reads']).apply(np.mean)
+plt.plot(range(1 + len(ccc['peak_count'])), [0] + ccc['peak_count'].tolist(), 'o-')
 
-# plot
-g = sns.FacetGrid(c, hue="threshold")
-g.map(plt.scatter, 'reads', 'peak_count')
-plt.legend()
+ccc = cc.groupby(['reads']).apply(lambda x: pd.Series(stats.norm.interval(0.95, loc=x.mean(), scale=x.std() / np.sqrt(len(x)))))
 
-plt.savefig(os.path.join(plots_dir, "read_subsampling_peak_number.svg"))
+plt.plot(range(1 + len(ccc[0])), [0] + [x[0] for x in ccc[0]], 'o-')
+plt.plot(range(1 + len(ccc[1])), [0] + [x[0] for x in ccc[1]], 'o-')
+plt.savefig(os.path.join(plots_dir, "read_subsampling_peak_number.95CI.svg"))
