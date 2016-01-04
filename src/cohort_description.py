@@ -8,20 +8,32 @@ import os
 # from pipelines.models import Project
 import pandas as pd
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import Counter
+import re
+from lifelines import KaplanMeierFitter
+from lifelines import NelsonAalenFitter
+from lifelines.statistics import logrank_test
 
 
-sns.set_style('whitegrid')
-sns.set_context('paper')
+# Set settings
+pd.set_option("date_dayfirst", True)
+sns.set_style("whitegrid")
+sns.set_context("paper")
+sns.set_palette(sns.color_palette("colorblind"))
+matplotlib.rcParams['svg.fonttype'] = 'none'
+matplotlib.rc('font', family='sans-serif')
+matplotlib.rc('font', serif='Helvetica Neue')
+matplotlib.rc('text', usetex='false')
 
 
 # # start project
 # prj = Project('cll-patients')
 # prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
-plotsDir = os.path.join('results', 'plots')
+plots_dir = os.path.join('results', 'plots')
 
 # Get clinical info
 clinical = pd.read_csv(os.path.join('metadata', 'clinical_annotation.csv'))
@@ -103,7 +115,7 @@ for i, attr in enumerate(attrs):
         axarr[i].set_xticklabels(pd.DataFrame(df[attr]).T.columns, rotation=45)
     axarr[i].set_yticklabels([attr], rotation=0)
 
-plt.savefig(os.path.join(plotsDir, 'cohort.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(plots_dir, 'cohort.pdf'), bbox_inches='tight')
 
 # save plot data
 df.to_csv(os.path.join("data", "cohort.csv"), index=False)
@@ -123,7 +135,7 @@ sns.barplot(data=mut_counts, x=0, y=1, ax=axis)
 axis.set_title("Mutated genes and genomic aberrations in cohort")
 axis.set_xlabel("genes")
 axis.set_ylabel("frequency")
-plt.savefig(os.path.join(plotsDir, 'cohort_mutations.pdf'), bbox_inches='tight')
+plt.savefig(os.path.join(plots_dir, 'cohort_mutations.pdf'), bbox_inches='tight')
 
 # save plot data
 df.to_csv(os.path.join("data", "cohort_mutations.csv"), index=False)
@@ -169,7 +181,7 @@ fig.ax.set_ylabel("% survival")
 fig.ax.set_xlim(0, 40)
 fig.ax.set_ylim(0, 100)
 fig.ax.set_title("Kapplar-Mayer curve of cohort dependent on IGVH mutation status")
-fig.fig.savefig(os.path.join(plotsDir, 'cohort_kapplar-mayer.pdf'), bbox_inches='tight')
+fig.fig.savefig(os.path.join(plots_dir, 'cohort_kapplar-mayer.pdf'), bbox_inches='tight')
 
 
 # other option
@@ -179,3 +191,211 @@ fig.fig.savefig(os.path.join(plotsDir, 'cohort_kapplar-mayer.pdf'), bbox_inches=
 
 # save plot data
 df.to_csv(os.path.join("data", "cohort_kapplar-mayer.csv"), index=False)
+
+# Explore variables
+sns.distplot(clinical['igvh_homology'].dropna(), bins=20)
+plt.savefig(os.path.join(plots_dir, "igvh_homology.svg"), bbox_inches="tight")
+plt.close('all')
+sns.distplot(clinical['CD38_cells_percentage'].dropna(), bins=20)
+plt.savefig(os.path.join(plots_dir, "CD38_cells_percentage.svg"), bbox_inches="tight")
+plt.close('all')
+sns.distplot(clinical['ZAP70_cells_percentage'].dropna(), bins=20)
+plt.savefig(os.path.join(plots_dir, "ZAP70_cells_percentage.svg"), bbox_inches="tight")
+plt.close('all')
+sns.distplot(clinical['lymp_count'].dropna(), bins=20)
+plt.savefig(os.path.join(plots_dir, "lymp_count.svg"), bbox_inches="tight")
+plt.close('all')
+sns.distplot([i.days / 365 for i in pd.to_datetime(clinical['sample_collection_date']) - pd.to_datetime(clinical['patient_birth_date']) if i is not pd.NaT], bins=20)
+plt.savefig(os.path.join(plots_dir, "patient_age_at_collection.svg"), bbox_inches="tight")
+plt.close('all')
+
+
+# count numbers
+c = clinical.groupby(['igvh_mutation_status'])['sample_id'].count()
+sns.barplot(c.index, c.values)
+plt.savefig(os.path.join(plots_dir, "igvh_mutation_status.svg"), bbox_inches="tight")
+plt.close('all')
+c = clinical.groupby(['CD38_positive'])['sample_id'].count()
+sns.barplot(c.index, c.values)
+plt.savefig(os.path.join(plots_dir, "CD38_positive.svg"), bbox_inches="tight")
+plt.close('all')
+c = clinical.groupby(['ZAP70_positive'])['sample_id'].count()
+sns.barplot(c.index, c.values)
+plt.savefig(os.path.join(plots_dir, "ZAP70_positive.svg"), bbox_inches="tight")
+plt.close('all')
+c = clinical.groupby(['ZAP70_monoallelic_methylation'])['sample_id'].count()
+sns.barplot(c.index, c.values)
+plt.savefig(os.path.join(plots_dir, "ZAP70_monoallelic_methylation.svg"), bbox_inches="tight")
+plt.close('all')
+c = Counter([x for i in clinical['mutations'].apply(lambda x: [re.sub("\?", "", i.strip()) for i in str(x).split(",")]).tolist() for x in i])
+sns.barplot(c.keys(), c.values())
+plt.savefig(os.path.join(plots_dir, "mutations.svg"), bbox_inches="tight")
+plt.close('all')
+c = Counter([x for i in clinical['diagnosis_disease'].apply(lambda x: [re.sub("\?", "", i.strip()) for i in str(x).split(",")]).tolist() for x in i])
+sns.barplot(c.keys(), c.values())
+plt.savefig(os.path.join(plots_dir, "diagnosis_disease.svg"), bbox_inches="tight")
+plt.close('all')
+c = Counter([x for i in clinical['timepoint'].apply(lambda x: [re.sub("\?", "", i.strip()) for i in str(x).split(",")]).tolist() for x in i])
+sns.barplot(c.keys(), c.values())
+plt.savefig(os.path.join(plots_dir, "timepoint.svg"), bbox_inches="tight")
+plt.close('all')
+
+
+# Lifelines analysis
+# Get clinical info
+clinical = pd.read_csv(os.path.join('metadata', 'clinical_annotation.csv'))
+clinical.index = clinical['patient_id']
+
+# remove left censors (patients without birth or diagnosis date)
+clinical = clinical[~clinical['patient_birth_date'].isnull()]
+clinical = clinical[~clinical['diagnosis_date'].isnull()]
+
+# Get duration of patient observation
+# but first, let's replace missing "patient_last_checkup_date" with last date of treatment, death or collection
+cols = ["patient_death_date", "sample_collection_date", "diagnosis_date"] + ["treatment_%i_date" % i for i in range(1, 5)]
+subs = clinical[cols].apply(pd.to_datetime).apply(lambda x: max(x.dropna()), axis=1).groupby(clinical.index).max()
+no_checkup = clinical[clinical['patient_last_checkup_date'].isnull()]
+
+for i in no_checkup.index:
+    if subs[i] is not pd.NaT:
+        print(subs[i])
+        clinical.loc[i, 'patient_last_checkup_date'] = subs[i]
+
+clinical['duration_following'] = pd.to_datetime(clinical['patient_last_checkup_date']) - pd.to_datetime(clinical['diagnosis_date'])
+clinical['duration_life'] = pd.to_datetime(clinical['patient_last_checkup_date']) - pd.to_datetime(clinical['patient_birth_date'])
+
+
+# Time since birth
+# all patients
+T = [i.days / 365 for i in clinical['duration_life']]  # duration of patient following
+# events:
+# True for observed event (death);
+# else False (this includes death not observed; death by other causes)
+C = [True if i is not pd.np.nan else False for i in clinical['patient_death_date']]
+
+kmf = KaplanMeierFitter()
+
+# plot
+ax = plt.subplot(111)
+
+kmf.fit(T, event_observed=C, label="all patients")
+kmf.plot(ax=ax, show_censors=True)
+
+# ighv separated
+clinical = clinical.reset_index(drop=True)
+u = clinical[clinical['igvh_mutation_status'] == 2].index.tolist()
+m = clinical[clinical['igvh_mutation_status'] == 1].index.tolist()
+kmf.fit([T[i] for i in u], event_observed=[C[i] for i in u], label="uCLL")
+kmf.plot(ax=ax, show_censors=True)
+kmf.fit([T[i] for i in m], event_observed=[C[i] for i in m], label="mCLL")
+kmf.plot(ax=ax, show_censors=True)
+ax.set_ylim(0, 1.05)
+
+# Test u-mCLL difference
+results = logrank_test([T[i] for i in u], [T[i] for i in m], event_observed_A=[C[i] for i in u], event_observed_B=[C[i] for i in m])
+# results.print_summary()
+
+ax.text(
+    0.3, 0.1, 'u-mCLL p-value:%f' % results.p_value,
+    horizontalalignment='center',
+    verticalalignment='center',
+    transform=ax.transAxes)
+ax.set_title("Survival since birth")
+plt.savefig(os.path.join(plots_dir, "survival_since_birth.svg"), bbox_inches="tight")
+plt.close('all')
+
+# Hazard
+naf = NelsonAalenFitter()
+ax = plt.subplot(111)
+
+naf.fit(T, event_observed=C, label="all patients")
+naf.plot(ax=ax)
+
+# ighv separated
+clinical = clinical.reset_index(drop=True)
+u = clinical[clinical['igvh_mutation_status'] == 2].index.tolist()
+m = clinical[clinical['igvh_mutation_status'] == 1].index.tolist()
+naf.fit([T[i] for i in u], event_observed=[C[i] for i in u], label="uCLL")
+naf.plot(ax=ax)
+naf.fit([T[i] for i in m], event_observed=[C[i] for i in m], label="mCLL")
+naf.plot(ax=ax)
+
+# Test
+results = logrank_test([T[i] for i in u], [T[i] for i in m], event_observed_A=[C[i] for i in u], event_observed_B=[C[i] for i in m])
+# results.print_summary()
+
+ax.text(
+    0.3, 0.1, 'u-mCLL p-value:%f' % results.p_value,
+    horizontalalignment='center',
+    verticalalignment='center',
+    transform=ax.transAxes)
+ax.set_title("Hazard since birth")
+plt.savefig(os.path.join(plots_dir, "hazard_since_birth.svg"), bbox_inches="tight")
+plt.close('all')
+
+
+# Time since diagnosis
+# all patients
+T = [i.days / 365 for i in clinical['duration_following']]  # duration of patient following
+# events:
+# True for observed event (death);
+# else False (this includes death not observed; death by other causes)
+C = [True if i is not pd.np.nan else False for i in clinical['patient_death_date']]
+
+# plot
+ax = plt.subplot(111)
+
+kmf.fit(T, event_observed=C, label="all patients")
+kmf.plot(ax=ax, show_censors=True)
+
+# ighv separated
+clinical = clinical.reset_index(drop=True)
+u = clinical[clinical['igvh_mutation_status'] == 2].index.tolist()
+m = clinical[clinical['igvh_mutation_status'] == 1].index.tolist()
+kmf.fit([T[i] for i in u], event_observed=[C[i] for i in u], label="uCLL")
+kmf.plot(ax=ax, show_censors=True)
+kmf.fit([T[i] for i in m], event_observed=[C[i] for i in m], label="mCLL")
+kmf.plot(ax=ax, show_censors=True)
+ax.set_ylim(0, 1.05)
+
+# Test u-mCLL difference
+results = logrank_test([T[i] for i in u], [T[i] for i in m], event_observed_A=[C[i] for i in u], event_observed_B=[C[i] for i in m])
+# results.print_summary()
+
+ax.text(
+    0.3, 0.1, 'u-mCLL p-value:%f' % results.p_value,
+    horizontalalignment='center',
+    verticalalignment='center',
+    transform=ax.transAxes)
+ax.set_title("Survival since diagnosis")
+
+plt.savefig(os.path.join(plots_dir, "survival_since_diagnosis.svg"), bbox_inches="tight")
+plt.close('all')
+
+# Hazard
+ax = plt.subplot(111)
+
+naf.fit(T, event_observed=C, label="all patients")
+naf.plot(ax=ax)
+
+# ighv separated
+clinical = clinical.reset_index(drop=True)
+u = clinical[clinical['igvh_mutation_status'] == 2].index.tolist()
+m = clinical[clinical['igvh_mutation_status'] == 1].index.tolist()
+naf.fit([T[i] for i in u], event_observed=[C[i] for i in u], label="uCLL")
+naf.plot(ax=ax)
+naf.fit([T[i] for i in m], event_observed=[C[i] for i in m], label="mCLL")
+naf.plot(ax=ax)
+
+# Test
+results = logrank_test([T[i] for i in u], [T[i] for i in m], event_observed_A=[C[i] for i in u], event_observed_B=[C[i] for i in m])
+# results.print_summary()
+
+ax.text(
+    0.3, 0.1, 'u-mCLL p-value:%f' % results.p_value,
+    horizontalalignment='center',
+    verticalalignment='center',
+    transform=ax.transAxes)
+ax.set_title("Hazard since diagnosis")
+plt.savefig(os.path.join(plots_dir, "hazard_since_diagnosis.svg"), bbox_inches="tight")
+plt.close('all')
