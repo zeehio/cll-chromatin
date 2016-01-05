@@ -18,9 +18,13 @@ from matplotlib.pyplot import cm
 import multiprocessing
 import parmap
 import pysam
-import pandas as pd
 import numpy as np
-from sklearn import cross_validation
+import pandas as pd
+import dask.dataframe as dd
+try:
+    from sklearn import cross_validation
+except AttributeError:
+    from sklearn import cross_validation
 from sklearn.preprocessing import normalize
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
@@ -1160,7 +1164,7 @@ def add_args(parser):
     Options for project and pipelines.
     """
     # Behaviour
-    parser.add_argument("-g", "--generate", dest="stats", action="store_true",
+    parser.add_argument("-g", "--generate", dest="generate", action="store_true",
                         help="Should we generate data and plots? Default=False")
 
     return parser
@@ -1348,18 +1352,18 @@ def samples_to_color(samples, method="mutation"):
         raise ValueError("Method %s is not valid" % method)
 
 
-def all_sample_colors(samples, order=""):
-    return [
-        samples_to_color(samples, "mutation"),
-        samples_to_color(samples, "homology"),
-        # samples_to_color(samples, "treatment"),
-        # samples_to_color(samples, "disease")
-        # samples_to_color(samples, "unique"),
-        samples_to_color(samples, "gender")
-    ]
+# def all_sample_colors(samples, order=""):
+#     return [
+#         samples_to_color(samples, "mutation"),
+#         samples_to_color(samples, "homology"),
+#         # samples_to_color(samples, "treatment"),
+#         # samples_to_color(samples, "disease")
+#         # samples_to_color(samples, "unique"),
+#         samples_to_color(samples, "gender")
+#     ]
 
 
-def annotate_igvh_mutations(samples, clinical):
+def annotate_IGHV(samples, clinical):
     new_samples = list()
 
     for sample in samples:
@@ -1379,7 +1383,56 @@ def annotate_igvh_mutations(samples, clinical):
     return new_samples
 
 
-def annotate_treatments(samples, clinical):
+def annotate_CD38(samples, clinical):
+    new_samples = list()
+
+    for sample in samples:
+        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
+            _id = name_to_sample_id(sample.name)
+            sample.CD38_percentage = clinical.loc[clinical['sample_id'] == _id, 'CD38_cells_percentage'].tolist()[0]
+            if clinical.loc[clinical['sample_id'] == _id, 'CD38_positive'].tolist()[0] == 1:
+                sample.CD38 = True
+            elif clinical.loc[clinical['sample_id'] == _id, 'CD38_positive'].tolist()[0] == 2:
+                sample.CD38 = False
+            else:
+                sample.CD38 = None
+        else:
+            sample.CD38_percentage = None
+            sample.CD38 = None
+        new_samples.append(sample)
+    return new_samples
+
+
+def annotate_ZAP70(samples, clinical):
+    new_samples = list()
+
+    for sample in samples:
+        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
+            _id = name_to_sample_id(sample.name)
+            sample.ZAP70_percentage = clinical.loc[clinical['sample_id'] == _id, 'ZAP70_cells_percentage'].tolist()[0]
+
+            # ZAP70 expression
+            if clinical.loc[clinical['sample_id'] == _id, 'ZAP70_positive'].tolist()[0] == 1:
+                sample.ZAP70 = True
+            elif clinical.loc[clinical['sample_id'] == _id, 'ZAP70_positive'].tolist()[0] == 2:
+                sample.ZAP70 = False
+            else:
+                sample.ZAP70 = None
+
+            # ZAP70 mono-allelic methylation/expression
+            if clinical.loc[clinical['sample_id'] == _id, 'ZAP70_monoallelic_methylation'].tolist()[0] == "Y":
+                sample.ZAP70_monoallelic = True
+            else:
+                sample.ZAP70_monoallelic = False
+        else:
+            sample.ZAP70_percentage = None
+            sample.ZAP70 = None
+            sample.ZAP70_monoallelic = None
+        new_samples.append(sample)
+    return new_samples
+
+
+def annotate_disease_treatments(samples, clinical):
     """
     Annotate samples with timepoint, treatment_status, treatment_type
     """
@@ -1403,6 +1456,8 @@ def annotate_treatments(samples, clinical):
             # get corresponding series from "clinical"
             sample_c = clinical[clinical['sample_id'] == sample_id].squeeze()
 
+            # Get patient timepoint
+            sample.timepoint = sample_c['timepoint']
             # Get sample collection date
             sample.collection_date = string_to_date(sample_c['sample_collection_date'])
             # Get diagnosis date
@@ -1429,8 +1484,10 @@ def annotate_treatments(samples, clinical):
                     if treatment_end_date is pd.NaT:
                         sample.treatment_active = True
                     else:
+                        # if sample is collected after treatment end, mark as not under treatment
                         if treatment_date < treatment_end_date < sample.collection_date:
                             sample.treatment_active = False
+                        # if sample is collected before treatment end, mark as under treatment
                         elif treatment_date < sample.collection_date < treatment_end_date:
                             sample.treatment_active = True
             # if there were no treatments before collection, consider untreated
@@ -1482,9 +1539,27 @@ def annotate_treatments(samples, clinical):
         for attr in ['diagnosis_collection', 'diagnosis_date', 'diagnosis_disease', 'time_since_treatment', 'treatment_type',
                      'treatment_response', "treatment_active", "previous_treatment_date", "previous_response", 'relapse']:
             if not hasattr(sample, attr):
-                setattr(sample, attr, None)
+                setattr(sample, attr, pd.np.nan)
 
         # Append sample
+        new_samples.append(sample)
+    return new_samples
+
+
+def annotate_mutations(samples, clinical):
+    new_samples = list()
+
+    clinical2 = clinical.replace(to_replace=["q", "loss", "\?"], value=[""] * 3, regex=True)
+
+    for sample in samples:
+        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
+            _id = name_to_sample_id(sample.name)
+            if type(clinical2[clinical2['sample_id'] == _id]['mutations'].tolist()[0]) is not str:
+                sample.mutations = []
+            else:
+                sample.mutations = clinical2[clinical2['sample_id'] == _id]['mutations'].tolist()[0].split(",")
+        else:
+            sample.mutations = None
         new_samples.append(sample)
     return new_samples
 
@@ -1507,17 +1582,14 @@ def annotate_gender(samples, clinical):
     return new_samples
 
 
-def annotate_mutations(samples, clinical):
-    new_samples = list()
-
-    for sample in samples:
-        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
-            _id = name_to_sample_id(sample.name)
-            sample.mutations = clinical[clinical['sample_id'] == _id]['mutations'].tolist()[0]
-        else:
-            sample.mutations = None
-        new_samples.append(sample)
-    return new_samples
+def annotate_samples(samples, clinical):
+    samples = annotate_IGHV(samples, clinical)
+    samples = annotate_CD38(samples, clinical)
+    samples = annotate_ZAP70(samples, clinical)
+    samples = annotate_disease_treatments(samples, clinical)
+    samples = annotate_gender(samples, clinical)
+    samples = annotate_mutations(samples, clinical)
+    return samples
 
 
 def state_enrichment_overlap(n=100):
@@ -1872,12 +1944,18 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
     ensembl_genes.to_csv(os.path.join(output_dir, "%s_genes.txt" % prefix), index=False)
 
     # Lola
-    lola(bed_file, universe_file, lola_output)
+    try:
+        lola(bed_file, universe_file, lola_output)
+    except:
+        print("LOLA analysis for %s failed!" % prefix)
 
     # seq2pathway
-    results = seq2pathway(tsv_file, go_term_mapping)
-    results_file = os.path.join(output_dir, "%s_regions.seq2pathway.csv" % prefix)
-    results.to_csv(results_file, index=False)
+    try:
+        results = seq2pathway(tsv_file, go_term_mapping)
+        results_file = os.path.join(output_dir, "%s_regions.seq2pathway.csv" % prefix)
+        results.to_csv(results_file, index=False)
+    except:
+        print("seq2pathway analysis for %s failed!" % prefix)
 
     # GO Terms
     # write all gene names to file
@@ -1892,42 +1970,45 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
             handle.write(gene + "\n")
     output_file = os.path.join(output_dir, "%s_regions.goverlap.tsv" % prefix)
     # test enrichements of closest gene function: GO, KEGG, OMIM
-    goverlap(genes_file, universe_genes_file, output_file)
+    try:
+        goverlap(genes_file, universe_genes_file, output_file)
+    except:
+        print("Goverlap analysis for %s failed!" % prefix)
 
     # Motifs
     # de novo motif finding - enrichment
     fasta_file = os.path.join(output_dir, "%s_regions.fa" % prefix)
     bed_to_fasta(bed_file, fasta_file)
 
-    meme_ame(fasta_file, meme_output)
+    # meme_ame(fasta_file, meme_output)
 
 
-def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
+def classify_samples(analysis, sel_samples, labels, comparison):
     """
     Use a machine learning approach for sample classification based on known sample attributes.
     Extract features most important to separate samples and investigate those.
     """
+    from tqdm import tqdm
 
-    dataframe_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % comparison)
+    print("Trait:%s" % comparison)
+
+    dataframe_file = os.path.join(
+        analysis.prj.dirs.data,
+        "trait_specific",
+        "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % comparison)
     if os.path.exists(dataframe_file):  # Load up
         dataframe = pd.read_csv(dataframe_file, sep="\t")
     else:  # Run analysis
-        # get colors depending on feature (gender, mutation, drugs, etc...)
-        if comparison in ["mutation", "gender"]:
-            comparison_colors = samples_to_color(sel_samples, comparison)
-        elif comparison == 'untreated_vs_treated':
-            comparison_colors = samples_to_color(sel_samples, "treatment")
-        elif comparison == "untreated_vs_1stline":
-            comparison_colors = samples_to_color(sel_samples, "treatment")
-        elif comparison == "CLL_vs_MBL":
-            comparison_colors = samples_to_color(sel_samples, "disease")
+        # Get all CLL ATAC-seq samples for validation
+        all_samples = [s for s in analysis.samples if s.cellLine == "CLL" and s.technique == "ATAC-seq"]
 
-        # get all samples
-        all_samples = [s for s in analysis.samples if s.cellLine == "CLL"]
+        # Get colors depending on this feature label (comparison) (True == green; False == redish)
+        palette = sns.color_palette("colorblind")
+        comparison_colors = [palette[1] if l else palette[2] for l in labels]
+        all_samples_colors = [comparison_colors[sel_samples.index(s)] if s in sel_samples else "gray" for s in all_samples]
+        cmap = sns.cubehelix_palette(8, start=.5, rot=-.75, as_cmap=True)  # for later usage in heatmaps
 
-        cmap = sns.cubehelix_palette(8, start=.5, rot=-.75, as_cmap=True)
-
-        # ALL REGIONS
+        # ALL CLL OPEN CHROMATIN REGIONS
         matrix = analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]]
 
         # BINARY CLASSIFICATION
@@ -1937,8 +2018,15 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
 
         loo = cross_validation.LeaveOneOut(len(X))
 
-        for i, (train_index, test_index) in enumerate(loo):
-            print(i)
+        for i, (train_index, test_index) in tqdm(enumerate(loo)):
+            # Skip validations on samples from the same patient
+            # # get patient:sample mappings
+            # p_s_mapping = dict(pd.DataFrame([pd.Series(s.__dict__) for s in sel_samples]).groupby('patientID').groups.items())
+            # group = p_s_mapping.index([x for x in p_s_mapping.values() if train_index in x][0])
+            # if test_index in p_s_mapping[group][:].pop(group):
+            #     continue
+
+            # print(i)
             X_train, X_test = X[train_index], X[test_index]
             y_train, y_test = y[train_index], y[test_index]
 
@@ -1985,7 +2073,7 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
 
         # Plot ROC and PRC curves
         fig, axis = plt.subplots(1, 2, figsize=(12, 5))
-        axis[0].plot(fpr, tpr, label='ROC (AUC = {0:0.2f})'.format(roc_auc))
+        axis[0].plot(fpr, tpr, label='ROC (AUC = {0:0.2f}; TNR = {1:0.2f}; TPR = {2:0.2f})'.format(roc_auc, TNR, TPR))
         axis[1].plot(recall, precision, label='PRC (AUC = {0:0.2f})'.format(aps))
         axis[0].plot((0, 1), (0, 1), '--', color='gray')
         axis[0].set_xlim([-0.05, 1.0])
@@ -1999,8 +2087,10 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
         axis[1].set_ylabel('Precision')
         axis[1].legend(loc="lower right")
         # plot specificity (tpr) and sensitivity (1-tnr)
-        axis[0].plot(1 - TNR, TPR, 'o', color='gray')#, s=50)
-        fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.ROC_PRC.svg" % comparison), bbox_inches="tight")
+        axis[0].plot(1 - TNR, TPR, 'o', color='gray')  # , s=50)
+        fig.savefig(os.path.join(
+            analysis.prj.dirs.plots,
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.ROC_PRC.svg" % comparison), bbox_inches="tight")
 
         # Display training and prediction of pre-labeled samples of most informative features:
         # Get most informative features
@@ -2010,33 +2100,31 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
         # get important features
         # n = 500; x = matrix.loc[np.argsort(mean_importance)[-n:], :] # get n top features
         # or
-        x = matrix.loc[[i for i, j in enumerate(mean_importance > 0.0001) if j == True], :]  # get features on the tail of the importance distribution
+        x = matrix.loc[[i for i, j in enumerate(mean_importance > 1e-4) if j == True], :]  # get features on the tail of the importance distribution
         sites_cluster = sns.clustermap(
             x,
             cmap=cmap,
             standard_scale=0,
             col_colors=comparison_colors,
             yticklabels=False)
-        plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.svg" % comparison), bbox_inches="tight")
+        plt.savefig(os.path.join(
+            analysis.prj.dirs.plots,
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.svg" % comparison), bbox_inches="tight")
         plt.close('all')
 
+        # SEE ALL SAMPLES
         # Display most informative features for ALL samples:
         matrix = analysis.coverage_qnorm_annotated[[s.name for s in all_samples]]
         # get important features
-        x = matrix.loc[[i for i, j in enumerate(mean_importance > 0.0001) if j == True], :]  # get features on the tail of the importance distribution
+        x = matrix.loc[[i for i, j in enumerate(mean_importance > 1e-4) if j == True], :]  # get features on the tail of the importance distribution
 
         # get colors for each cluster
-        if comparison == 'gender':
-            gs = 2
-        elif comparison == 'mutation':
-            gs = 4
-        else:
-            gs = 5
+        group_number = 4 if comparison == 'IGHV' else 2  # 4 IGHV groups, everything else 2
         # cluster all samples first
         samples_cluster = sns.clustermap(x.corr())
         # get cluster labels for samples
         Z = samples_cluster.dendrogram_col.linkage
-        clusters = fcluster(Z, gs, criterion="maxclust")
+        clusters = fcluster(Z, group_number, criterion="maxclust")
         # get cluster colors
         cluster_colors = dict(zip(np.unique(clusters), sns.color_palette("colorblind")))
         colors = [cluster_colors[c] for c in clusters]
@@ -2044,27 +2132,31 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
         # sample correlation dendrogram
         sns.clustermap(
             x.corr(),
-            col_colors=all_sample_colors(all_samples),
-            row_colors=all_sample_colors(all_samples))
-        plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_correlation.svg" % comparison), bbox_inches="tight")
+            col_colors=all_samples_colors,  # all_sample_colors(all_samples),
+            row_colors=all_samples_colors)
+        plt.savefig(os.path.join(
+            analysis.prj.dirs.plots,
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_correlation.svg" % comparison), bbox_inches="tight")
         plt.close('all')
 
         # pca on these regions
-        pca_r(x, colors, os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_labels.svg" % comparison))
+        pca_r(x, colors, os.path.join(
+            analysis.prj.dirs.plots,
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_labels.svg" % comparison))
 
         # REGIONS
         # Characterize regions as a whole
         # region's composition
         characterize_regions_composition(df=analysis.coverage_qnorm_annotated.loc[x.index, :], prefix=comparison)
         # region's function
-        output_dir = os.path.join(analysis.data_dir, "%s_peaks" % comparison)
+        output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks" % comparison)
         characterize_regions_function(df=analysis.coverage_qnorm_annotated.loc[x.index, :], output_dir=output_dir, prefix=comparison)
 
         # Split in major groups
         if comparison == 'gender':
             gr = 2
-        elif comparison == 'mutation':
-            gr = 3
+        elif comparison == 'IGHV':
+            gr = 4
         else:
             gr = 5
         Z = sites_cluster.dendrogram_row.linkage
@@ -2077,10 +2169,12 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
             x,
             cmap=cmap,
             standard_scale=0,
-            col_colors=all_sample_colors(all_samples),
+            col_colors=comparison_colors,
             row_colors=colors,
             yticklabels=False)
-        plt.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sites_labels.svg" % comparison), bbox_inches="tight")
+        plt.savefig(os.path.join(
+            analysis.prj.dirs.plots,
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sites_labels.svg" % comparison), bbox_inches="tight")
         plt.close('all')
 
         # get cluster labels for sites
@@ -2089,11 +2183,17 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
         dataframe['importance'] = mean_importance[x.index]
         dataframe['cluster'] = clusters
         # Save whole dataframe as csv
-        dataframe_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % comparison)
+        dataframe_file = os.path.join(
+            analysis.prj.dirs.data,
+            "trait_specific",
+            "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % comparison)
         dataframe.to_csv(dataframe_file, sep="\t", index=False)
 
         # Save as bed
-        bed_file = os.path.join(analysis.prj.dirs.data, "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % comparison)
+        bed_file = os.path.join(
+            analysis.prj.dirs.data,
+            "trait_specific",
+            "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % comparison)
         dataframe[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
 
     # Region characterization
@@ -2102,13 +2202,16 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
     chrom_count = np.array(sorted(chrom_count.items(), key=lambda x: x[1], reverse=True))
     fig, axis = plt.subplots(1, figsize=(10, 5))
     sns.barplot(chrom_count[:, 0], chrom_count[:, 1].astype(int), ax=axis)
-    fig.savefig(os.path.join(analysis.prj.dirs.plots, "cll_peaks.%s_significant.classification.random_forest.loocv.sites_location.svg" % comparison), bbox_inches="tight")
+    fig.savefig(os.path.join(
+        analysis.prj.dirs.plots,
+        "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.sites_location.svg" % comparison), bbox_inches="tight")
 
     for i, cluster in enumerate(np.unique(dataframe['cluster'])):
         # GET REGIONS FROM CLUSTER
         df = dataframe[dataframe['cluster'] == cluster]
 
-        if len(df) < 100:
+        # ignore clusters with less than 20 regions
+        if len(df) < 20:
             continue
 
         # output folder
@@ -2126,81 +2229,170 @@ def classify_samples(analysis, sel_samples, labels, comparison="mutation"):
             df3 = df3.append(regions)
 
         # region's function
-        output_dir = os.path.join(analysis.data_dir, "%s_peaks_cluster%i" % (comparison, cluster))
+        output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks_cluster%i" % (comparison, cluster))
         characterize_regions_function(df=df, output_dir=output_dir, prefix="%s_cluster%i" % (comparison, cluster))
 
-        # parse meme-ame output
-        motifs = pd.DataFrame(parse_ame(os.path.join(output_dir, "meme")), columns=['motifs', 'q_values'])
-        motifs['cluster'] = cluster
-        if i == 0:
-            df2 = motifs
-        else:
-            df2 = pd.concat([df2, motifs])
+        # # parse meme-ame output
+        # motifs = pd.DataFrame(parse_ame(os.path.join(output_dir, "meme")), columns=['motifs', 'q_values'])
+        # motifs['cluster'] = cluster
+        # if i == 0:
+        #     df2 = motifs
+        # else:
+        #     df2 = pd.concat([df2, motifs])
 
-    # Plot region enrichment
-    df3['region'] = df3.index
-    df3 = df3.sort(['region'])
-    df3 = df3.replace(np.nan, 0)
+    # # Plot region enrichment
+    # df3['region'] = df3.index
+    # df3 = df3.sort(['region'])
+    # df3 = df3.replace(np.nan, 0)
 
-    g = sns.FacetGrid(col="region", data=df3[df3['variable'] == 'genomic_region'], col_wrap=3, sharey=True)
-    g.map(sns.barplot, "cluster", "value")
-    plt.savefig(os.path.join(analysis.prj.dirs.plots, "%s_regions.region_enrichment.svg" % comparison), bbox_inches="tight")
+    # g = sns.FacetGrid(col="region", data=df3[df3['variable'] == 'genomic_region'], col_wrap=3, sharey=True)
+    # g.map(sns.barplot, "cluster", "value")
+    # plt.savefig(os.path.join(
+    #     analysis.prj.dirs.plots,
+    #     "trait_specific", "%s_regions.region_enrichment.svg" % comparison), bbox_inches="tight")
 
-    g = sns.FacetGrid(col="region", data=df3[df3['variable'] == 'chromatin_state'], col_wrap=3, sharey=True)
-    g.map(sns.barplot, "cluster", "value")
-    plt.savefig(os.path.join(analysis.prj.dirs.plots, "%s_regions.chromatin_enrichment.svg" % comparison), bbox_inches="tight")
+    # g = sns.FacetGrid(col="region", data=df3[df3['variable'] == 'chromatin_state'], col_wrap=3, sharey=True)
+    # g.map(sns.barplot, "cluster", "value")
+    # plt.savefig(os.path.join(
+    #     analysis.prj.dirs.plots,
+    #     "trait_specific", "%s_regions.chromatin_enrichment.svg" % comparison), bbox_inches="tight")
 
-    # save data
-    df3.to_csv(os.path.join(analysis.prj.dirs.plots, "%s_regions.region_enrichment.csv" % comparison), index=False)
+    # # save data
+    # df3.to_csv(os.path.join(
+    #     analysis.prj.dirs.plots,
+    #     "trait_specific", "%s_regions.region_enrichment.csv" % comparison), index=False)
 
-    # Plot motif enrichments
-    df2['q_values'] = -np.log10(np.array(df2['q_values'], dtype=float))
-    # get highest (worst) p-value from motifs of the same TF
-    df3 = df2.groupby(['motifs', 'cluster']).aggregate(max).reset_index()
-    # spread again for each cluster
-    df3 = df3.pivot('motifs', 'cluster', 'q_values')
-    # replace nan with 0
-    df3 = df3.replace(np.nan, 0)
-    # fix types
-    for i in [1, 2]:
-        df3[i] = df3[i].astype(float)
+    # # Plot motif enrichments
+    # df2['q_values'] = -np.log10(np.array(df2['q_values'], dtype=float))
+    # # get highest (worst) p-value from motifs of the same TF
+    # df3 = df2.groupby(['motifs', 'cluster']).aggregate(max).reset_index()
+    # # spread again for each cluster
+    # df3 = df3.pivot('motifs', 'cluster', 'q_values')
+    # # replace nan with 0
+    # df3 = df3.replace(np.nan, 0)
+    # # fix types
+    # for i in [1, 2]:
+    #     df3[i] = df3[i].astype(float)
 
-    # sort
-    df3 = df3.sort([1])
-    # plot heatmap of p-values
-    sns.clustermap(df3, z_score=1, figsize=(8, 24), linewidths=0, cmap=plt.cm.YlGn)
-    plt.savefig(os.path.join(analysis.prj.dirs.plots, "%s_regions.motif_enrichment.svg" % comparison), bbox_inches="tight")
-    plt.close('all')
+    # # sort
+    # df3 = df3.sort([1])
+    # # plot heatmap of p-values
+    # sns.clustermap(df3, z_score=1, figsize=(8, 24), linewidths=0, cmap=plt.cm.YlGn)
+    # plt.savefig(os.path.join(
+    #     analysis.prj.dirs.plots,
+    #     "trait_specific", "%s_regions.motif_enrichment.svg" % comparison), bbox_inches="tight")
+    # plt.close('all')
 
-    sns.clustermap(df3[(df3.icol(0) > 30) & (df3.icol(1) > 30)], cmap=plt.cm.YlGn)
-    plt.savefig(os.path.join(analysis.prj.dirs.plots, "%s_regions.motif_enrichment.highest.svg" % comparison), bbox_inches="tight")
-    plt.close('all')
+    # sns.clustermap(df3[(df3.icol(0) > 30) & (df3.icol(1) > 30)], cmap=plt.cm.YlGn)
+    # plt.savefig(os.path.join(
+    #     analysis.prj.dirs.plots,
+    #     "trait_specific", "%s_regions.motif_enrichment.highest.svg" % comparison), bbox_inches="tight")
+    # plt.close('all')
 
-    # save data
-    df3.to_csv(os.path.join(analysis.prj.dirs.plots, "%s_regions.motif_enrichment.csv" % comparison), index=False)
+    # # save data
+    # df3.to_csv(os.path.join(
+    #     analysis.prj.dirs.plots,
+    #     "trait_specific", "%s_regions.motif_enrichment.csv" % comparison), index=False)
 
-    # get n_max most different motifs
-    n_max = 25
-    p_value = 3  # -log10
+    # # get n_max most different motifs
+    # n_max = 25
+    # p_value = 3  # -log10
 
-    # filter p-values
-    df4 = df3[(df3[1] > p_value) | (df3[2] > p_value)]
+    # # filter p-values
+    # df4 = df3[(df3[1] > p_value) | (df3[2] > p_value)]
 
-    # floor n_max
-    if len(df4) < n_max:
-        n_max = len(df4)
+    # # floor n_max
+    # if len(df4) < n_max:
+    #     n_max = len(df4)
 
-    # get n most dissimilar features
-    s = abs(df4[1] - df4[2])
-    # sort by similarity
-    s.sort(ascending=False)
-    # get top
-    index = s.irow(range(n_max)).index
+    # # get n most dissimilar features
+    # s = abs(df4[1] - df4[2])
+    # # sort by similarity
+    # s.sort(ascending=False)
+    # # get top
+    # index = s.irow(range(n_max)).index
 
-    # plot matrix of clusters/terms with p_values
-    sns.clustermap(df4.ix[index], col_cluster=False, cmap=plt.cm.YlGn)
-    plt.savefig(os.path.join(analysis.prj.dirs.plots, "%s_regions.motif_enrichment.difference.svg" % comparison), bbox_inches="tight")
-    plt.close('all')
+    # # plot matrix of clusters/terms with p_values
+    # sns.clustermap(df4.ix[index], col_cluster=False, cmap=plt.cm.YlGn)
+    # plt.savefig(os.path.join(
+    #     analysis.prj.dirs.plots,
+    #     "trait_specific", "%s_regions.motif_enrichment.difference.svg" % comparison), bbox_inches="tight")
+    # plt.close('all')
+
+
+def trait_analysis(analysis):
+    # Gender
+    sel_samples = [s for s in analysis.samples if type(s.patient_gender) is str]
+    labels = [s.patient_gender for s in sel_samples]
+    classify_samples(analysis, sel_samples, labels, comparison="gender")
+
+    # IGHV mutation status
+    sel_samples = [s for s in analysis.samples if type(s.mutated) is bool]
+    labels = [s.mutated for s in sel_samples]
+    classify_samples(analysis, sel_samples, labels, comparison="IGHV")
+
+    # CD38 expression
+    sel_samples = [s for s in analysis.samples if type(s.CD38) is bool]
+    labels = [s.CD38 for s in sel_samples]
+    classify_samples(analysis, sel_samples, labels, comparison="CD38")
+
+    # ZAP70 expression
+    sel_samples = [s for s in analysis.samples if type(s.ZAP70) is bool]
+    labels = [s.ZAP70 for s in sel_samples]
+    classify_samples(analysis, sel_samples, labels, comparison="ZAP70")
+
+    # ZAP70 mono-allelic expression
+    sel_samples = [s for s in analysis.samples if type(s.ZAP70_monoallelic) is bool]
+    labels = [s.ZAP70_monoallelic for s in sel_samples]
+    classify_samples(analysis, sel_samples, labels, comparison="ZAP70_monoallelic")
+
+    # Disease at Diagnosis - comparison in untreated samples
+    # Primary vs Secondary CLL (progressed from MBL and SLL)
+    sel_samples = [s for s in analysis.samples if type(s.diagnosis_disease) is str]
+    labels = [True if s.diagnosis_disease == "CLL" else False for s in sel_samples]
+    classify_samples(analysis, sel_samples, labels, comparison="primary_CLL")
+
+    # Treatment types
+    # Under treatment
+    sel_samples = [s for s in analysis.samples if type(s.treatment_active) is bool]
+    labels = [True if s.treatment_active else False for s in sel_samples]
+    classify_samples(analysis, sel_samples, labels, comparison="treated")
+
+    # Under treament but with different types
+    # Chemotherapy
+    chemo_drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR']
+    sel_samples = [s for s in analysis.samples if s.treatment_active]
+    labels = [s for s in sel_samples if s.treatment_type in chemo_drugs]
+    classify_samples(analysis, sel_samples, labels, comparison="chemo_treated")
+    # B cell antibodies
+    target_drugs = ['Alemtuz', 'Ibrutinib']
+    sel_samples = [s for s in analysis.samples if s.treatment_active]
+    labels = [s for s in sel_samples if s.treatment_type in target_drugs]
+    classify_samples(analysis, sel_samples, labels, comparison="target_treated")
+
+    # Mutations / abnormalities
+    muts = ['del13', 'del11', 'tri12']
+    muts += ['SF3B1', 'ATM', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
+    # see mutations:
+    # Counter([x for s in prj.samples if s.cellLine == "CLL" and s.technique == "ATAC-seq" for x in s.mutations])
+    for mut in muts:
+        # later add as well:
+        # IGHVun +/- del; IGHVmut +/- del
+        sel_samples = [s for s in analysis.samples if type(s.mutations) is list]
+        labels = [True if mut in s.mutations else False for s in sel_samples]
+        classify_samples(analysis, sel_samples, labels, comparison=mut)
+
+    # Relapse
+    # "relapse", ("True", "False"), # relapse or before relapse
+    sel_samples = [s for s in analysis.samples if type(s.relapse) is bool]
+    labels = [s.relapse for s in sel_samples]
+    classify_samples(analysis, sel_samples, labels, comparison="relapse")
+
+    # Early vs Late
+    # "progression", ("True", "False"), # early vs late timepoint
+    sel_samples = [s for s in analysis.samples if type(s.diagnosis_collection) is bool]
+    labels = [s.diagnosis_collection for s in sel_samples]
+    classify_samples(analysis, sel_samples, labels, comparison="early_diagnosis")
 
 
 def compare_go_terms(cluster_labels, file_names, plot, p_value=0.05, n_max=35):
@@ -2342,10 +2534,7 @@ def main():
     prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
     # Annotate with clinical data
-    prj.samples = annotate_igvh_mutations(prj.samples, clinical)
-    prj.samples = annotate_treatments(prj.samples, clinical)
-    prj.samples = annotate_mutations(prj.samples, clinical)
-    prj.samples = annotate_gender(prj.samples, clinical)
+    prj.samples = annotate_samples(prj.samples, clinical)
 
     # save "digested" clinical sheet to disk
     if args.generate:
@@ -2411,6 +2600,13 @@ def main():
         analysis.plot_sample_correlations()
         # Observe exponential fit to the coeficient of variation
         analysis.plot_qv2_fit()
+
+        # Characterize all CLL regions as a whole
+        # region's composition
+        characterize_regions_composition(df=analysis.coverage_qnorm_annotated, prefix="all_regions")
+        # region's function
+        output_dir = os.path.join(analysis.data_dir, "%s_peaks" % "all_regions")
+        characterize_regions_function(df=analysis.coverage_qnorm_annotated, output_dir=output_dir, prefix="all_regions")
     else:
         analysis.sites = pybedtools.BedTool(os.path.join(analysis.prj.dirs.data, "cll_peaks.bed"))
         analysis.peak_count = pickle.load(open(os.path.join(analysis.prj.dirs.data, "cll_peaks.cum_peak_count.pickle"), 'rb'))
@@ -2430,89 +2626,37 @@ def main():
         analysis.coverage_qnorm = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t")
         analysis.coverage_qnorm_annotated = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
 
-    # Characterize all CLL regions as a whole
-    # region's composition
-    characterize_regions_composition(df=analysis.coverage_qnorm_annotated, prefix="all_regions")
-    # region's function
-    output_dir = os.path.join(analysis.data_dir, "%s_peaks" % "all_regions")
-    characterize_regions_function(df=analysis.coverage_qnorm_annotated, output_dir=output_dir, prefix="all_regions")
-
     # TRAIT-SPECIFIC ANALYSIS
-    # Gender
-    sel_samples = [s for s in analysis.samples if type(s.patient_gender) is str]
-    labels = [s.patient_gender for s in sel_samples]
-    classify_samples(analysis, sel_samples, labels, comparison="gender")
+    trait_analysis(analysis)
 
-    # IGHV mutation status
-    sel_samples = [s for s in analysis.samples if type(s.mutated) is bool]
-    labels = [s.mutated for s in sel_samples]
-    classify_samples(analysis, sel_samples, labels, comparison="mutation")
+    #
 
-    # untreated vs treated
-    sel_samples = list()
-    labels = list()
-    for sample in analysis.samples:
-        if not sample.treatment_active and not sample.relapse:
-            sel_samples.append(sample)
-            labels.append("untreated")
-        elif sample.treatment_active:
-            sel_samples.append(sample)
-            labels.append("treated")
-    classify_samples(analysis, sel_samples, labels, comparison="untreated_vs_treated")
+    #
 
-    # untreated vs 1st line chemotherapy +~ B cell antibodies
-    drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR']
-    sel_samples = list()
-    labels = list()
-    for sample in analysis.samples:
-        if not sample.treatment_active and not sample.relapse:
-            sel_samples.append(sample)
-            labels.append("untreated")
-        elif sample.treatment_active and sample.treatment_type in drugs:
-            sel_samples.append(sample)
-            labels.append("1stlinetreatment")
-    classify_samples(analysis, sel_samples, labels, comparison="untreated_vs_1stline")
+    # Compare go terms/LOLA results from regions
+    # compare_go_terms(
+    #     [1, 2],
+    #     ['data/mutation_peaks_cluster1/mutation_cluster1_regions.seq2pathway.csv', 'data/mutation_peaks_cluster2/mutation_cluster2_regions.seq2pathway.csv'],
+    #     "results/plots/mutation_regions.goterm_enrichment.svg",
+    #     p_value=0.05)
 
-    # Disease at Diagnosis - comparison in untreated samples
-    # CLL vs MBL
-    sel_samples = [s for s in analysis.samples if type(s.diagnosis_disease) is str and not sample.treatment_active and not sample.relapse]
-    labels = [s.diagnosis_disease for s in sel_samples]
-    # remove SLL
-    index = [i for i, s in enumerate(sel_samples) if s.diagnosis_disease == 'SLL']
-    [sel_samples.pop(i) for i in index]
-    [labels.pop(i) for i in index]
-    classify_samples(analysis, sel_samples, labels, comparison="CLL_vs_MBL")
+    # compare_pathway_enrichment(
+    #     [1, 2],
+    #     ['data/mutation_peaks_cluster1/mutation_cluster1_regions.pathway_enrichment.csv', 'data/mutation_peaks_cluster2/mutation_cluster2_regions.pathway_enrichment.csv'],
+    #     "results/plots/mutation_regions.pathway_enrichment.svg",
+    #     p_value=0.05)
 
-    # "relapse", ("True", "False"), # relapse or before relapse
-    # "treatment_1st", ("untreated", "Chlor"),  # untreated vs 1st line chemotherapy
-    # "treatment_2nd", ("untreated", "Ibrut"),  # untreated vs ibrutinib
-    # "diagnosis_start", ("CLL", "MBL"),
-    # possibly other groups:
-    # ['SF3B1', 'ATM', 'del13', 'del11q', 'tri12', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
+    # compare_pathway_enrichment(
+    #     [1, 2],
+    #     ['data/mutation_peaks_cluster1/mutation_cluster1_regions.disease_enrichment.csv', 'data/mutation_peaks_cluster2/mutation_cluster2_regions.disease_enrichment.csv'],
+    #     "results/plots/mutation_regions.disease_enrichment.svg",
+    #     p_value=0.05)
 
-    compare_go_terms(
-        [1, 2],
-        ['data/mutation_peaks_cluster1/mutation_cluster1_regions.seq2pathway.csv', 'data/mutation_peaks_cluster2/mutation_cluster2_regions.seq2pathway.csv'],
-        "results/plots/mutation_regions.goterm_enrichment.svg",
-        p_value=0.05)
-
-    compare_pathway_enrichment(
-        [1, 2],
-        ['data/mutation_peaks_cluster1/mutation_cluster1_regions.pathway_enrichment.csv', 'data/mutation_peaks_cluster2/mutation_cluster2_regions.pathway_enrichment.csv'],
-        "results/plots/mutation_regions.pathway_enrichment.svg",
-        p_value=0.05)
-
-    compare_pathway_enrichment(
-        [1, 2],
-        ['data/mutation_peaks_cluster1/mutation_cluster1_regions.disease_enrichment.csv', 'data/mutation_peaks_cluster2/mutation_cluster2_regions.disease_enrichment.csv'],
-        "results/plots/mutation_regions.disease_enrichment.svg",
-        p_value=0.05)
-
-    compare_lola_enrichment(
-        [1, 2],
-        ['data/mutation_peaks_cluster1/lola/allEnrichments.txt', 'data/mutation_peaks_cluster2/lola/allEnrichments.txt'],
-        "results/plots/mutation_regions.lola_enrichment.svg",
-        p_value=0.05)
+    # compare_lola_enrichment(
+    #     [1, 2],
+    #     ['data/mutation_peaks_cluster1/lola/allEnrichments.txt', 'data/mutation_peaks_cluster2/lola/allEnrichments.txt'],
+    #     "results/plots/mutation_regions.lola_enrichment.svg",
+    #     p_value=0.05)
 
 
 if __name__ == '__main__':
