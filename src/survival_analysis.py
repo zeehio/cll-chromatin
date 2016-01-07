@@ -18,6 +18,7 @@ from lifelines.statistics import logrank_test
 import re
 from lifelines import AalenAdditiveFitter
 import patsy
+from lifelines.utils import k_fold_cross_validation
 
 
 # Set settings
@@ -132,15 +133,17 @@ for name, time in times.items():
         survival_plot(clinical, KaplanMeierFitter, "survival", feature, time)
         survival_plot(clinical, NelsonAalenFitter, "hazard", feature, time)
 
+
 # Regression using Aalen's additive model
 combinations = [" + ".join(j) for i in range(1, len(features) + 1) for j in itertools.combinations(features, i)]
 
-models = zip(
+models = dict(zip(
     [re.sub(r" \+ ", "-", c) for c in combinations],
     combinations
-)
+))
 
-for model_name, model in models:
+validated = dict()
+for model_name, model in models.items():
     # Create matrix
     X = patsy.dmatrix(model + " -1", clinical, return_type="dataframe")
 
@@ -150,5 +153,89 @@ for model_name, model in models:
     X['T'] = [i.days / 365 for i in clinical["duration_following"].ix[X.index]]
     X['E'] = [True if i is not pd.np.nan else False for i in clinical["patient_death_date"].ix[X.index]]
 
-    aaf = AalenAdditiveFitter(coef_penalizer=1.0, fit_intercept=True)
+    for penalty in range(1, 21):
+        aaf = AalenAdditiveFitter(coef_penalizer=penalty, fit_intercept=True)
+        scores = k_fold_cross_validation(aaf, X, 'T', event_col='E', k=5)  # len(X) - 1)#, predictor_kwargs={"show_progress": False})
+        validated[(model_name, penalty)] = scores
+        # print(model, penalty, np.mean(scores), np.std(scores))
+
+
+# model concordance distribution
+fig, axis = plt.subplots(3, sharex=False, sharey=False, figsize=(15, 8))
+sns.distplot([np.mean(x[1]) for x in validated.items()], ax=axis[0])
+axis[1].scatter([len(x[0].split("-")) for x in validated.keys()], [np.mean(x[1]) for x in validated.items()])
+axis[2].scatter([x[1] for x in validated.keys()], [np.mean(x[1]) for x in validated.items()])
+axis[0].set_xlabel("Mean model concordance")
+axis[0].set_ylabel("Density")
+axis[1].set_xlabel("Number of model terms")
+axis[1].set_ylabel("Mean concordance")
+axis[2].set_xlabel("Co-variate penalty")
+axis[2].set_ylabel("Mean concordance")
+fig.savefig(os.path.join(plots_dir, "model_selction_performance.svg"), bbox_inches="tight")
+
+
+# sort by performance
+best_models = sorted(validated.items(), key=lambda x: np.mean(x[1]))
+
+# get best model
+model = models[best_models[-1][0][0]]
+penalty = best_models[-1][0][1]
+
+# regress with best model
+X = patsy.dmatrix(model + " -1", clinical, return_type="dataframe")
+X['T'] = [i.days / 365 for i in clinical["duration_following"].ix[X.index]]
+X['E'] = [True if i is not pd.np.nan else False for i in clinical["patient_death_date"].ix[X.index]]
+
+aaf = AalenAdditiveFitter(coef_penalizer=penalty, fit_intercept=True)
+aaf.fit(X, 'T', event_col='E')
+
+
+# predict survival and hazard for all patients
+fig, axis = plt.subplots(2, sharex=True, sharey=False)
+aaf.predict_survival_function(X).plot(ax=axis[0])
+aaf.predict_cumulative_hazard(X).plot(ax=axis[1])
+axis[0].set_title("Best model - prediction for all patients")
+axis[1].set_xlabel("Time since diagnosis")
+axis[0].set_ylabel("Survival")
+axis[1].set_ylabel("Hazard")
+axis[0].legend_.remove()
+axis[1].legend_.remove()
+fig.savefig(os.path.join(plots_dir, "best_model_predictions_all_patients.svg"), bbox_inches="tight")
+
+
+# predict survival and hazard for a specific patient
+patient = X.ix[(clinical['patient_id'] == 5129) & (clinical['timepoint'] == 1)]  # example
+fig, axis = plt.subplots(2, sharex=True, sharey=False)
+aaf.predict_survival_function(patient).plot(ax=axis[0])
+aaf.predict_cumulative_hazard(patient).plot(ax=axis[1])
+axis[0].set_title("Best model - prediction for patient %i" % patient.index[0])
+axis[1].set_xlabel("Time since diagnosis")
+axis[0].set_ylabel("Survival")
+axis[1].set_ylabel("Hazard")
+axis[0].legend_.remove()
+axis[1].legend_.remove()
+fig.savefig(os.path.join(plots_dir, "best_model_predictions_single_patient.svg"), bbox_inches="tight")
+
+
+# Plot 5 best models
+fig, axis = plt.subplots(2, 5, sharex=False, sharey=False, figsize=(40, 15))
+for m in range(1, 6):
+    # get best model
+    model = models[best_models[-m][0][0]]
+    penalty = best_models[-m][0][1]
+
+    # regress with best model
+    X = patsy.dmatrix(model + " -1", clinical, return_type="dataframe")
+    X['T'] = [i.days / 365 for i in clinical["duration_following"].ix[X.index]]
+    X['E'] = [True if i is not pd.np.nan else False for i in clinical["patient_death_date"].ix[X.index]]
+
+    aaf = AalenAdditiveFitter(coef_penalizer=penalty, fit_intercept=True)
     aaf.fit(X, 'T', event_col='E')
+    aaf.predict_survival_function(X).plot(ax=axis[0][m - 1])
+    aaf.predict_cumulative_hazard(X).plot(ax=axis[1][m - 1])
+    axis[0][m - 1].set_title(best_models[-m][0])
+    axis[1][2].set_xlabel("Time since diagnosis")
+    axis[0][0].set_ylabel("Survival")
+    axis[1][0].set_ylabel("Hazard")
+    [i[m - 1].legend_.remove() for i in axis]
+fig.savefig(os.path.join(plots_dir, "best_5models_predictions_all_patients.svg"), bbox_inches="tight")
