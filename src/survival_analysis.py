@@ -49,6 +49,13 @@ def survival_plot(clinical, fitter, fitter_name, feature, time):
 
     # for each type: subset, fit, plot
     # clinical = clinical.reset_index(drop=True)
+    if "mutation" in feature and feature != "igvh_mutation_status":
+            # overwrite feature name to remove the "mutation:"
+            feature = feature.split(":")[1]
+            # add column to clinical with bool info about said mutation
+            clinical[feature] = clinical.mutations.apply(lambda x: True if feature in str(x) else False)
+
+    # Filter feature types which are nan
     x = clinical[feature].unique()
     x = x[~np.array(map(pd.isnull, x))]
 
@@ -113,7 +120,9 @@ clinical["duration_life"] = pd.to_datetime(clinical["patient_last_checkup_date"]
 
 
 # For time since birth and time since diagnosis
-times = {"birth": "duration_life", "diagnosis": "duration_following"}
+times = {
+    "birth": "duration_life",
+    "diagnosis": "duration_following"}
 
 features = [
     "patient_gender",
@@ -124,12 +133,21 @@ features = [
     "ZAP70_positive",
     "ZAP70_monoallelic_methylation",
 ]
+muts = ['del13', 'del11', 'tri12']
+muts += ['SF3B1', 'ATM', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
+features += ["mutation:" + mut for mut in muts]
 
 # For each time since (birth, diagnosis)
 for name, time in times.items():
     # For each clinical feature
     for feature in features:
-        print(name, feature, time)
+        print(name, feature)
+        if "mutation" in feature and feature != "igvh_mutation_status":
+            # overwrite feature name to remove the "mutation:"
+            feature = feature.split(":")[1]
+            # add column to clinical with bool info about said mutation
+            clinical[feature] = clinical.mutations.apply(lambda x: True if feature in str(x) else False)
+
         survival_plot(clinical, KaplanMeierFitter, "survival", feature, time)
         survival_plot(clinical, NelsonAalenFitter, "hazard", feature, time)
 
@@ -144,6 +162,9 @@ models = dict(zip(
 
 validated = dict()
 for model_name, model in models.items():
+    model_name = re.sub("mutation:", "", model_name)
+    model = re.sub("mutation:", "", model)
+
     # Create matrix
     X = patsy.dmatrix(model + " -1", clinical, return_type="dataframe")
 
@@ -153,7 +174,7 @@ for model_name, model in models.items():
     X['T'] = [i.days / 365 for i in clinical["duration_following"].ix[X.index]]
     X['E'] = [True if i is not pd.np.nan else False for i in clinical["patient_death_date"].ix[X.index]]
 
-    for penalty in range(1, 21):
+    for penalty in range(1, 2):
         aaf = AalenAdditiveFitter(coef_penalizer=penalty, fit_intercept=True)
         scores = k_fold_cross_validation(aaf, X, 'T', event_col='E', k=5)  # len(X) - 1)#, predictor_kwargs={"show_progress": False})
         validated[(model_name, penalty)] = scores
