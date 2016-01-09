@@ -20,8 +20,8 @@ import parmap
 import pysam
 import numpy as np
 import pandas as pd
-import dask.dataframe as dd
-try:
+# import dask.dataframe as dd
+try:  # stupid error, importing it twice works
     from sklearn import cross_validation
 except AttributeError:
     from sklearn import cross_validation
@@ -1352,6 +1352,24 @@ def samples_to_color(samples, method="mutation"):
         raise ValueError("Method %s is not valid" % method)
 
 
+def samples_to_symbol(samples, method="unique"):
+    from itertools import cycle
+    valid = ['D', 'H', '^', 'd', 'h', 'o', 'p', 's', 'v']
+    c = cycle([x for x in matplotlib.markers.MarkerStyle.markers.items() if x[0] in valid])
+
+    # unique color per patient
+    if method == "unique":
+        # per patient
+        patients = set(sample.patientID for sample in samples)
+        symbol_dict = [c.next()[0] for _ in range(len(patients))]
+        symbol_dict = dict(zip(patients, symbol_dict))
+        return [symbol_dict[sample.patientID] for sample in samples]
+    # rainbow (unique color per sample)
+    elif method == "unique_sample":
+        return [c.next()[0] for sample in samples]
+    else:
+        raise ValueError("Method %s is not valid" % method)
+
 # def all_sample_colors(samples, order=""):
 #     return [
 #         samples_to_color(samples, "mutation"),
@@ -1369,13 +1387,18 @@ def annotate_IGHV(samples, clinical):
     for sample in samples:
         if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
             _id = name_to_sample_id(sample.name)
-            sample.ighv_homology = clinical.loc[clinical['sample_id'] == _id, 'igvh_homology'].tolist()[0]
-            if clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 1:
-                sample.mutated = True
-            elif clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 2:
-                sample.mutated = False
-            else:
+            h = clinical.loc[clinical['sample_id'] == _id, 'igvh_homology']
+            if len(h) != 1:
+                sample.ighv_homology = None
                 sample.mutated = None
+            else:
+                sample.ighv_homology = h.tolist()[0]
+                if clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 1:
+                    sample.mutated = True
+                elif clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 2:
+                    sample.mutated = False
+                else:
+                    sample.mutated = None
         else:
             sample.ighv_homology = None
             sample.mutated = None
@@ -1389,13 +1412,19 @@ def annotate_CD38(samples, clinical):
     for sample in samples:
         if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
             _id = name_to_sample_id(sample.name)
-            sample.CD38_percentage = clinical.loc[clinical['sample_id'] == _id, 'CD38_cells_percentage'].tolist()[0]
-            if clinical.loc[clinical['sample_id'] == _id, 'CD38_positive'].tolist()[0] == 1:
-                sample.CD38 = True
-            elif clinical.loc[clinical['sample_id'] == _id, 'CD38_positive'].tolist()[0] == 2:
-                sample.CD38 = False
-            else:
+            c = clinical.loc[clinical['sample_id'] == _id, 'CD38_cells_percentage']
+
+            if len(c) != 1:
+                sample.CD38_percentage = None
                 sample.CD38 = None
+            else:
+                sample.CD38_percentage = c.tolist()[0]
+                if clinical.loc[clinical['sample_id'] == _id, 'CD38_positive'].tolist()[0] == 2:
+                    sample.CD38 = True
+                elif clinical.loc[clinical['sample_id'] == _id, 'CD38_positive'].tolist()[0] == 1:
+                    sample.CD38 = False
+                else:
+                    sample.CD38 = None
         else:
             sample.CD38_percentage = None
             sample.CD38 = None
@@ -1409,21 +1438,32 @@ def annotate_ZAP70(samples, clinical):
     for sample in samples:
         if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
             _id = name_to_sample_id(sample.name)
-            sample.ZAP70_percentage = clinical.loc[clinical['sample_id'] == _id, 'ZAP70_cells_percentage'].tolist()[0]
 
-            # ZAP70 expression
-            if clinical.loc[clinical['sample_id'] == _id, 'ZAP70_positive'].tolist()[0] == 1:
-                sample.ZAP70 = True
-            elif clinical.loc[clinical['sample_id'] == _id, 'ZAP70_positive'].tolist()[0] == 2:
-                sample.ZAP70 = False
-            else:
+            z = clinical.loc[clinical['sample_id'] == _id, 'ZAP70_cells_percentage']
+
+            if len(z) != 1:
+                sample.ZAP70_percentage = None
                 sample.ZAP70 = None
+            else:
+                sample.ZAP70_percentage = z.tolist()[0]
+
+                # ZAP70 expression
+                if clinical.loc[clinical['sample_id'] == _id, 'ZAP70_positive'].tolist()[0] == 2:
+                    sample.ZAP70 = True
+                elif clinical.loc[clinical['sample_id'] == _id, 'ZAP70_positive'].tolist()[0] == 1:
+                    sample.ZAP70 = False
+                else:
+                    sample.ZAP70 = None
 
             # ZAP70 mono-allelic methylation/expression
-            if clinical.loc[clinical['sample_id'] == _id, 'ZAP70_monoallelic_methylation'].tolist()[0] == "Y":
-                sample.ZAP70_monoallelic = True
-            else:
+            zm = clinical.loc[clinical['sample_id'] == _id, 'ZAP70_monoallelic_methylation']
+            if len(zm) != 1:
                 sample.ZAP70_monoallelic = False
+            else:
+                if zm.tolist()[0] == "Y":
+                    sample.ZAP70_monoallelic = True
+                else:
+                    sample.ZAP70_monoallelic = False
         else:
             sample.ZAP70_percentage = None
             sample.ZAP70 = None
@@ -1554,10 +1594,17 @@ def annotate_mutations(samples, clinical):
     for sample in samples:
         if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
             _id = name_to_sample_id(sample.name)
-            if type(clinical2[clinical2['sample_id'] == _id]['mutations'].tolist()[0]) is not str:
+            if clinical2.loc[clinical2['sample_id'] == _id, 'mutations'].empty:
                 sample.mutations = []
             else:
-                sample.mutations = clinical2[clinical2['sample_id'] == _id]['mutations'].tolist()[0].split(",")
+                m = clinical2[clinical2['sample_id'] == _id]['mutations']
+                if len(m) == 1:
+                    if type(m.tolist()[0]) is str:
+                        sample.mutations = m.tolist()[0].split(",")
+                    else:
+                        sample.mutations = None
+                else:
+                    sample.mutations = None
         else:
             sample.mutations = None
         new_samples.append(sample)
@@ -1570,12 +1617,17 @@ def annotate_gender(samples, clinical):
     for sample in samples:
         if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
             _id = name_to_sample_id(sample.name)
-            if clinical.loc[clinical['sample_id'] == _id, 'patient_gender'].tolist()[0] == "F":
-                sample.patient_gender = "F"
-            elif clinical.loc[clinical['sample_id'] == _id, 'patient_gender'].tolist()[0] == "M":
-                sample.patient_gender = "M"
-            else:
+            g = clinical.loc[clinical['sample_id'] == _id, 'patient_gender']
+
+            if len(g) != 1:
                 sample.patient_gender = None
+            else:
+                if g.tolist()[0] == "F":
+                    sample.patient_gender = "F"
+                elif clinical.loc[clinical['sample_id'] == _id, 'patient_gender'].tolist()[0] == "M":
+                    sample.patient_gender = "M"
+                else:
+                    sample.patient_gender = None
         else:
             sample.patient_gender = None
         new_samples.append(sample)
@@ -1991,6 +2043,8 @@ def classify_samples(analysis, sel_samples, labels, comparison):
     from tqdm import tqdm
 
     print("Trait:%s" % comparison)
+    print("%i samples with trait annotated" % len(sel_samples))
+    print(Counter(labels))
 
     dataframe_file = os.path.join(
         analysis.prj.dirs.data,
@@ -2342,7 +2396,7 @@ def trait_analysis(analysis):
     classify_samples(analysis, sel_samples, labels, comparison="ZAP70")
 
     # ZAP70 mono-allelic expression
-    sel_samples = [s for s in analysis.samples if type(s.ZAP70_monoallelic) is bool]
+    sel_samples = [s for s in analysis.samples if type(s.ZAP70_monoallelic) == bool]
     labels = [s.ZAP70_monoallelic for s in sel_samples]
     classify_samples(analysis, sel_samples, labels, comparison="ZAP70_monoallelic")
 
@@ -2362,12 +2416,12 @@ def trait_analysis(analysis):
     # Chemotherapy
     chemo_drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR']
     sel_samples = [s for s in analysis.samples if s.treatment_active]
-    labels = [s for s in sel_samples if s.treatment_type in chemo_drugs]
+    labels = [True if s.treatment_type in chemo_drugs else False for s in sel_samples]
     classify_samples(analysis, sel_samples, labels, comparison="chemo_treated")
     # B cell antibodies
     target_drugs = ['Alemtuz', 'Ibrutinib']
     sel_samples = [s for s in analysis.samples if s.treatment_active]
-    labels = [s for s in sel_samples if s.treatment_type in target_drugs]
+    labels = [True if s.treatment_type in target_drugs else False for s in sel_samples]
     classify_samples(analysis, sel_samples, labels, comparison="target_treated")
 
     # Mutations / abnormalities
@@ -2393,6 +2447,165 @@ def trait_analysis(analysis):
     sel_samples = [s for s in analysis.samples if type(s.diagnosis_collection) is bool]
     labels = [s.diagnosis_collection for s in sel_samples]
     classify_samples(analysis, sel_samples, labels, comparison="early_diagnosis")
+
+
+def create_clinical_feature_space(analysis):
+    """
+    """
+    import rpy2.robjects as robj
+    import pandas.rpy.common as com
+    # from rpy2.robjects import pandas2ri
+    # pandas2ri.activate()
+    import cPickle as pickle
+    import itertools
+
+    def pca(x):
+        # plot PC1 vs PC2
+        fig, axis = plt.subplots(nrows=1, ncols=2, sharex=True, sharey=True)
+
+        colors = samples_to_color(analysis.samples, "unique")
+        symbols = samples_to_symbol(analysis.samples, "unique")
+        names = [s.name for s in analysis.samples]
+
+        for i in range(1, x.shape[0]):
+            axis[0].scatter(  # plot PC1 vs PC3
+                x.loc[i, 'PC1'], x.loc[i, 'PC2'],
+                color=colors[i - 1],
+                s=50,
+                label=names[i - 1],
+                marker=symbols[i - 1]
+            )
+            axis[1].scatter(  # plot PC1 vs PC3
+                x.loc[i, 'PC1'], x.loc[i, 'PC3'],
+                color=colors[i - 1],
+                s=50,
+                label=names[i - 1],
+                marker=symbols[i - 1]
+            )
+        axis[0].set_xlabel("PC1 - {0}% variance".format(variance[0]))
+        axis[0].set_ylabel("PC2 - {0}% variance".format(variance[1]))
+        axis[1].set_xlabel("PC1 - {0}% variance".format(variance[0]))
+        axis[1].set_ylabel("PC3 - {0}% variance".format(variance[2]))
+        axis[1].legend()
+        output_pdf = os.path.join(
+            analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.svg")
+        fig.savefig(output_pdf, bbox_inches='tight')
+
+    def sum_cartesian_vectors(vectors):
+        return vectors.sum(axis=0)
+
+    def plot_space(x, y, scale=1.0):
+        # Get weighted variance to scale vectors
+        lam = (np.array(variance[:2]) * np.sqrt(len(x))) ** scale
+
+        # variable space
+        yyy = pd.DataFrame()
+        for i, trait in enumerate(traits):
+            index = features[features['trait'] == trait].index
+            if len(index) > 0:
+                # multiply variables by variance
+                yy = loadings.ix[index][['PC1', 'PC2']] * lam  # variables - regions
+                yyy[trait] = yy.sum()
+
+        # divide observations by variance
+        xx = x[['PC1', 'PC2']] / lam  # samples
+
+        # Z-score variables to get them into same space
+        xx = xx.apply(lambda y: (y - y.mean()) / y.std(), axis=0)
+        yyy = yyy.T.apply(lambda y: (y - y.mean()) / y.std(), axis=0)
+
+        # Plot samples and variables in same space (biplot)
+        fig, axis = plt.subplots(nrows=1, ncols=1, sharex=True, sharey=True)
+
+        colors = samples_to_color(analysis.samples, "unique")
+        symbols = samples_to_symbol(analysis.samples, "unique")
+
+        # Plot observations (samples)
+        for i in range(len(xx) - 1):
+            axis.scatter(xx.ix[i + 1].PC1, xx.ix[i + 1].PC2, s=50, color=colors[i], marker=symbols[i])
+        # Plot variables (clinical features)
+        for i in range(len(yyy)):
+            axis.plot((0, yyy.ix[i].PC1), (0, yyy.ix[i].PC2), '-o', label=traits[i])
+
+        # add dashed line between patient's timepoints
+        samples = pd.DataFrame([pd.Series(sample.__dict__) for sample in analysis.samples])
+        for patient, indexes in samples.groupby('patientID').groups.items():
+            for t1, t2 in itertools.combinations(indexes, 2):
+                if samples.ix[t1]["timepoint"] == samples.ix[t2]["timepoint"] - 1:
+                    try:
+                        axis.plot((xx.ix[t1 + 1].PC1, xx.ix[t2 + 1].PC1), (xx.ix[t1 + 1].PC2, xx.ix[t2 + 1].PC2), "--", alpha=0.8, color="black")
+                    except:
+                        pass
+        plt.legend()
+
+        output_pdf = os.path.join(
+            analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.biplot.svg")
+        fig.savefig(output_pdf, bbox_inches='tight')
+
+    traits = ["gender", "IGHV", "CD38", "ZAP70", "primary_CLL", "treated", "chemo_treated", "target_treated", "relapse", "early_diagnosis"]
+    muts = ['del13', 'del11', 'tri12']  # abnormalities
+    muts += ['SF3B1', 'ATM', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']  # mutations
+    traits += muts
+
+    # Put trait-specific chromatin regions in one matrix
+    features = pd.DataFrame()
+    for trait in traits:
+        file_name = os.path.join(
+            analysis.prj.dirs.data,
+            "trait_specific",
+            "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
+        try:
+            df = pd.read_csv(file_name, sep="\t")
+            df['trait'] = trait
+            features = features.append(df)
+        except IOError:
+            print("Trait %s did not generate any associated regions" % trait)
+
+    # Save whole dataframe as csv
+    features.to_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t", index=False)
+
+    # see fraction of features from total which are explained with clinical associations
+    features.shape[0]
+    features[['chrom', 'start', 'end']].drop_duplicates().shape[0]  # unique chromatin features
+
+    # PCA
+    # get a matrix of unique features for all samples
+    x = features.ix[features[['chrom', 'start', 'end']].drop_duplicates().index][[s.name for s in analysis.samples]]
+    # save csvs for pca
+    pd.DataFrame(x).T.to_csv('pca_file_all.csv', index=False)
+    # do pca
+    # pandas2ri.py2ri(df)
+    result = com.convert_robj(robj.r("""
+    library("data.table")
+    df = data.table::fread('pca_file_all.csv')
+    df.pca <- prcomp(df,
+                     center = TRUE,
+                     scale. = TRUE)
+    return(df.pca)
+    """))
+    pickle.dump(result, open(os.path.join("cll_peaks.medical_epigenomics_space.pca.pickle"), "w"))
+
+    # fix
+    result['x']['PC1'][1] = 74
+    result['sdev'][0] = 25
+
+    x = result['x']
+    variance = result['sdev']
+
+    # plot % explained variance per PC
+    fig, axis = plt.subplots(1)
+    axis.plot(range(1, len(result['sdev']) + 1), result['sdev'], 'o-')
+    axis.set_xlabel("PC")
+    axis.set_ylabel("% variance")
+    fig.savefig(os.path.join(analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.pca_variance.svg"), bbox_inches='tight')
+
+    # plot PCA
+    pca(x)
+
+    # get one vector loading per feature (sum vectors of each chromatin feature)
+    samples = features.columns[features.columns.str.contains("CLL")]
+    loadings = result['rotation'].reset_index(drop=True)  # stupid R indexes
+    plot_space(x=result['x'], y=loadings)
 
 
 def compare_go_terms(cluster_labels, file_names, plot, p_value=0.05, n_max=35):
@@ -2533,6 +2746,9 @@ def main():
     prj = Project("cll-patients")
     prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
+    prj = Project("cll-patients")
+    prj.addSampleSheet("sequencing_sample_annotation_submission.csv")
+
     # Annotate with clinical data
     prj.samples = annotate_samples(prj.samples, clinical)
 
@@ -2628,6 +2844,8 @@ def main():
 
     # TRAIT-SPECIFIC ANALYSIS
     trait_analysis(analysis)
+
+    create_clinical_feature_space(analysis)
 
     #
 
