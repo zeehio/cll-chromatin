@@ -2449,7 +2449,7 @@ def trait_analysis(analysis):
     classify_samples(analysis, sel_samples, labels, comparison="early_diagnosis")
 
 
-def create_clinical_feature_space(analysis):
+def create_clinical_epigenomic_space(analysis):
     """
     """
     import rpy2.robjects as robj
@@ -2492,6 +2492,10 @@ def create_clinical_feature_space(analysis):
         fig.savefig(output_pdf, bbox_inches='tight')
 
     def sum_cartesian_vectors(vectors):
+        """
+        Given A = (xi, yi, zi, ...) and  B = (xj, yj, zj, ...);
+        sum A + B = (xi + xj, yi + yj, zi + zj, ...)
+        """
         return vectors.sum(axis=0)
 
     def plot_space(x, y, scale=1.0):
@@ -2517,18 +2521,25 @@ def create_clinical_feature_space(analysis):
         # Plot samples and variables in same space (biplot)
         fig, axis = plt.subplots(nrows=1, ncols=1, sharex=True, sharey=True)
 
-        colors = samples_to_color(analysis.samples, "unique")
-        symbols = samples_to_symbol(analysis.samples, "unique")
+        sample_colors = samples_to_color(analysis.samples, "unique")
+        sample_symbols = samples_to_symbol(analysis.samples, "unique")
+
+        var_colors = [plt.get_cmap('Accent')(i) for i in range(len(traits))]
 
         # Plot observations (samples)
+        samples = pd.DataFrame([pd.Series(sample.__dict__) for sample in analysis.samples])
         for i in range(len(xx) - 1):
-            axis.scatter(xx.ix[i + 1].PC1, xx.ix[i + 1].PC2, s=50, color=colors[i], marker=symbols[i])
+            axis.scatter(xx.ix[i + 1].PC1, xx.ix[i + 1].PC2, s=50, color=sample_colors[i], marker=sample_symbols[i])
+            axis.annotate(
+                "{0} - {1}".format(int(samples.ix[i]['patientID']), int(samples.ix[i]['timepoint'])),
+                (xx.ix[i + 1].PC1, xx.ix[i + 1].PC2),
+                fontsize=8)  # add text with patient ID and timepoint
+
         # Plot variables (clinical features)
         for i in range(len(yyy)):
-            axis.plot((0, yyy.ix[i].PC1), (0, yyy.ix[i].PC2), '-o', label=traits[i])
+            axis.plot((0, yyy.ix[i].PC1), (0, yyy.ix[i].PC2), '-o', color=var_colors[i], label=traits[i])
 
         # add dashed line between patient's timepoints
-        samples = pd.DataFrame([pd.Series(sample.__dict__) for sample in analysis.samples])
         for patient, indexes in samples.groupby('patientID').groups.items():
             for t1, t2 in itertools.combinations(indexes, 2):
                 if samples.ix[t1]["timepoint"] == samples.ix[t2]["timepoint"] - 1:
@@ -2541,6 +2552,12 @@ def create_clinical_feature_space(analysis):
         output_pdf = os.path.join(
             analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.biplot.svg")
         fig.savefig(output_pdf, bbox_inches='tight')
+
+    #
+
+    #
+
+    #
 
     traits = ["gender", "IGHV", "CD38", "ZAP70", "primary_CLL", "treated", "chemo_treated", "target_treated", "relapse", "early_diagnosis"]
     muts = ['del13', 'del11', 'tri12']  # abnormalities
@@ -2563,6 +2580,7 @@ def create_clinical_feature_space(analysis):
 
     # Save whole dataframe as csv
     features.to_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t", index=False)
+    features = pd.read_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
 
     # see fraction of features from total which are explained with clinical associations
     features.shape[0]
@@ -2583,7 +2601,8 @@ def create_clinical_feature_space(analysis):
                      scale. = TRUE)
     return(df.pca)
     """))
-    pickle.dump(result, open(os.path.join("cll_peaks.medical_epigenomics_space.pca.pickle"), "w"))
+    pickle.dump(result, open(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.pca.pickle"), "w"))
+    result = pickle.load(open(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.pca.pickle"), "r"))
 
     # fix
     result['x']['PC1'][1] = 74
@@ -2746,8 +2765,8 @@ def main():
     prj = Project("cll-patients")
     prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
-    prj = Project("cll-patients")
-    prj.addSampleSheet("sequencing_sample_annotation_submission.csv")
+    # prj = Project("cll-patients")
+    # prj.addSampleSheet("sequencing_sample_annotation_submission.csv")
 
     # Annotate with clinical data
     prj.samples = annotate_samples(prj.samples, clinical)
@@ -2844,8 +2863,11 @@ def main():
 
     # TRAIT-SPECIFIC ANALYSIS
     trait_analysis(analysis)
+    # Clinical epigenomic space
+    create_clinical_epigenomic_space(analysis)
+    # Characterize patients in space
 
-    create_clinical_feature_space(analysis)
+    # Add survival layer
 
     #
 
