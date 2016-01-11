@@ -6,8 +6,8 @@ multiprocessing
 pybedtools
 parmap
 pysam
-pandas
+pandas>=0.16
 numpy
-sklearn
+scikit-learn==0.17
 scipy
 statsmodels

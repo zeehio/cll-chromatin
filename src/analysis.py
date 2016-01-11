@@ -4,6 +4,9 @@
 This is the main script of the cll-patients project.
 """
 
+if __name__ == '__main__':
+    import matplotlib
+    matplotlib.use('Agg')
 import recipy
 from argparse import ArgumentParser
 import os
@@ -11,7 +14,6 @@ import sys
 from pipelines.models import Project, ATACseqSample
 import pybedtools
 import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.pyplot import cm
@@ -2035,7 +2037,7 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
     # meme_ame(fasta_file, meme_output)
 
 
-def classify_samples(analysis, sel_samples, labels, comparison):
+def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
     """
     Use a machine learning approach for sample classification based on known sample attributes.
     Extract features most important to separate samples and investigate those.
@@ -2050,7 +2052,7 @@ def classify_samples(analysis, sel_samples, labels, comparison):
         analysis.prj.dirs.data,
         "trait_specific",
         "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % comparison)
-    if os.path.exists(dataframe_file):  # Load up
+    if os.path.exists(dataframe_file) and not rerun:  # Load up
         dataframe = pd.read_csv(dataframe_file, sep="\t")
     else:  # Run analysis
         # Get all CLL ATAC-seq samples for validation
@@ -2085,7 +2087,7 @@ def classify_samples(analysis, sel_samples, labels, comparison):
             y_train, y_test = y[train_index], y[test_index]
 
             # Train, predict
-            classifier = RandomForestClassifier(n_estimators=100)
+            classifier = RandomForestClassifier(n_estimators=100, n_jobs=-1)
             y_score = classifier.fit(X_train, y_train).predict_proba(X_test)
 
             if i == 0:
@@ -2118,10 +2120,10 @@ def classify_samples(analysis, sel_samples, labels, comparison):
         FNR = fn / float(p)
 
         # Compute ROC curve and ROC area for each class
-        fpr, tpr, _ = roc_curve(y_all_test, y_all_scores[:, 1], pos_label=classifier.classes_[1])
+        fpr, tpr, _ = roc_curve(y_all_test, y_all_scores[:, 1], pos_label=1)
         roc_auc = auc(fpr, tpr, reorder=True)
         # Compute Precision-Recall and average precision
-        precision, recall, _ = precision_recall_curve(y_all_test, y_all_scores[:, 1], pos_label=classifier.classes_[1])
+        precision, recall, _ = precision_recall_curve(y_all_test, y_all_scores[:, 1], pos_label=1)
         binary_labels = [0 if x == classifier.classes_[0] else 1 for x in y_all_test]
         aps = average_precision_score(binary_labels, y_all_scores[:, 1])
 
@@ -2147,14 +2149,23 @@ def classify_samples(analysis, sel_samples, labels, comparison):
             "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.ROC_PRC.svg" % comparison), bbox_inches="tight")
 
         # Display training and prediction of pre-labeled samples of most informative features:
-        # Get most informative features
-        matrix = analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]]
         # average feature importance across iterations
         mean_importance = importance.mean(axis=0)
+
+        # visualize feature importance
+        fig, axis = plt.subplots(1)
+        sns.distplot(mean_importance, ax=axis)
+        fig.savefig(os.path.join(
+            analysis.prj.dirs.plots,
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.mean_importance.svg" % comparison), bbox_inches="tight")
+        plt.close('all')
+
         # get important features
         # n = 500; x = matrix.loc[np.argsort(mean_importance)[-n:], :] # get n top features
         # or
-        x = matrix.loc[[i for i, j in enumerate(mean_importance > 1e-4) if j == True], :]  # get features on the tail of the importance distribution
+        # Get most informative features
+        matrix = analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]]
+        x = matrix.loc[[i for i, j in enumerate(mean_importance > 0) if j == True], :]  # get features on the tail of the importance distribution
         sites_cluster = sns.clustermap(
             x,
             cmap=cmap,
@@ -2377,51 +2388,51 @@ def classify_samples(analysis, sel_samples, labels, comparison):
 def trait_analysis(analysis):
     # Gender
     sel_samples = [s for s in analysis.samples if type(s.patient_gender) is str]
-    labels = [s.patient_gender for s in sel_samples]
+    labels = np.array([1 if s.patient_gender == "M" else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="gender")
 
     # IGHV mutation status
     sel_samples = [s for s in analysis.samples if type(s.mutated) is bool]
-    labels = [s.mutated for s in sel_samples]
+    labels = np.array([1 if s.mutated else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="IGHV")
 
     # CD38 expression
     sel_samples = [s for s in analysis.samples if type(s.CD38) is bool]
-    labels = [s.CD38 for s in sel_samples]
+    labels = np.array([1 if s.CD38 else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="CD38")
 
     # ZAP70 expression
     sel_samples = [s for s in analysis.samples if type(s.ZAP70) is bool]
-    labels = [s.ZAP70 for s in sel_samples]
+    labels = np.array([1 if s.ZAP70 else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="ZAP70")
 
     # ZAP70 mono-allelic expression
     sel_samples = [s for s in analysis.samples if type(s.ZAP70_monoallelic) == bool]
-    labels = [s.ZAP70_monoallelic for s in sel_samples]
+    labels = np.array([1 if s.ZAP70_monoallelic else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="ZAP70_monoallelic")
 
     # Disease at Diagnosis - comparison in untreated samples
     # Primary vs Secondary CLL (progressed from MBL and SLL)
     sel_samples = [s for s in analysis.samples if type(s.diagnosis_disease) is str]
-    labels = [True if s.diagnosis_disease == "CLL" else False for s in sel_samples]
+    labels = np.array([1 if s.diagnosis_disease == "CLL" else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="primary_CLL")
 
     # Treatment types
     # Under treatment
     sel_samples = [s for s in analysis.samples if type(s.treatment_active) is bool]
-    labels = [True if s.treatment_active else False for s in sel_samples]
+    labels = np.array([1 if s.treatment_active else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="treated")
 
     # Under treament but with different types
     # Chemotherapy
     chemo_drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR']
     sel_samples = [s for s in analysis.samples if s.treatment_active]
-    labels = [True if s.treatment_type in chemo_drugs else False for s in sel_samples]
+    labels = np.array([1 if s.treatment_type in chemo_drugs else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="chemo_treated")
     # B cell antibodies
     target_drugs = ['Alemtuz', 'Ibrutinib']
     sel_samples = [s for s in analysis.samples if s.treatment_active]
-    labels = [True if s.treatment_type in target_drugs else False for s in sel_samples]
+    labels = np.array([1 if s.treatment_type in target_drugs else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="target_treated")
 
     # Mutations / abnormalities
@@ -2433,33 +2444,30 @@ def trait_analysis(analysis):
         # later add as well:
         # IGHVun +/- del; IGHVmut +/- del
         sel_samples = [s for s in analysis.samples if type(s.mutations) is list]
-        labels = [True if mut in s.mutations else False for s in sel_samples]
+        labels = np.array([1 if mut in s.mutations else 0 for s in sel_samples])
         classify_samples(analysis, sel_samples, labels, comparison=mut)
 
     # Relapse
     # "relapse", ("True", "False"), # relapse or before relapse
     sel_samples = [s for s in analysis.samples if type(s.relapse) is bool]
-    labels = [s.relapse for s in sel_samples]
+    labels = np.array([1 if s.relapse else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="relapse")
 
     # Early vs Late
     # "progression", ("True", "False"), # early vs late timepoint
     sel_samples = [s for s in analysis.samples if type(s.diagnosis_collection) is bool]
-    labels = [s.diagnosis_collection for s in sel_samples]
+    labels = np.array([1 if s.diagnosis_collection else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="early_diagnosis")
 
 
 def create_clinical_epigenomic_space(analysis):
     """
     """
-    import rpy2.robjects as robj
-    import pandas.rpy.common as com
-    # from rpy2.robjects import pandas2ri
-    # pandas2ri.activate()
+    from sklearn.decomposition import PCA
     import cPickle as pickle
     import itertools
 
-    def pca(x):
+    def plot_pca(x_new):
         # plot PC1 vs PC2
         fig, axis = plt.subplots(nrows=1, ncols=2, sharex=True, sharey=True)
 
@@ -2467,25 +2475,25 @@ def create_clinical_epigenomic_space(analysis):
         symbols = samples_to_symbol(analysis.samples, "unique")
         names = [s.name for s in analysis.samples]
 
-        for i in range(1, x.shape[0]):
+        for i in range(1, x_new.shape[0]):
             axis[0].scatter(  # plot PC1 vs PC3
-                x.loc[i, 'PC1'], x.loc[i, 'PC2'],
+                x_new[i, 0], x_new[i, 1],
                 color=colors[i - 1],
                 s=50,
                 label=names[i - 1],
                 marker=symbols[i - 1]
             )
             axis[1].scatter(  # plot PC1 vs PC3
-                x.loc[i, 'PC1'], x.loc[i, 'PC3'],
+                x_new[i, 0], x_new[i, 1],
                 color=colors[i - 1],
                 s=50,
                 label=names[i - 1],
                 marker=symbols[i - 1]
             )
-        axis[0].set_xlabel("PC1 - {0}% variance".format(variance[0]))
-        axis[0].set_ylabel("PC2 - {0}% variance".format(variance[1]))
-        axis[1].set_xlabel("PC1 - {0}% variance".format(variance[0]))
-        axis[1].set_ylabel("PC3 - {0}% variance".format(variance[2]))
+        axis[0].set_xlabel("PC1 - {0}% variance".format(pca.explained_variance_[0]))
+        axis[0].set_ylabel("PC2 - {0}% variance".format(pca.explained_variance_[1]))
+        axis[1].set_xlabel("PC1 - {0}% variance".format(pca.explained_variance_[0]))
+        axis[1].set_ylabel("PC3 - {0}% variance".format(pca.explained_variance_[2]))
         axis[1].legend()
         output_pdf = os.path.join(
             analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.svg")
@@ -2500,7 +2508,7 @@ def create_clinical_epigenomic_space(analysis):
 
     def plot_space(x, y, scale=1.0):
         # Get weighted variance to scale vectors
-        lam = (np.array(variance[:2]) * np.sqrt(len(x))) ** scale
+        lam = (np.array(pca.explained_variance_[:2]) * np.sqrt(len(x))) ** scale
 
         # variable space
         yyy = pd.DataFrame()
@@ -2508,15 +2516,15 @@ def create_clinical_epigenomic_space(analysis):
             index = features[features['trait'] == trait].index
             if len(index) > 0:
                 # multiply variables by variance
-                yy = loadings.ix[index][['PC1', 'PC2']] * lam  # variables - regions
-                yyy[trait] = yy.sum()
+                yy = loadings[:2, index].T * lam  # variables - regions
+                yyy[trait] = yy.sum(axis=0)
 
         # divide observations by variance
         xx = x[['PC1', 'PC2']] / lam  # samples
 
         # Z-score variables to get them into same space
-        xx = xx.apply(lambda y: (y - y.mean()) / y.std(), axis=0)
-        yyy = yyy.T.apply(lambda y: (y - y.mean()) / y.std(), axis=0)
+        xx = x.apply(lambda j: (j - j.mean()) / j.std(), axis=0)
+        yyy = y.T.apply(lambda j: (j - j.mean()) / j.std(), axis=0)
 
         # Plot samples and variables in same space (biplot)
         fig, axis = plt.subplots(nrows=1, ncols=1, sharex=True, sharey=True)
@@ -2529,22 +2537,22 @@ def create_clinical_epigenomic_space(analysis):
         # Plot observations (samples)
         samples = pd.DataFrame([pd.Series(sample.__dict__) for sample in analysis.samples])
         for i in range(len(xx) - 1):
-            axis.scatter(xx.ix[i + 1].PC1, xx.ix[i + 1].PC2, s=50, color=sample_colors[i], marker=sample_symbols[i])
+            axis.scatter(xx.ix[i + 1][0], xx.ix[i + 1][1], s=50, color=sample_colors[i], marker=sample_symbols[i])
             axis.annotate(
                 "{0} - {1}".format(int(samples.ix[i]['patientID']), int(samples.ix[i]['timepoint'])),
-                (xx.ix[i + 1].PC1, xx.ix[i + 1].PC2),
+                (xx.ix[i + 1][0], xx.ix[i + 1][1]),
                 fontsize=8)  # add text with patient ID and timepoint
 
         # Plot variables (clinical features)
         for i in range(len(yyy)):
-            axis.plot((0, yyy.ix[i].PC1), (0, yyy.ix[i].PC2), '-o', color=var_colors[i], label=traits[i])
+            axis.plot((0, yyy.ix[i][0]), (0, yyy.ix[i][1]), '-o', color=var_colors[i], label=traits[i])
 
         # add dashed line between patient's timepoints
         for patient, indexes in samples.groupby('patientID').groups.items():
             for t1, t2 in itertools.combinations(indexes, 2):
                 if samples.ix[t1]["timepoint"] == samples.ix[t2]["timepoint"] - 1:
                     try:
-                        axis.plot((xx.ix[t1 + 1].PC1, xx.ix[t2 + 1].PC1), (xx.ix[t1 + 1].PC2, xx.ix[t2 + 1].PC2), "--", alpha=0.8, color="black")
+                        axis.plot((xx.ix[t1 + 1][0], xx.ix[t2 + 1][0]), (xx.ix[t1 + 1][1], xx.ix[t2 + 1][1]), "--", alpha=0.8, color="black")
                     except:
                         pass
         plt.legend()
@@ -2559,10 +2567,13 @@ def create_clinical_epigenomic_space(analysis):
 
     #
 
-    traits = ["gender", "IGHV", "CD38", "ZAP70", "primary_CLL", "treated", "chemo_treated", "target_treated", "relapse", "early_diagnosis"]
-    muts = ['del13', 'del11', 'tri12']  # abnormalities
-    muts += ['SF3B1', 'ATM', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']  # mutations
+    traits = ["IGHV", "CD38", "ZAP70", "primary_CLL", "treated", "chemo_treated", "target_treated"]
+    muts = ['del11', 'tri12']  # abnormalities
+    muts += ['TP53']  # mutations
     traits += muts
+
+    # Here I am removing ['BIRC3', 'BCL2', MYD88', 'CHD2', 'NFKIE']
+    # because they exist in either only one patient
 
     # Put trait-specific chromatin regions in one matrix
     features = pd.DataFrame()
@@ -2582,6 +2593,27 @@ def create_clinical_epigenomic_space(analysis):
     features.to_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t", index=False)
     features = pd.read_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
 
+    # Plot matrix of overlap between sets
+    m = pd.DataFrame()  # build matrix of common features
+    for t1, t2 in itertools.combinations(traits, 2):
+        a = set(features[features['trait'] == t1].index)
+        b = set(features[features['trait'] == t2].index)
+        m.loc[t1, t2] = len(a.intersection(b))
+
+    # Investigate feature imporance
+    # g = sns.FacetGrid(features[features['importance'] > 0.001], col="trait", col_wrap=5)
+    g = sns.FacetGrid(features, col="trait", col_wrap=5)
+    g.map(sns.distplot, "importance")
+
+    #
+    z_imp = pd.DataFrame()
+    for t in features.trait.unique():
+        x = features[features['trait'] == t]['importance']
+        z_imp = z_imp.append((x - x.mean()) / x.std())
+    [sns.distplot(z_imp.ix[i].dropna()) for i in range(len(z_imp))]
+
+    [sns.distplot(features[features['trait'] == t]['importance']) for t in traits]
+
     # see fraction of features from total which are explained with clinical associations
     features.shape[0]
     features[['chrom', 'start', 'end']].drop_duplicates().shape[0]  # unique chromatin features
@@ -2590,41 +2622,27 @@ def create_clinical_epigenomic_space(analysis):
     # get a matrix of unique features for all samples
     x = features.ix[features[['chrom', 'start', 'end']].drop_duplicates().index][[s.name for s in analysis.samples]]
     # save csvs for pca
-    pd.DataFrame(x).T.to_csv('pca_file_all.csv', index=False)
-    # do pca
-    # pandas2ri.py2ri(df)
-    result = com.convert_robj(robj.r("""
-    library("data.table")
-    df = data.table::fread('pca_file_all.csv')
-    df.pca <- prcomp(df,
-                     center = TRUE,
-                     scale. = TRUE)
-    return(df.pca)
-    """))
-    pickle.dump(result, open(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.pca.pickle"), "w"))
-    result = pickle.load(open(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.pca.pickle"), "r"))
+    pca = PCA()
+    x_new = pca.fit_transform(x.T)
 
-    # fix
-    result['x']['PC1'][1] = 74
-    result['sdev'][0] = 25
-
-    x = result['x']
-    variance = result['sdev']
+    pickle.dump(x_new, open(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.pca.pickle"), "w"))
+    x_new = pickle.load(open(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.pca.pickle"), "r"))
 
     # plot % explained variance per PC
     fig, axis = plt.subplots(1)
-    axis.plot(range(1, len(result['sdev']) + 1), result['sdev'], 'o-')
+    axis.plot(range(1, len(pca.explained_variance_) + 1), pca.explained_variance_, 'o-')
     axis.set_xlabel("PC")
     axis.set_ylabel("% variance")
     fig.savefig(os.path.join(analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.pca_variance.svg"), bbox_inches='tight')
 
     # plot PCA
-    pca(x)
+    plot_pca(x_new)
 
+    # Variable space
     # get one vector loading per feature (sum vectors of each chromatin feature)
     samples = features.columns[features.columns.str.contains("CLL")]
-    loadings = result['rotation'].reset_index(drop=True)  # stupid R indexes
-    plot_space(x=result['x'], y=loadings)
+    loadings = pca.components_
+    plot_space(x=x_new, y=loadings)
 
 
 def compare_go_terms(cluster_labels, file_names, plot, p_value=0.05, n_max=35):
