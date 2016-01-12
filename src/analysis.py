@@ -2466,6 +2466,7 @@ def create_clinical_epigenomic_space(analysis):
     from sklearn.decomposition import PCA
     import cPickle as pickle
     import itertools
+    from matplotlib.offsetbox import AnchoredText
 
     def plot_pca(x_new):
         # plot PC1 vs PC2
@@ -2506,64 +2507,68 @@ def create_clinical_epigenomic_space(analysis):
         """
         return vectors.sum(axis=0)
 
-    def plot_space(x, y, scale=1.0):
+    def plot_space(x, y, scale=1.0, axis=None):
+        def pairwise(iterable):
+            from itertools import tee, izip
+            "s -> (s0,s1), (s1,s2), (s2, s3), ..."
+            a, b = tee(iterable)
+            next(b, None)
+            return izip(a, b)
+
         # Get weighted variance to scale vectors
-        lam = (np.array(pca.explained_variance_[:2]) * np.sqrt(len(x))) ** scale
+        # lam = (np.array(pca.explained_variance_[:2]) * np.sqrt(len(x))) ** scale
+        # # divide observations by variance
+        # xx = pd.DataFrame(x[0:2, :].T / lam)  # samples
 
-        # variable space
-        yyy = pd.DataFrame()
-        for i, trait in enumerate(traits):
-            index = features[features['trait'] == trait].index
-            if len(index) > 0:
-                # multiply variables by variance
-                yy = loadings[:2, index].T * lam  # variables - regions
-                yyy[trait] = yy.sum(axis=0)
-
-        # divide observations by variance
-        xx = x[['PC1', 'PC2']] / lam  # samples
+        # or
 
         # Z-score variables to get them into same space
         xx = x.apply(lambda j: (j - j.mean()) / j.std(), axis=0)
-        yyy = y.T.apply(lambda j: (j - j.mean()) / j.std(), axis=0)
+        yy = y.apply(lambda j: (j - j.mean()) / j.std(), axis=0)
 
         # Plot samples and variables in same space (biplot)
-        fig, axis = plt.subplots(nrows=1, ncols=1, sharex=True, sharey=True)
+        if axis is None:
+            fig, axis = plt.subplots(nrows=1, ncols=1, sharex=True, sharey=True)
 
         sample_colors = samples_to_color(analysis.samples, "unique")
         sample_symbols = samples_to_symbol(analysis.samples, "unique")
 
-        var_colors = [plt.get_cmap('Accent')(i) for i in range(len(traits))]
+        var_colors = sns.color_palette("Paired", yy.shape[0])
 
         # Plot observations (samples)
         samples = pd.DataFrame([pd.Series(sample.__dict__) for sample in analysis.samples])
-        for i in range(len(xx) - 1):
-            axis.scatter(xx.ix[i + 1][0], xx.ix[i + 1][1], s=50, color=sample_colors[i], marker=sample_symbols[i])
-            axis.annotate(
-                "{0} - {1}".format(int(samples.ix[i]['patientID']), int(samples.ix[i]['timepoint'])),
-                (xx.ix[i + 1][0], xx.ix[i + 1][1]),
-                fontsize=8)  # add text with patient ID and timepoint
+        for i in range(len(xx)):
+            axis.scatter(xx.ix[i][0], xx.ix[i][1], s=50, color=sample_colors[i], marker=sample_symbols[i])
+            # axis.annotate(
+            #     "{0} - {1}".format(int(samples.ix[i]['patientID']), int(samples.ix[i]['timepoint'])),
+            #     (xx.ix[i][0], xx.ix[i][1]),
+            #     fontsize=8)  # add text with patient ID and timepoint
 
         # Plot variables (clinical features)
-        for i in range(len(yyy)):
-            axis.plot((0, yyy.ix[i][0]), (0, yyy.ix[i][1]), '-o', color=var_colors[i], label=traits[i])
+        for i, trait in enumerate(yy.index):
+            axis.plot((0, yy.ix[trait][0]), (0, yy.ix[trait][1]), '-o', color=var_colors[i], label=trait)
 
         # add dashed line between patient's timepoints
         for patient, indexes in samples.groupby('patientID').groups.items():
-            for t1, t2 in itertools.combinations(indexes, 2):
-                if samples.ix[t1]["timepoint"] == samples.ix[t2]["timepoint"] - 1:
-                    try:
-                        axis.plot((xx.ix[t1 + 1][0], xx.ix[t2 + 1][0]), (xx.ix[t1 + 1][1], xx.ix[t2 + 1][1]), "--", alpha=0.8, color="black")
-                    except:
-                        pass
-        plt.legend()
+            print(list(sorted(pairwise(samples.ix[indexes]["timepoint"]))))
+            for t1, t2 in pairwise(samples.ix[indexes]["timepoint"]):
+                tt1 = samples[(samples["timepoint"] == sorted([t1, t2])[0]) & (samples["patientID"] == patient)].index
+                tt2 = samples[(samples["timepoint"] == sorted([t1, t2])[1]) & (samples["patientID"] == patient)].index
+                # axis.plot((xx.ix[t1][0], xx.ix[t2][0]), (xx.ix[t1][1], xx.ix[t2][1]), "--", alpha=0.8, color="black")
+                axis.annotate(
+                    "",  # samples.ix[t1]["patientID"],
+                    xy=(xx.ix[tt1][0], xx.ix[tt1][1]), xycoords='data',
+                    xytext=(xx.ix[tt2][0], xx.ix[tt2][1]), textcoords='data',
+                    arrowprops=dict(arrowstyle="fancy", color="0.5", shrinkB=5, connectionstyle="arc3,rad=0.3",),
+                )
+        axis.legend()
 
-        output_pdf = os.path.join(
-            analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.biplot.svg")
-        fig.savefig(output_pdf, bbox_inches='tight')
-
-    #
-
-    #
+        if axis is None:
+            output_pdf = os.path.join(
+                analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.biplot.%s.svg" % "-".join(y.index))
+            fig.savefig(output_pdf, bbox_inches='tight')
+        else:
+            return axis
 
     #
 
@@ -2572,7 +2577,7 @@ def create_clinical_epigenomic_space(analysis):
     muts += ['TP53']  # mutations
     traits += muts
 
-    # Here I am removing ['BIRC3', 'BCL2', MYD88', 'CHD2', 'NFKIE']
+    # Here I am removing traits which had poor classification performance or too few patients associated
     # because they exist in either only one patient
 
     # Put trait-specific chromatin regions in one matrix
@@ -2585,64 +2590,81 @@ def create_clinical_epigenomic_space(analysis):
         try:
             df = pd.read_csv(file_name, sep="\t")
             df['trait'] = trait
-            features = features.append(df)
+            features = features.append(df, ignore_index=True)
         except IOError:
             print("Trait %s did not generate any associated regions" % trait)
 
-    # Save whole dataframe as csv
-    features.to_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t", index=False)
-    features = pd.read_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
+    # # Save whole dataframe as csv
+    # features.to_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t", index=False)
+    # features = pd.read_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
 
     # Plot matrix of overlap between sets
     m = pd.DataFrame()  # build matrix of common features
     for t1, t2 in itertools.combinations(traits, 2):
-        a = set(features[features['trait'] == t1].index)
-        b = set(features[features['trait'] == t2].index)
-        m.loc[t1, t2] = len(a.intersection(b))
+        a = set(features[features['trait'] == t1][['start', 'end']].apply(sum, axis=1))
+        b = set(features[features['trait'] == t2][['start', 'end']].apply(sum, axis=1))
+        m.loc[t1, t2] = len(a.intersection(b)) / float(len(features[features['trait'] == t1].drop_duplicates()))
+        m.loc[t2, t1] = len(a.intersection(b)) / float(len(features[features['trait'] == t2].drop_duplicates()))
+    m.replace(np.nan, 1, inplace=True)
+    sns.clustermap(np.log2(m.sort(axis=0).sort(axis=1)))
+    output_pdf = os.path.join(
+        analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.common_trait_regions.svg")
+    plt.savefig(output_pdf, bbox_inches='tight')
+    plt.close('all')
 
-    # Investigate feature imporance
-    # g = sns.FacetGrid(features[features['importance'] > 0.001], col="trait", col_wrap=5)
-    g = sns.FacetGrid(features, col="trait", col_wrap=5)
-    g.map(sns.distplot, "importance")
+    # # Investigate feature importance
+    # # g = sns.FacetGrid(features[features['importance'] > 0.001], col="trait", col_wrap=5)
+    # g = sns.FacetGrid(features, col="trait", col_wrap=5)
+    # g.map(sns.distplot, "importance")
 
-    #
-    z_imp = pd.DataFrame()
-    for t in features.trait.unique():
-        x = features[features['trait'] == t]['importance']
-        z_imp = z_imp.append((x - x.mean()) / x.std())
-    [sns.distplot(z_imp.ix[i].dropna()) for i in range(len(z_imp))]
+    # #
+    # z_imp = pd.DataFrame()
+    # for t in features.trait.unique():
+    #     x = features[features['trait'] == t]['importance']
+    #     z_imp = z_imp.append((x - x.mean()) / x.std())
+    # [sns.distplot(z_imp.ix[i].dropna()) for i in range(len(z_imp))]
 
-    [sns.distplot(features[features['trait'] == t]['importance']) for t in traits]
+    # [sns.distplot(features[features['trait'] == t]['importance']) for t in traits]
 
-    # see fraction of features from total which are explained with clinical associations
-    features.shape[0]
-    features[['chrom', 'start', 'end']].drop_duplicates().shape[0]  # unique chromatin features
+    # # see fraction of features from total which are explained with clinical associations
+    # features.shape[0]
+    # features[['chrom', 'start', 'end']].drop_duplicates().shape[0]  # unique chromatin features
+    fig, axis = plt.subplots(nrows=2, ncols=5, sharex=True, sharey=True, figsize=(60, 20))
+    for i in range(1, len(traits) + 1):
+        # PCA
+        # get a matrix of unique features for all samples
+        x = features[features['trait'].str.contains("|".join(traits[:i]))].drop_duplicates(['chrom', 'start', 'end'])[[s.name for s in analysis.samples] + ["trait"]]
+        # save csvs for pca
+        pca = PCA()
+        x_new = pca.fit_transform(x.T.drop("trait"))
 
-    # PCA
-    # get a matrix of unique features for all samples
-    x = features.ix[features[['chrom', 'start', 'end']].drop_duplicates().index][[s.name for s in analysis.samples]]
-    # save csvs for pca
-    pca = PCA()
-    x_new = pca.fit_transform(x.T)
+        # pickle.dump(x_new, open(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.pca.pickle"), "w"))
+        # x_new = pickle.load(open(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.pca.pickle"), "r"))
 
-    pickle.dump(x_new, open(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.pca.pickle"), "w"))
-    x_new = pickle.load(open(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.pca.pickle"), "r"))
+        # # plot % explained variance per PC
+        # fig, axis = plt.subplots(1)
+        # axis.plot(range(1, len(pca.explained_variance_) + 1), pca.explained_variance_, 'o-')
+        # axis.set_xlabel("PC")
+        # axis.set_ylabel("% variance")
+        # fig.savefig(os.path.join(analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.pca_variance.svg"), bbox_inches='tight')
 
-    # plot % explained variance per PC
-    fig, axis = plt.subplots(1)
-    axis.plot(range(1, len(pca.explained_variance_) + 1), pca.explained_variance_, 'o-')
-    axis.set_xlabel("PC")
-    axis.set_ylabel("% variance")
-    fig.savefig(os.path.join(analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.pca_variance.svg"), bbox_inches='tight')
+        # plot PCA
+        # plot_pca(x_new)
 
-    # plot PCA
-    plot_pca(x_new)
+        # Variable space
+        # get one vector loading per feature (sum vectors of each chromatin feature)
+        samples = features.columns[features.columns.str.contains("CLL")]
+        loadings = pd.DataFrame(pca.components_, columns=x.index).T
+        loadings['trait'] = x['trait']
 
-    # Variable space
-    # get one vector loading per feature (sum vectors of each chromatin feature)
-    samples = features.columns[features.columns.str.contains("CLL")]
-    loadings = pca.components_
-    plot_space(x=x_new, y=loadings)
+        plot_space(x=pd.DataFrame(x_new), y=loadings.groupby('trait').sum(), axis= axis.flatten()[i - 1])
+
+    # Save fig
+    output_pdf = os.path.join(
+        analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.biplot.traits.svg")
+    fig.savefig(output_pdf, bbox_inches='tight')
+
+    # Get survival predictions
 
 
 def compare_go_terms(cluster_labels, file_names, plot, p_value=0.05, n_max=35):
