@@ -258,8 +258,8 @@ for i in clinical.index:
     if i in survival.columns:
         t = clinical.ix[i]["duration_collection"]
         if t is not pd.NaT:
-            s.append(np.interp(t.days, survival.index, survival[i]))
-            h.append(np.interp(t.days, hazard.index, hazard[i]))
+            s.append(np.interp(t.days / float(30), survival.index, survival[i]))
+            h.append(np.interp(t.days / float(30), hazard.index, hazard[i]))
             continue
     s.append(np.nan)
     h.append(np.nan)
@@ -268,6 +268,6 @@ clinical['predicted_survival'] = s
 clinical['predicted_hazard'] = h
 
 # export
-clinical[["patient_id", "sample_id", "predicted_survival", "predicted_hazard"]].to_csv(
+clinical[["patient_id", "sample_id", "predicted_survival", "predicted_hazard", "duration_collection"]].to_csv(
     os.path.join("data", "survival_hazard_predictions.csv")
 )
