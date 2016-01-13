@@ -271,3 +271,13 @@ clinical['predicted_hazard'] = h
 clinical[["patient_id", "sample_id", "predicted_survival", "predicted_hazard", "duration_collection"]].to_csv(
     os.path.join("data", "survival_hazard_predictions.csv")
 )
+
+# investigate
+fig, axis = plt.subplots(2)
+axis[0].scatter(
+    clinical["duration_collection"].astype('timedelta64[M]'),
+    clinical['predicted_survival'])
+axis[1].scatter(
+    clinical["duration_collection"].astype('timedelta64[M]'),
+    clinical['predicted_hazard'])
+fig.savefig(os.path.join(plots_dir, "survival", "predicted_at_collection_time.svg"), bbox_inches="tight")
