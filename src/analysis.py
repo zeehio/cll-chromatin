@@ -2860,6 +2860,11 @@ def create_clinical_epigenomic_space(analysis):
         #     return axis
 
     def survival(kind="survival"):
+        # sum several loadings to the various clinical features
+        variable_loadings = loadings.groupby('trait').sum()
+        # scale resulting clinical loadings by the number of features associated with them
+        # variable_loadings = (loadings.groupby('trait').sum().T / loadings.groupby('trait').apply(len)).T
+
         # Get survival and hazard predictions
         # This comes from the "/src/survival_analysis.py" script
         survival = pd.read_csv(os.path.join("data", "survival_hazard_predictions.csv"))
@@ -2877,53 +2882,43 @@ def create_clinical_epigenomic_space(analysis):
         xy = xy[weights.index, :]
         xy = np.transpose(xy)
 
-        # sum several loadings to the various clinical features
-        variable_loadings = loadings.groupby('trait').sum()
-        # scale resulting clinical loadings by the number of features associated with them
-        # variable_loadings = (loadings.groupby('trait').sum().T / loadings.groupby('trait').apply(len)).T
-
-        # Plot
-        fig, axis = plt.subplots(2, figsize=(40, 30))
-
-        # Unweighted KDE
-        pdf = gaussian_kde(xy)
-        pdf.set_bandwidth(bw_method=pdf.factor / 10.)  # kde bandwidth
-
         # kde space
         xmin, xmax = (xy[0].min(), xy[0].max())
         ymin, ymax = (xy[1].min(), xy[1].max())
-        x = np.linspace(xmin, xmax, 1000)  # kde resolution
-        y = np.linspace(ymin, ymax, 1000)  # kde resolution
+        x = np.linspace(xmin, xmax, 100)  # kde resolution
+        y = np.linspace(ymin, ymax, 100)  # kde resolution
         xx, yy = np.meshgrid(x, y)
 
+        # Unweighted KDE
+        pdf = gaussian_kde(xy)
+        pdf.set_bandwidth(bw_method=pdf.factor / 2.)  # kde bandwidth
         zz = pdf((np.ravel(xx), np.ravel(yy)))
-        zz = np.reshape(zz, xx.shape)
-
-        # plot unweighted
-        axis[0] = plot_space(x=pd.DataFrame(x_new), y=variable_loadings, axis=axis[0])  # x_new[weights.index, :]
-        bounds = axis[0].dataLim.get_points().ravel()
-        bounds = [xy[0].min(), xy[0].max(), xy[1].min(), xy[1].max()]
-        cax = axis[0].imshow(zz.T, cmap=plt.cm.Reds, extent=[bounds[0], bounds[2], bounds[1], bounds[3]], alpha=0.5)
-        axis[0].legend()
-        # cbar = fig.colorbar(cax, ticks=[zz.min(), zz.max()], orientation='horizontal')
-        # cbar.ax.set_xticklabels(['Low', 'High'])  # horizontal colorbar
+        zz1 = np.reshape(zz, xx.shape)
 
         # weighted KDE
-        if kind == "survival":
-            pdf = gaussian_kde(xy, weights=1 - np.array(weights, np.float))
-        elif kind == "hazard":
-            pdf = gaussian_kde(xy, weights=np.array(weights, np.float))
-        pdf.set_bandwidth(bw_method=pdf.factor / 10.)  # kde bandwidth
+        pdf = gaussian_kde(xy, weights=np.array(weights, np.float))
+        pdf.set_bandwidth(bw_method=pdf.factor / 2.)  # kde bandwidth
+        zz2 = pdf((np.ravel(xx), np.ravel(yy)))
+        zz2 = np.reshape(zz2, xx.shape)
 
-        zz = pdf((np.ravel(xx), np.ravel(yy)))
-        zz = np.reshape(zz, xx.shape)
+        # PLot
+        fig, axis = plt.subplots(1)
+        bounds = [xmin, xmax, ymin, ymax]
+
+        # plot unweighted
+        # axis[0].scatter(obs[:, 0], obs[:, 1])
+        axis[0] = plot_space(x=pd.DataFrame(x_new), y=variable_loadings, axis=axis[0])  # x_new[weights.index, :]
+        cax = axis[0].imshow(np.rot90(zz1.T), cmap=plt.cm.Reds, extent=bounds, alpha=0.5)
+        axis[0].legend()
+        # cbar = fig.colorbar(cax, ticks=[zz1.min(), zz1.max()], orientation='horizontal')
+        # cbar.ax.set_xticklabels(['Low', 'High'])  # horizontal colorbar
 
         # plot weighted
-        axis[1] = plot_space(x=pd.DataFrame(x_new), y=variable_loadings, axis=axis[1])  # x_new[weights.index, :]
-        bounds = axis[1].dataLim.get_points().ravel()
-        cax = axis[1].imshow(zz.T, cmap=plt.cm.Reds, extent=[bounds[0], bounds[2], bounds[1], bounds[3]], alpha=0.5)
+        # axis[1].scatter(obs[:, 0], obs[:, 1])
+        axis[1] = plot_space(x=pd.DataFrame(x_new), y=variable_loadings, axis=axis[0])  # x_new[weights.index, :]
+        cax = axis[1].imshow(np.rot90(zz2.T), cmap=plt.cm.Reds, extent=bounds, alpha=0.5)
         axis[1].legend()
-        # cbar = fig.colorbar(cax, ticks=[zz.min(), zz.max()], orientation='horizontal')
+        # cbar = fig.colorbar(cax, ticks=[zz2.min(), zz2.max()], orientation='horizontal')
         # cbar.ax.set_xticklabels(['Low', 'High'])  # horizontal colorbar
 
         axis[0].set_title("unweighted %s" % kind)
@@ -2931,15 +2926,6 @@ def create_clinical_epigenomic_space(analysis):
         output_pdf = os.path.join(
             analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.%s_weight-comparison.svg" % kind)
         fig.savefig(output_pdf, bbox_inches='tight')
-
-        # # compare with histogram
-        # bins = 100
-        # axis.hist2d(xy[0], xy[1], bins, normed=False, weights=weights.tolist(), cmap='hot')
-        # plt.colorbar()
-        # or scatter
-        # p = xy.T
-        # plt.scatter(p[:, 0], p[:, 1], color=map(plt.get_cmap('Blues'), weights))
-
 
     #
 
