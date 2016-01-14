@@ -222,7 +222,9 @@ fig.savefig(os.path.join(plots_dir, "survival", "best_5models_predictions_all_pa
 
 # get best model
 model = re.sub("-", " + ", best_models[-1][0])
+# model = "patient_gender + igvh_mutation_status + ZAP70_positive + del11"
 penalty = best_models[-1][1][0]
+# penalty = 4
 
 # regress with best model
 X = patsy.dmatrix(model + " -1", clinical, return_type="dataframe")
@@ -267,11 +269,6 @@ for i in clinical.index:
 clinical['predicted_survival'] = s
 clinical['predicted_hazard'] = h
 
-# export
-clinical[["patient_id", "sample_id", "predicted_survival", "predicted_hazard", "duration_collection"]].to_csv(
-    os.path.join("data", "survival_hazard_predictions.csv")
-)
-
 # investigate
 fig, axis = plt.subplots(2)
 axis[0].scatter(
@@ -281,3 +278,9 @@ axis[1].scatter(
     clinical["duration_collection"].astype('timedelta64[M]'),
     clinical['predicted_hazard'])
 fig.savefig(os.path.join(plots_dir, "survival", "predicted_at_collection_time.svg"), bbox_inches="tight")
+
+# export
+clinical[["patient_id", "sample_id", "predicted_survival", "predicted_hazard", "duration_collection"]].to_csv(
+    os.path.join("data", "survival_hazard_predictions.csv"),
+    index=False
+)

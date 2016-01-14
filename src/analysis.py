@@ -4,9 +4,10 @@
 This is the main script of the cll-patients project.
 """
 
-if __name__ == '__main__':
-    import matplotlib
-    matplotlib.use('Agg')
+
+import matplotlib
+matplotlib.use('Agg')
+matplotlib.rcParams['backend'] = "Agg"
 import recipy
 from argparse import ArgumentParser
 import os
@@ -2042,8 +2043,6 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
     Use a machine learning approach for sample classification based on known sample attributes.
     Extract features most important to separate samples and investigate those.
     """
-    from tqdm import tqdm
-
     print("Trait:%s" % comparison)
     print("%i samples with trait annotated" % len(sel_samples))
     print(Counter(labels))
@@ -2074,8 +2073,8 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
 
         loo = cross_validation.LeaveOneOut(len(X))
 
-        for i, (train_index, test_index) in tqdm(enumerate(loo)):
-            # Skip validations on samples from the same patient
+        for i, (train_index, test_index) in enumerate(loo):
+            # Remove samples from the same patient that we are predicting during training
             # # get patient:sample mappings
             # p_s_mapping = dict(pd.DataFrame([pd.Series(s.__dict__) for s in sel_samples]).groupby('patientID').groups.items())
             # group = p_s_mapping.index([x for x in p_s_mapping.values() if train_index in x][0])
@@ -2165,7 +2164,7 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
         # or
         # Get most informative features
         matrix = analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]]
-        x = matrix.loc[[i for i, j in enumerate(mean_importance > 0) if j == True], :]  # get features on the tail of the importance distribution
+        x = matrix.loc[[i for i, j in enumerate(mean_importance > 1e-4) if j == True], :]  # get features on the tail of the importance distribution
         sites_cluster = sns.clustermap(
             x,
             cmap=cmap,
@@ -2212,10 +2211,10 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
         # REGIONS
         # Characterize regions as a whole
         # region's composition
-        characterize_regions_composition(df=analysis.coverage_qnorm_annotated.loc[x.index, :], prefix=comparison)
+        # characterize_regions_composition(df=analysis.coverage_qnorm_annotated.loc[x.index, :], prefix=comparison)
         # region's function
-        output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks" % comparison)
-        characterize_regions_function(df=analysis.coverage_qnorm_annotated.loc[x.index, :], output_dir=output_dir, prefix=comparison)
+        # output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks" % comparison)
+        # characterize_regions_function(df=analysis.coverage_qnorm_annotated.loc[x.index, :], output_dir=output_dir, prefix=comparison)
 
         # Split in major groups
         if comparison == 'gender':
@@ -2234,7 +2233,7 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
             x,
             cmap=cmap,
             standard_scale=0,
-            col_colors=comparison_colors,
+            col_colors=all_samples_colors,
             row_colors=colors,
             yticklabels=False)
         plt.savefig(os.path.join(
@@ -2242,10 +2241,14 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
             "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sites_labels.svg" % comparison), bbox_inches="tight")
         plt.close('all')
 
-        # get cluster labels for sites
-        # add cluster number to df
+        # Export info
         dataframe = analysis.coverage_qnorm_annotated.loc[x.index, :]
+        # add difference of standardized openness between positive and negative groups used in classification
+        df2 = dataframe[[s.name for s in sel_samples]].apply(lambda j: (j - j.min()) / (j.max() - j.min()), axis=0)
+        dataframe['change'] = df2.icol([i for i, l in enumerate(labels) if l == 1]).mean(axis=1) - df2.icol([i for i, l in enumerate(labels) if l == 0]).mean(axis=1)
+        # add feature importance
         dataframe['importance'] = mean_importance[x.index]
+        # get cluster labels for sites
         dataframe['cluster'] = clusters
         # Save whole dataframe as csv
         dataframe_file = os.path.join(
@@ -2261,41 +2264,41 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
             "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % comparison)
         dataframe[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
 
-    # Region characterization
-    # plot chromosome distribution of regions
-    chrom_count = Counter(dataframe[['chrom', 'start', 'end']].chrom)
-    chrom_count = np.array(sorted(chrom_count.items(), key=lambda x: x[1], reverse=True))
-    fig, axis = plt.subplots(1, figsize=(10, 5))
-    sns.barplot(chrom_count[:, 0], chrom_count[:, 1].astype(int), ax=axis)
-    fig.savefig(os.path.join(
-        analysis.prj.dirs.plots,
-        "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.sites_location.svg" % comparison), bbox_inches="tight")
+    # # Region characterization
+    # # plot chromosome distribution of regions
+    # chrom_count = Counter(dataframe[['chrom', 'start', 'end']].chrom)
+    # chrom_count = np.array(sorted(chrom_count.items(), key=lambda x: x[1], reverse=True))
+    # fig, axis = plt.subplots(1, figsize=(10, 5))
+    # sns.barplot(chrom_count[:, 0], chrom_count[:, 1].astype(int), ax=axis)
+    # fig.savefig(os.path.join(
+    #     analysis.prj.dirs.plots,
+    #     "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.sites_location.svg" % comparison), bbox_inches="tight")
 
-    for i, cluster in enumerate(np.unique(dataframe['cluster'])):
-        # GET REGIONS FROM CLUSTER
-        df = dataframe[dataframe['cluster'] == cluster]
+    # for i, cluster in enumerate(np.unique(dataframe['cluster'])):
+    #     # GET REGIONS FROM CLUSTER
+    #     df = dataframe[dataframe['cluster'] == cluster]
 
-        # ignore clusters with less than 20 regions
-        if len(df) < 20:
-            continue
+    #     # ignore clusters with less than 20 regions
+    #     if len(df) < 20:
+    #         continue
 
-        # output folder
-        outdir = os.path.join("%s_cluster%i" % (comparison, cluster))
-        if not os.path.exists(outdir):
-            os.makedirs(outdir)
+    #     # output folder
+    #     outdir = os.path.join("%s_cluster%i" % (comparison, cluster))
+    #     if not os.path.exists(outdir):
+    #         os.makedirs(outdir)
 
-        # region's composition
-        regions = characterize_regions_composition(df=df, prefix="%s_cluster%i" % (comparison, cluster), universe_df=analysis.coverage_qnorm_annotated)
-        regions['cluster'] = cluster
+    #     # region's composition
+    #     regions = characterize_regions_composition(df=df, prefix="%s_cluster%i" % (comparison, cluster), universe_df=analysis.coverage_qnorm_annotated)
+    #     regions['cluster'] = cluster
 
-        if i == 0:
-            df3 = regions
-        else:
-            df3 = df3.append(regions)
+    #     if i == 0:
+    #         df3 = regions
+    #     else:
+    #         df3 = df3.append(regions)
 
-        # region's function
-        output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks_cluster%i" % (comparison, cluster))
-        characterize_regions_function(df=df, output_dir=output_dir, prefix="%s_cluster%i" % (comparison, cluster))
+    #     # region's function
+    #     output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks_cluster%i" % (comparison, cluster))
+    #     characterize_regions_function(df=df, output_dir=output_dir, prefix="%s_cluster%i" % (comparison, cluster))
 
         # # parse meme-ame output
         # motifs = pd.DataFrame(parse_ame(os.path.join(output_dir, "meme")), columns=['motifs', 'q_values'])
@@ -2389,51 +2392,51 @@ def trait_analysis(analysis):
     # Gender
     sel_samples = [s for s in analysis.samples if type(s.patient_gender) is str]
     labels = np.array([1 if s.patient_gender == "M" else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="gender")
+    classify_samples(analysis, sel_samples, labels, comparison="gender", rerun=True)
 
     # IGHV mutation status
     sel_samples = [s for s in analysis.samples if type(s.mutated) is bool]
     labels = np.array([1 if s.mutated else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="IGHV")
+    classify_samples(analysis, sel_samples, labels, comparison="IGHV", rerun=True)
 
     # CD38 expression
     sel_samples = [s for s in analysis.samples if type(s.CD38) is bool]
     labels = np.array([1 if s.CD38 else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="CD38")
+    classify_samples(analysis, sel_samples, labels, comparison="CD38", rerun=True)
 
     # ZAP70 expression
     sel_samples = [s for s in analysis.samples if type(s.ZAP70) is bool]
     labels = np.array([1 if s.ZAP70 else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="ZAP70")
+    classify_samples(analysis, sel_samples, labels, comparison="ZAP70", rerun=True)
 
     # ZAP70 mono-allelic expression
     sel_samples = [s for s in analysis.samples if type(s.ZAP70_monoallelic) == bool]
     labels = np.array([1 if s.ZAP70_monoallelic else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="ZAP70_monoallelic")
+    classify_samples(analysis, sel_samples, labels, comparison="ZAP70_monoallelic", rerun=True)
 
     # Disease at Diagnosis - comparison in untreated samples
     # Primary vs Secondary CLL (progressed from MBL and SLL)
     sel_samples = [s for s in analysis.samples if type(s.diagnosis_disease) is str]
     labels = np.array([1 if s.diagnosis_disease == "CLL" else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="primary_CLL")
+    classify_samples(analysis, sel_samples, labels, comparison="primary_CLL", rerun=True)
 
     # Treatment types
     # Under treatment
     sel_samples = [s for s in analysis.samples if type(s.treatment_active) is bool]
     labels = np.array([1 if s.treatment_active else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="treated")
+    classify_samples(analysis, sel_samples, labels, comparison="treated", rerun=True)
 
     # Under treament but with different types
     # Chemotherapy
     chemo_drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR']
     sel_samples = [s for s in analysis.samples if s.treatment_active]
     labels = np.array([1 if s.treatment_type in chemo_drugs else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="chemo_treated")
+    classify_samples(analysis, sel_samples, labels, comparison="chemo_treated", rerun=True)
     # B cell antibodies
     target_drugs = ['Alemtuz', 'Ibrutinib']
     sel_samples = [s for s in analysis.samples if s.treatment_active]
     labels = np.array([1 if s.treatment_type in target_drugs else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="target_treated")
+    classify_samples(analysis, sel_samples, labels, comparison="target_treated", rerun=True)
 
     # Mutations / abnormalities
     muts = ['del13', 'del11', 'tri12']
@@ -2445,19 +2448,19 @@ def trait_analysis(analysis):
         # IGHVun +/- del; IGHVmut +/- del
         sel_samples = [s for s in analysis.samples if type(s.mutations) is list]
         labels = np.array([1 if mut in s.mutations else 0 for s in sel_samples])
-        classify_samples(analysis, sel_samples, labels, comparison=mut)
+        classify_samples(analysis, sel_samples, labels, comparison=mut, rerun=True)
 
     # Relapse
-    # "relapse", ("True", "False"), # relapse or before relapse
+    # "relapse", ("True", "False", rerun=True), # relapse or before relapse
     sel_samples = [s for s in analysis.samples if type(s.relapse) is bool]
     labels = np.array([1 if s.relapse else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="relapse")
+    classify_samples(analysis, sel_samples, labels, comparison="relapse", rerun=True)
 
     # Early vs Late
-    # "progression", ("True", "False"), # early vs late timepoint
+    # "progression", ("True", "False", rerun=True), # early vs late timepoint
     sel_samples = [s for s in analysis.samples if type(s.diagnosis_collection) is bool]
     labels = np.array([1 if s.diagnosis_collection else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="early_diagnosis")
+    classify_samples(analysis, sel_samples, labels, comparison="early_diagnosis", rerun=True)
 
 
 class gaussian_kde(object):
@@ -2795,8 +2798,6 @@ def create_clinical_epigenomic_space(analysis):
         return vectors.sum(axis=0)
 
     def plot_space(x, y, scale=1.0, axis=None):
-        from matplotlib.offsetbox import AnchoredText
-
         def pairwise(iterable):
             from itertools import tee, izip
             "s -> (s0,s1), (s1,s2), (s2, s3), ..."
@@ -2804,12 +2805,14 @@ def create_clinical_epigenomic_space(analysis):
             next(b, None)
             return izip(a, b)
 
+        standalone = True if axis is None else False
+
         # Z-score variables to get them into same space
         xx = x.apply(lambda j: (j - j.mean()) / j.std(), axis=0)
         yy = y.apply(lambda j: (j - j.mean()) / j.std(), axis=0)
 
         # Plot samples and variables in same space (biplot)
-        if axis is None:
+        if standalone:
             fig, axis = plt.subplots(nrows=1, ncols=1, sharex=True, sharey=True)
 
         sample_colors = samples_to_color(analysis.samples, "unique")
@@ -2840,19 +2843,14 @@ def create_clinical_epigenomic_space(analysis):
                     )
         axis.legend()
 
-        if axis is None:
+        if standalone:
             output_pdf = os.path.join(
                 analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.biplot.%s.svg" % "-".join(y.index))
             fig.savefig(output_pdf, bbox_inches='tight')
         else:
             return axis
 
-    def survival(kind="survival"):
-        # sum several loadings to the various clinical features
-        variable_loadings = loadings.groupby('trait').sum()
-        # scale resulting clinical loadings by the number of features associated with them
-        # variable_loadings = (loadings.groupby('trait').sum().T / loadings.groupby('trait').apply(len)).T
-
+    def add_survival(chrom_x, chrom_y, kind="survival"):
         # Get survival and hazard predictions
         # This comes from the "/src/survival_analysis.py" script
         survival = pd.read_csv(os.path.join("data", "survival_hazard_predictions.csv"))
@@ -2867,31 +2865,31 @@ def create_clinical_epigenomic_space(analysis):
         xy = np.transpose(xy)
 
         # kde space
-        xmin, xmax = (xy[0].min(), xy[0].max())
-        ymin, ymax = (xy[1].min(), xy[1].max())
+        xmin, xmax = (xy[0].min() - 1, xy[0].max() + 1)
+        ymin, ymax = (xy[1].min() - 1, xy[1].max() + 1)
         x = np.linspace(xmin, xmax, 100)  # kde resolution
         y = np.linspace(ymin, ymax, 100)  # kde resolution
         xx, yy = np.meshgrid(x, y)
 
         # Unweighted KDE
         pdf = gaussian_kde(xy)
-        pdf.set_bandwidth(bw_method=pdf.factor / 3)  # kde bandwidth
+        pdf.set_bandwidth(bw_method=pdf.factor / 1.5)  # kde bandwidth
         zz = pdf((np.ravel(xx), np.ravel(yy)))
         zz1 = np.reshape(zz, xx.shape)
 
         # weighted KDE
-        pdf = gaussian_kde(xy, weights=np.array(weights, np.float))
-        pdf.set_bandwidth(bw_method=pdf.factor / 3)  # kde bandwidth
+        pdf = gaussian_kde(xy, weights=10 * np.array(weights, np.float))
+        pdf.set_bandwidth(bw_method=pdf.factor / 1.5)  # kde bandwidth
         zz2 = pdf((np.ravel(xx), np.ravel(yy)))
         zz2 = np.reshape(zz2, xx.shape)
 
         # PLot
-        fig, axis = plt.subplots(2)
+        fig, axis = plt.subplots(2, figsize=(30, 20))
         bounds = [xmin, xmax, ymin, ymax]
 
         # plot unweighted
         # axis[0].scatter(obs[:, 0], obs[:, 1])
-        axis[0] = plot_space(x=pd.DataFrame(x_new), y=variable_loadings, axis=axis[0])  # x_new[weights.index, :]
+        axis[0] = plot_space(x=chrom_x, y=chrom_y, axis=axis[0])  # chrom_x[weights.index, :]
         cax = axis[0].imshow(np.rot90(zz1.T), cmap=plt.cm.Reds, extent=bounds, alpha=0.5)
         axis[0].legend()
         # cbar = fig.colorbar(cax, ticks=[zz1.min(), zz1.max()], orientation='horizontal')
@@ -2899,7 +2897,7 @@ def create_clinical_epigenomic_space(analysis):
 
         # plot weighted
         # axis[1].scatter(obs[:, 0], obs[:, 1])
-        axis[1] = plot_space(x=pd.DataFrame(x_new), y=variable_loadings, axis=axis[1])  # x_new[weights.index, :]
+        axis[1] = plot_space(x=chrom_x, y=chrom_y, axis=axis[1])  # chrom_x[weights.index, :]
         cax = axis[1].imshow(np.rot90(zz2.T), cmap=plt.cm.Reds, extent=bounds, alpha=0.5)
         axis[1].legend()
         # cbar = fig.colorbar(cax, ticks=[zz2.min(), zz2.max()], orientation='horizontal')
@@ -2909,6 +2907,13 @@ def create_clinical_epigenomic_space(analysis):
         axis[1].set_title("weighted %s" % kind)
         output_pdf = os.path.join(
             analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.%s_weight-comparison.svg" % kind)
+        fig.savefig(output_pdf, bbox_inches='tight')
+
+        # compare with scatter values
+        fig, axis = plt.subplots(1)
+        plt.scatter(x_new[:, 0], x_new[:, 1], color=map(cm.Reds, 1 - weights))
+        output_pdf = os.path.join(
+            analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.raw_1-survival.svg")
         fig.savefig(output_pdf, bbox_inches='tight')
 
     #
@@ -2935,6 +2940,9 @@ def create_clinical_epigenomic_space(analysis):
         except IOError:
             print("Trait %s did not generate any associated regions" % trait)
 
+    # add direction of chromatin feature association with clinical feature
+    features['direction'] = features['change'].apply(lambda x: 1 if x > 0 else -1)
+
     # # Save whole dataframe as csv
     # features.to_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t", index=False)
     # features = pd.read_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
@@ -2953,6 +2961,14 @@ def create_clinical_epigenomic_space(analysis):
     plt.savefig(output_pdf, bbox_inches='tight')
     plt.close('all')
 
+    # See how much the regions are positively or negatively correlated with the feature
+    g = sns.FacetGrid(features, col="trait", col_wrap=4)
+    g.map(sns.distplot, "change")
+    output_pdf = os.path.join(
+        analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.trait-region_association.svg")
+    plt.savefig(output_pdf, bbox_inches='tight')
+    plt.close('all')
+
     # # see fraction of features from total which are explained with clinical associations
     # features.shape[0]
     # features[['chrom', 'start', 'end']].drop_duplicates().shape[0]  # unique chromatin features
@@ -2961,17 +2977,21 @@ def create_clinical_epigenomic_space(analysis):
         print(traits[:i])
         # PCA
         # get a matrix of unique features for all samples
-        x = features[features['trait'].str.contains("|".join(traits[:i]))].drop_duplicates(['chrom', 'start', 'end'])[[s.name for s in analysis.samples] + ["trait"]]
+        x = features[features['trait'].str.contains("|".join(traits[:i]))].drop_duplicates(['chrom', 'start', 'end'])[[s.name for s in analysis.samples] + ["trait", "direction"]]
         # save csvs for pca
         pca = PCA()
-        x_new = pca.fit_transform(x.T.drop("trait").apply(lambda x: (x - x.min()) / (x.max() - x.min()), axis=1))
+        x_new = pca.fit_transform(x.T.drop(["trait", "direction"]).apply(lambda x: (x - x.min()) / (x.max() - x.min()), axis=1))
 
         # Variable space
         # get one vector loading per feature (sum vectors of each chromatin feature)
         loadings = pd.DataFrame(pca.components_, columns=x.index).T
         loadings['trait'] = x['trait']
+        loadings['direction'] = x['direction']
 
-        plot_space(x=pd.DataFrame(x_new), y=loadings.groupby('trait').sum(), axis=axis.flatten()[i - 1])
+        # sum vectors for each clinical variable, dependent on the direction of the features (positive or negatively associated)
+        loadings = pd.melt(loadings.groupby(['trait', 'direction']).sum().reset_index(), ['trait'] + range(x_new.shape[0]), value_name="direction")
+        loadings.index = loadings['trait'] + "_" + loadings['direction'].astype(str)
+        plot_space(x=pd.DataFrame(x_new), y=loadings.drop(["trait", "variable", "direction"], axis=1), axis=axis.flatten()[i - 1])
 
     # Save fig
     output_pdf = os.path.join(
@@ -2982,10 +3002,10 @@ def create_clinical_epigenomic_space(analysis):
 
     # Integrate survival into epigenomics space
     # Build final space with all unique features
-    x = features.drop_duplicates(['chrom', 'start', 'end'])[[s.name for s in analysis.samples] + ["trait"]]
+    x = features.drop_duplicates(['chrom', 'start', 'end'])[[s.name for s in analysis.samples] + ["trait", "direction"]]
     # save csvs for pca
     pca = PCA()
-    x_new = pca.fit_transform(x.T.drop("trait"))
+    x_new = pca.fit_transform(x.T.drop(["trait", "direction"]).apply(lambda x: (x - x.min()) / (x.max() - x.min()), axis=1))
 
     # plot % explained variance per PC
     fig, axis = plt.subplots(1)
@@ -2997,19 +3017,24 @@ def create_clinical_epigenomic_space(analysis):
     # get loadings
     loadings = pd.DataFrame(pca.components_, columns=x.index).T
     loadings['trait'] = x['trait']
+    loadings['direction'] = x['direction']
+
+    # sum vectors for each clinical variable, dependent on the direction of the features (positive or negatively associated)
+    loadings = pd.melt(loadings.groupby(['trait', 'direction']).sum().reset_index(), ['trait'] + range(x_new.shape[0]), value_name="direction")
+    loadings.index = loadings['trait'] + "_" + loadings['direction'].astype(str)
 
     # plot once more
-    plot_space(x=pd.DataFrame(x_new), y=loadings.groupby('trait').sum())
+    plot_space(x=pd.DataFrame(x_new), y=loadings.drop(["trait", "variable", "direction"], axis=1), axis=None)
 
     # save coordinates on same space
     # z-score both observations and variables
-    obs = pd.DatFrame(x_new).apply(lambda j: (j - j.mean()) / j.std(), axis=0)
-    var = loadings.drop("trait").apply(lambda j: (j - j.mean()) / j.std(), axis=0)
+    obs = pd.DataFrame(x_new).apply(lambda j: (j - j.mean()) / j.std(), axis=0)
+    var = loadings.drop(["trait", "variable", "direction"], axis=1).apply(lambda j: (j - j.mean()) / j.std(), axis=0)
     # pickle that
     pickle.dump((obs, var), open(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.pickle"), "w"))
     (obs, var) = pickle.load(open(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.pickle"), "r"))
 
-    survival()
+    add_survival(chrom_x=pd.DataFrame(x_new), chrom_y=loadings.drop(["trait", "variable", "direction"], axis=1))
 
 
 def compare_go_terms(cluster_labels, file_names, plot, p_value=0.05, n_max=35):
