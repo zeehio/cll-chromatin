@@ -2804,13 +2804,6 @@ def create_clinical_epigenomic_space(analysis):
             next(b, None)
             return izip(a, b)
 
-        # Get weighted variance to scale vectors
-        # lam = (np.array(pca.explained_variance_[:2]) * np.sqrt(len(x))) ** scale
-        # # divide observations by variance
-        # xx = pd.DataFrame(x[0:2, :].T / lam)  # samples
-
-        # or
-
         # Z-score variables to get them into same space
         xx = x.apply(lambda j: (j - j.mean()) / j.std(), axis=0)
         yy = y.apply(lambda j: (j - j.mean()) / j.std(), axis=0)
@@ -2828,36 +2821,31 @@ def create_clinical_epigenomic_space(analysis):
         samples = pd.DataFrame([pd.Series(sample.__dict__) for sample in analysis.samples])
         for i in range(len(xx)):
             axis.scatter(xx.ix[i][0], xx.ix[i][1], s=50, color=sample_colors[i], marker=sample_symbols[i])
-            # axis.annotate(
-            #     "{0} - {1}".format(int(samples.ix[i]['patientID']), int(samples.ix[i]['timepoint'])),
-            #     (xx.ix[i][0], xx.ix[i][1]),
-            #     fontsize=8)  # add text with patient ID and timepoint
-        
+
         # Plot variables (clinical features)
         for i, trait in enumerate(yy.index):
             axis.plot((0, yy.ix[trait][0]), (0, yy.ix[trait][1]), '-o', color=var_colors[i], label=trait)
-        return axis
-        # # add dashed line between patient's timepoints
-        # for patient, indexes in samples.groupby('patientID').groups.items():
-        #     print(list(sorted(pairwise(samples.ix[indexes]["timepoint"]))))
-        #     for t1, t2 in pairwise(samples.ix[indexes]["timepoint"]):
-        #         tt1 = samples[(samples["timepoint"] == sorted([t1, t2])[0]) & (samples["patientID"] == patient)].index
-        #         tt2 = samples[(samples["timepoint"] == sorted([t1, t2])[1]) & (samples["patientID"] == patient)].index
-        #         # axis.plot((xx.ix[t1][0], xx.ix[t2][0]), (xx.ix[t1][1], xx.ix[t2][1]), "--", alpha=0.8, color="black")
-        #         axis.annotate(
-        #             "",  # samples.ix[t1]["patientID"],
-        #             xy=(xx.ix[tt1][0], xx.ix[tt1][1]), xycoords='data',
-        #             xytext=(xx.ix[tt2][0], xx.ix[tt2][1]), textcoords='data',
-        #             arrowprops=dict(arrowstyle="fancy", color="0.5", shrinkB=5, connectionstyle="arc3,rad=0.3",),
-        #         )
-        # axis.legend()
 
-        # if axis is None:
-        #     output_pdf = os.path.join(
-        #         analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.biplot.%s.svg" % "-".join(y.index))
-        #     fig.savefig(output_pdf, bbox_inches='tight')
-        # else:
-        #     return axis
+        # add dashed line between patient's timepoints
+        for patient, indexes in samples.groupby('patientID').groups.items():
+            for t1, t2 in pairwise(sorted(samples.ix[indexes]["timepoint"])):
+                tt1 = samples[(samples["timepoint"] == sorted([t1, t2])[0]) & (samples["patientID"] == patient)].index
+                tt2 = samples[(samples["timepoint"] == sorted([t1, t2])[1]) & (samples["patientID"] == patient)].index
+                if len(tt1) == 1 and len(tt2) == 1:  # this is a problem due to one patient has two timepoints with same number :grrrr:
+                    axis.annotate(
+                        "",  # samples.ix[t1]["patientID"],
+                        xy=(xx.ix[tt1][0].squeeze(), xx.ix[tt1][1].squeeze()), xycoords='data',
+                        xytext=(xx.ix[tt2][0].squeeze(), xx.ix[tt2][1].squeeze()), textcoords='data',
+                        arrowprops=dict(arrowstyle="fancy", color="0.5", shrinkB=5, connectionstyle="arc3,rad=0.3",),
+                    )
+        axis.legend()
+
+        if axis is None:
+            output_pdf = os.path.join(
+                analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.biplot.%s.svg" % "-".join(y.index))
+            fig.savefig(output_pdf, bbox_inches='tight')
+        else:
+            return axis
 
     def survival(kind="survival"):
         # sum several loadings to the various clinical features
@@ -2873,10 +2861,6 @@ def create_clinical_epigenomic_space(analysis):
         s = pd.Series([survival[survival['sample_id'] == s.sampleID]['predicted_%s' % kind].squeeze() for s in analysis.samples])
         weights = s[[type(i) is np.float64 for i in s]].dropna()
 
-        if kind == "hazard":
-            # scale to 0-1
-            weights = weights
-
         # remove points for patients without survival predictions
         xy = obs[[0, 1]].values
         xy = xy[weights.index, :]
@@ -2891,18 +2875,18 @@ def create_clinical_epigenomic_space(analysis):
 
         # Unweighted KDE
         pdf = gaussian_kde(xy)
-        pdf.set_bandwidth(bw_method=pdf.factor / 2.)  # kde bandwidth
+        pdf.set_bandwidth(bw_method=pdf.factor / 3)  # kde bandwidth
         zz = pdf((np.ravel(xx), np.ravel(yy)))
         zz1 = np.reshape(zz, xx.shape)
 
         # weighted KDE
         pdf = gaussian_kde(xy, weights=np.array(weights, np.float))
-        pdf.set_bandwidth(bw_method=pdf.factor / 2.)  # kde bandwidth
+        pdf.set_bandwidth(bw_method=pdf.factor / 3)  # kde bandwidth
         zz2 = pdf((np.ravel(xx), np.ravel(yy)))
         zz2 = np.reshape(zz2, xx.shape)
 
         # PLot
-        fig, axis = plt.subplots(1)
+        fig, axis = plt.subplots(2)
         bounds = [xmin, xmax, ymin, ymax]
 
         # plot unweighted
@@ -2915,7 +2899,7 @@ def create_clinical_epigenomic_space(analysis):
 
         # plot weighted
         # axis[1].scatter(obs[:, 0], obs[:, 1])
-        axis[1] = plot_space(x=pd.DataFrame(x_new), y=variable_loadings, axis=axis[0])  # x_new[weights.index, :]
+        axis[1] = plot_space(x=pd.DataFrame(x_new), y=variable_loadings, axis=axis[1])  # x_new[weights.index, :]
         cax = axis[1].imshow(np.rot90(zz2.T), cmap=plt.cm.Reds, extent=bounds, alpha=0.5)
         axis[1].legend()
         # cbar = fig.colorbar(cax, ticks=[zz2.min(), zz2.max()], orientation='horizontal')
@@ -2974,12 +2958,13 @@ def create_clinical_epigenomic_space(analysis):
     # features[['chrom', 'start', 'end']].drop_duplicates().shape[0]  # unique chromatin features
     fig, axis = plt.subplots(nrows=2, ncols=5, sharex=True, sharey=True, figsize=(60, 20))
     for i in range(1, len(traits) + 1):
+        print(traits[:i])
         # PCA
         # get a matrix of unique features for all samples
         x = features[features['trait'].str.contains("|".join(traits[:i]))].drop_duplicates(['chrom', 'start', 'end'])[[s.name for s in analysis.samples] + ["trait"]]
         # save csvs for pca
         pca = PCA()
-        x_new = pca.fit_transform(x.T.drop("trait"))
+        x_new = pca.fit_transform(x.T.drop("trait").apply(lambda x: (x - x.min()) / (x.max() - x.min()), axis=1))
 
         # Variable space
         # get one vector loading per feature (sum vectors of each chromatin feature)
@@ -3014,7 +2999,6 @@ def create_clinical_epigenomic_space(analysis):
     loadings['trait'] = x['trait']
 
     # plot once more
-
     plot_space(x=pd.DataFrame(x_new), y=loadings.groupby('trait').sum())
 
     # save coordinates on same space
