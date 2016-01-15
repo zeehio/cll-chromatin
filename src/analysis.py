@@ -2845,7 +2845,7 @@ def create_clinical_epigenomic_space(analysis):
 
         if standalone:
             output_pdf = os.path.join(
-                analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.biplot.%s.svg" % "-".join(y.index))
+                analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.biplot.all_clinical_feratures.svg")
             fig.savefig(output_pdf, bbox_inches='tight')
         else:
             return axis
@@ -2891,20 +2891,19 @@ def create_clinical_epigenomic_space(analysis):
         # axis[0].scatter(obs[:, 0], obs[:, 1])
         axis[0] = plot_space(x=chrom_x, y=chrom_y, axis=axis[0])  # chrom_x[weights.index, :]
         cax = axis[0].imshow(np.rot90(zz1.T), cmap=plt.cm.Reds, extent=bounds, alpha=0.5)
-        axis[0].legend()
-        # cbar = fig.colorbar(cax, ticks=[zz1.min(), zz1.max()], orientation='horizontal')
-        # cbar.ax.set_xticklabels(['Low', 'High'])  # horizontal colorbar
 
         # plot weighted
         # axis[1].scatter(obs[:, 0], obs[:, 1])
         axis[1] = plot_space(x=chrom_x, y=chrom_y, axis=axis[1])  # chrom_x[weights.index, :]
         cax = axis[1].imshow(np.rot90(zz2.T), cmap=plt.cm.Reds, extent=bounds, alpha=0.5)
-        axis[1].legend()
-        # cbar = fig.colorbar(cax, ticks=[zz2.min(), zz2.max()], orientation='horizontal')
-        # cbar.ax.set_xticklabels(['Low', 'High'])  # horizontal colorbar
 
+        # graphical stuff
+        axis[0].legend()
+        axis[1].legend()
         axis[0].set_title("unweighted %s" % kind)
         axis[1].set_title("weighted %s" % kind)
+        cbar = fig.colorbar(cax, ticks=[zz2.min(), zz2.max()])
+        cbar.ax.set_xticklabels(['Low', 'High'])  # horizontal colorbar
         output_pdf = os.path.join(
             analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.%s_weight-comparison.svg" % kind)
         fig.savefig(output_pdf, bbox_inches='tight')
@@ -2930,7 +2929,7 @@ def create_clinical_epigenomic_space(analysis):
     features = pd.DataFrame()
     for trait in traits:
         file_name = os.path.join(
-            analysis.prj.dirs.data,
+            "data",
             "trait_specific",
             "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
         try:
@@ -2944,8 +2943,8 @@ def create_clinical_epigenomic_space(analysis):
     features['direction'] = features['change'].apply(lambda x: 1 if x > 0 else -1)
 
     # # Save whole dataframe as csv
-    # features.to_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t", index=False)
-    # features = pd.read_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
+    features.to_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t", index=False)
+    features = pd.read_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
 
     # Plot matrix of overlap between sets
     m = pd.DataFrame()  # build matrix of common features
@@ -3035,6 +3034,68 @@ def create_clinical_epigenomic_space(analysis):
     (obs, var) = pickle.load(open(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.pickle"), "r"))
 
     add_survival(chrom_x=pd.DataFrame(x_new), chrom_y=loadings.drop(["trait", "variable", "direction"], axis=1))
+
+
+def describe_patients_clinically(analysis):
+    """
+    """
+
+    traits = ["IGHV", "CD38", "ZAP70", "primary_CLL", "treated", "chemo_treated", "target_treated"]
+    muts = ['del11', 'tri12']  # abnormalities
+    muts += ['TP53']  # mutations
+    traits += muts
+
+    # Here I am removing traits which had poor classification performance or too few patients associated
+    # because they exist in either only one patient
+
+    # Read trait-specific chromatin regions in one matrix
+    features = pd.read_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
+
+    # add direction of chromatin feature association with clinical feature
+    features['direction'] = features['change'].apply(lambda x: 1 if x > 0 else -1)
+
+    # sum vectors for each clinical variable, dependent on the direction of the features (positive or negatively associated)
+    df = features.groupby(['trait', 'direction'])[[s.name for s in analysis.samples]].aggregate(np.nanmedian)
+
+    # Plot of patient changing across each pos or neg feature
+    # df.groupby(level=0).plot()
+    df2 = pd.melt(df.reset_index(), ['trait', 'direction'], var_name=["sample"])
+    g = sns.FacetGrid(df2, col="trait", hue="sample", margin_titles=True, sharey=False, col_wrap=3, palette="Set2")
+    g.map(plt.plot, "direction", "value")
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.sample_change_in_feature.svg"), bbox_inches='tight')
+    plt.close('all')
+
+    # Plot rank vs value
+    fig, axis = plt.subplots(1)
+    num_colors = len(traits)
+    cm = plt.get_cmap('Paired')
+    axis.set_color_cycle([cm(1. * i / num_colors) for i in range(num_colors)])
+    for trait in traits:
+        a = df.ix[trait].ix[1] / df.ix[trait].ix[-1]
+        axis.plot(range(len(a)), sorted(a, reverse=False), "-o", label=trait)
+    axis.legend()
+    fig.savefig(os.path.join(analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.sample_rank_features.svg"), bbox_inches='tight')
+
+    # same but independently for each variable and with boxplot
+    import matplotlib.gridspec as gridspec
+    gs = gridspec.GridSpec(
+        (len(traits) / 3) * 2, 4,
+        width_ratios=[3, 1, 3, 1],
+        # height_ratios=[4, 4, 4, 4, 4]
+    )
+
+    fig = plt.figure(figsize=(10, 12))
+    for i, trait in enumerate([val for val in traits for _ in (0, 1)]):
+        a = df.ix[trait].ix[1] / df.ix[trait].ix[-1]
+        axis = plt.subplot(gs[i])
+        color = plt.get_cmap('Paired')(i)
+        if i % 2 == 0:
+            axis.plot(range(len(a)), sorted(a, reverse=False), "-o", color=color, label=trait)
+            axis.set_title(trait)
+        if i % 2 == 1:
+            sns.violinplot(a, color=color, orient='v', ax=axis)
+    plt.tight_layout()
+    plt.savefig(os.path.join(analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.sample_rank_dist_features.svg"), bbox_inches='tight')
 
 
 def compare_go_terms(cluster_labels, file_names, plot, p_value=0.05, n_max=35):
@@ -3272,14 +3333,15 @@ def main():
         analysis.coverage_qnorm_annotated = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
 
     # TRAIT-SPECIFIC ANALYSIS
-    trait_analysis(analysis)
+    # trait_analysis(analysis)
     # Clinical epigenomic space
     create_clinical_epigenomic_space(analysis)
     # Characterize patients in space
 
     # Add survival layer
 
-    #
+    # Describe patient across clinical epigenomics axis
+    describe_patients_clinically(analysis)
 
     #
 
