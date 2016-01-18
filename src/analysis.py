@@ -197,7 +197,7 @@ class Analysis(object):
         # Store
         df.to_csv(os.path.join(self.data_dir, "cll_samples.cum_read_count.95CI.csv"), index=False)
 
-    def calculate_peak_support(self):
+    def calculate_peak_support(self, samples):
         samples = [s for s in self.samples if s.technique == "ATAC-seq" and s.cellLine == "CLL"]
         # calculate support (number of samples overlaping each merged peak)
         for i, sample in enumerate(samples):
@@ -322,10 +322,7 @@ class Analysis(object):
         self.chrom_state_annotation_b.to_csv(os.path.join(self.data_dir, "cll_peaks.chromatin_state_background.csv"), index=False)
 
     @pickle_me
-    def measure_coverage(self):
-        # Select ATAC-seq samples
-        samples = [s for s in self.prj.samples if type(s) == ATACseqSample]
-
+    def measure_coverage(self, samples):
         # Count reads with pysam
         # make strings with intervals
         sites_str = [str(i.chrom) + ":" + str(i.start) + "-" + str(i.stop) for i in self.sites]
@@ -1398,7 +1395,7 @@ def annotate_IGHV(samples, clinical):
                 sample.ighv_homology = h.tolist()[0]
                 if clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 1:
                     sample.mutated = True
-                elif clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 2:
+                elif clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 0:
                     sample.mutated = False
                 else:
                     sample.mutated = None
@@ -1422,9 +1419,9 @@ def annotate_CD38(samples, clinical):
                 sample.CD38 = None
             else:
                 sample.CD38_percentage = c.tolist()[0]
-                if clinical.loc[clinical['sample_id'] == _id, 'CD38_positive'].tolist()[0] == 2:
+                if clinical.loc[clinical['sample_id'] == _id, 'CD38_positive'].tolist()[0] == 1:
                     sample.CD38 = True
-                elif clinical.loc[clinical['sample_id'] == _id, 'CD38_positive'].tolist()[0] == 1:
+                elif clinical.loc[clinical['sample_id'] == _id, 'CD38_positive'].tolist()[0] == 0:
                     sample.CD38 = False
                 else:
                     sample.CD38 = None
@@ -1451,9 +1448,9 @@ def annotate_ZAP70(samples, clinical):
                 sample.ZAP70_percentage = z.tolist()[0]
 
                 # ZAP70 expression
-                if clinical.loc[clinical['sample_id'] == _id, 'ZAP70_positive'].tolist()[0] == 2:
+                if clinical.loc[clinical['sample_id'] == _id, 'ZAP70_positive'].tolist()[0] == 1:
                     sample.ZAP70 = True
-                elif clinical.loc[clinical['sample_id'] == _id, 'ZAP70_positive'].tolist()[0] == 1:
+                elif clinical.loc[clinical['sample_id'] == _id, 'ZAP70_positive'].tolist()[0] == 0:
                     sample.ZAP70 = False
                 else:
                     sample.ZAP70 = None
@@ -3219,65 +3216,38 @@ def main():
         description="pipelines. Project management and sample loop."
     )
     parser = add_args(parser)
-
-    # Parse
     args = parser.parse_args()
 
-    # Get path configuration
-    data_dir = os.path.join('.', "data")
-    results_dir = os.path.join('.', "results")
-    plots_dir = os.path.join(results_dir, "plots")
-
-    # Get clinical info
-    clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation.csv"))
-
     # Start project
-    # prj = pickle.load(open("prj.pickle", 'rb'))
     prj = Project("cll-patients")
     prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
 
-    # prj = Project("cll-patients")
-    # prj.addSampleSheet("sequencing_sample_annotation_submission.csv")
-
-    # Annotate with clinical data
-    prj.samples = annotate_samples(prj.samples, clinical)
-
-    # save "digested" clinical sheet to disk
-    if args.generate:
-        fields = [
-            'sampleName', 'diagnosis_disease', 'diagnosis_date', 'collection_date', 'time_since_diagnosis',
-            'diagnosis_collection', "treatment_active", 'previous_treatment_date', 'time_since_treatment',
-            'treatment_type', 'treatment_response', 'relapse']
-        prj.sheet.asDataFrame()[fields].drop_duplicates().to_csv("clinical_annotation_digested.csv", index=False)
-
     # Start analysis object
     # only with ATAC-seq samples that passed QC
-    samples_to_exclude = [
-        'CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19',
-        'CLL_ATAC-seq_5186_1-5-57350_ATAC17-4_hg19',
-        'CLL_ATAC-seq_4784_1-5-52817_ATAC17-6_hg19',
-        'CLL_ATAC-seq_981_1-5-42480_ATAC16-6_hg19',
-        'CLL_ATAC-seq_5277_1-5-57269_ATAC17-8_hg19',
-        'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19',
-        'CLL_ATAC-seq_5147_1-5-48105_ATAC17-2_hg19',
-        'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19']
-    samples = [sample for sample in prj.samples if sample.technique == "ATAC-seq" and sample.cellLine == "CLL" and sample.name not in samples_to_exclude]
+    samples_to_exclude = ['CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19']
+    samples = [sample for sample in prj.samples if sample.cellLine == "CLL" and sample.name not in samples_to_exclude]
 
+    # Get clinical info and annotate samples with it
+    clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation.csv"))
+    prj.samples = annotate_samples(prj.samples, clinical)
+
+    # Start analysis object
     analysis = Analysis(
-        data_dir, plots_dir, samples,
-        pickle_file=os.path.join(data_dir, "analysis.pickle")
+        data_dir=os.path.join(".", "data"),
+        plots_dir=os.path.join(".", "results", "plots"),
+        samples=samples,
+        pickle_file=os.path.join(".", "data", "analysis.pickle")
     )
+    # pair analysis and Project
     analysis.prj = prj
     analysis.clinical = clinical
 
     # GET CONSENSUS PEAK SET, ANNOTATE IT, PLOT FEATURES
-    # GET CHROMATIN OPENNESS MEASUREMENTS
-    # PLOT STUFF
     if args.generate:
         # Get consensus peak set from all samples
         analysis.get_consensus_sites()
         # estimate peak saturation among all samples
-        analysis.estimate_peak_saturation(n=100)
+        analysis.estimate_peak_saturation(n=1000)
         # Calculate peak support
         analysis.calculate_peak_support()
         # Annotate peaks with closest gene
@@ -3286,26 +3256,29 @@ def main():
         analysis.get_peak_genomic_location()
         # Annotate peaks with ChromHMM state from CD19+ cells
         analysis.get_peak_chromatin_state()
+    else:
+        analysis.sites = pybedtools.BedTool(os.path.join(analysis.prj.dirs.data, "cll_peaks.bed"))
+        analysis.peak_count = pickle.load(open(os.path.join(analysis.prj.dirs.data, "cll_peaks.cum_peak_count.pickle"), 'rb'))
+        analysis.support = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.support.csv"))
+        analysis.gene_annotation = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.gene_annotation.csv"))
+        analysis.closest_tss_distances = pickle.load(open(os.path.join(analysis.prj.dirs.data, "cll_peaks.closest_tss_distances.pickle"), 'rb'))
+        analysis.region_annotation = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.region_annotation.csv"))
+        analysis.region_annotation_b = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.region_annotation_background.csv"))
+        analysis.chrom_state_annotation = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.chromatin_state.csv"))
+        analysis.chrom_state_annotation_b = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.chromatin_state_background.csv"))
 
-        # WORK WITH "OPENNESS"
-        # Get coverage values for each peak in each sample
-        analysis.measure_coverage()
+    # Plot general peak set features
+    analysis.plot_peak_characteristics()
+
+    # GET CHROMATIN OPENNESS MEASUREMENTS, PLOT
+    if args.generate:
+        # Get coverage values for each peak in each sample of ATAC-seq and ChIPmentation
+        analysis.measure_coverage(samples=[sample for sample in analysis.samples if sample.cellLine == "CLL"])
         # normalize coverage values
-        analysis.normalize_coverage()
         analysis.normalize_coverage_quantiles()
         # Annotate peaks with closest gene, chromatin state,
         # genomic location, mean and variance measurements across samples
         analysis.annotate()
-
-        # Plots
-        # plot general peak set features
-        analysis.plot_peak_characteristics()
-        # Plot rpkm features across peaks/samples
-        analysis.plot_coverage()
-        analysis.plot_variance()
-        analysis.plot_sample_correlations()
-        # Observe exponential fit to the coeficient of variation
-        analysis.plot_qv2_fit()
 
         # Characterize all CLL regions as a whole
         # region's composition
@@ -3314,32 +3287,21 @@ def main():
         output_dir = os.path.join(analysis.data_dir, "%s_peaks" % "all_regions")
         characterize_regions_function(df=analysis.coverage_qnorm_annotated, output_dir=output_dir, prefix="all_regions")
     else:
-        analysis.sites = pybedtools.BedTool(os.path.join(analysis.prj.dirs.data, "cll_peaks.bed"))
-        analysis.peak_count = pickle.load(open(os.path.join(analysis.prj.dirs.data, "cll_peaks.cum_peak_count.pickle"), 'rb'))
-
-        analysis.support = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.support.csv"))
-
-        analysis.gene_annotation = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.gene_annotation.csv"))
-        analysis.closest_tss_distances = pickle.load(open(os.path.join(analysis.prj.dirs.data, "cll_peaks.closest_tss_distances.pickle"), 'rb'))
-
-        analysis.region_annotation = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.region_annotation.csv"))
-        analysis.region_annotation_b = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.region_annotation_background.csv"))
-
-        analysis.chrom_state_annotation = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.chromatin_state.csv"))
-        analysis.chrom_state_annotation_b = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.chromatin_state_background.csv"))
-
         analysis.coverage = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.raw_coverage.tsv"), sep="\t", index_col=0)
         analysis.coverage_qnorm = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t")
         analysis.coverage_qnorm_annotated = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
+    # Plot rpkm features across peaks/samples
+    analysis.plot_coverage()
+    analysis.plot_variance()
+    analysis.plot_sample_correlations()
+    # Observe exponential fit to the coeficient of variation
+    analysis.plot_qv2_fit()
 
     # TRAIT-SPECIFIC ANALYSIS
-    # trait_analysis(analysis)
-    # Clinical epigenomic space
+    trait_analysis(analysis)
+    # MEDICAL EPIGENOMIC SPACE
+    # build it (biplot) + add survival
     create_clinical_epigenomic_space(analysis)
-    # Characterize patients in space
-
-    # Add survival layer
-
     # Describe patient across clinical epigenomics axis
     describe_patients_clinically(analysis)
 
@@ -3369,6 +3331,14 @@ def main():
     #     ['data/mutation_peaks_cluster1/lola/allEnrichments.txt', 'data/mutation_peaks_cluster2/lola/allEnrichments.txt'],
     #     "results/plots/mutation_regions.lola_enrichment.svg",
     #     p_value=0.05)
+
+    # # save "digested" clinical sheet to disk
+    # if args.generate:
+    #     fields = [
+    #         'sampleName', 'diagnosis_disease', 'diagnosis_date', 'collection_date', 'time_since_diagnosis',
+    #         'diagnosis_collection', "treatment_active", 'previous_treatment_date', 'time_since_treatment',
+    #         'treatment_type', 'treatment_response', 'relapse']
+    #     prj.sheet.asDataFrame()[fields].drop_duplicates().to_csv("clinical_annotation_digested.csv", index=False)
 
 
 if __name__ == '__main__':
