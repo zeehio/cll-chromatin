@@ -1391,17 +1391,22 @@ def annotate_IGHV(samples, clinical):
             if len(h) != 1:
                 sample.ighv_homology = None
                 sample.mutated = None
+                sample.IGHV = None
             else:
                 sample.ighv_homology = h.tolist()[0]
                 if clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 1:
                     sample.mutated = True
+                    sample.IGHV = True
                 elif clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 0:
                     sample.mutated = False
+                    sample.IGHV = False
                 else:
                     sample.mutated = None
+                    sample.IGHV = None
         else:
             sample.ighv_homology = None
             sample.mutated = None
+            sample.IGHV = None
         new_samples.append(sample)
     return new_samples
 
@@ -2436,7 +2441,7 @@ def trait_analysis(analysis):
     classify_samples(analysis, sel_samples, labels, comparison="target_treated", rerun=True)
 
     # Mutations / abnormalities
-    muts = ['del13', 'del11', 'tri12']
+    muts = ['del13', 'del11', 'tri12']  # "drivers"
     muts += ['SF3B1', 'ATM', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
     # see mutations:
     # Counter([x for s in prj.samples if s.cellLine == "CLL" and s.technique == "ATAC-seq" for x in s.mutations])
@@ -2746,6 +2751,86 @@ class gaussian_kde(object):
         self.covariance = self._data_covariance * self.factor ** 2
         self.inv_cov = self._data_inv_cov / self.factor ** 2
         self._norm_factor = np.sqrt(np.linalg.det(2 * np.pi * self.covariance))  # * self.n
+
+
+def generate_signature_matrix(array, n=100):
+    """
+    :param np.array: 2D np.array
+    """
+    def get_score(i, j, p, n):
+        """Get signature score between p% of the values of the two groups."""
+        return ((float(i) * p) + (float(j) * (n - p))) / n
+
+    matrix = np.zeros([array.shape[0], n])
+    for x in range(array.shape[0]):
+        for y in range(0, n):
+            matrix[x, y] = get_score(array[x, 0], array[x, 1], y, n)
+
+    return matrix
+
+
+def best_signature_matrix(array, matrix):
+    """
+    :param np.array: 2D np.array
+    """
+    from scipy.stats import pearsonr
+
+    cors = dict()
+    for i in range(matrix.shape[1]):
+        cors[i] = pearsonr(array, matrix[:, i])
+
+    perc = np.argmax(cors.values()) / float(matrix.shape[1])
+
+    return cors.values().index(max(cors.values()))  # index
+        # (
+        # cors.values().index(max(cors.values())),  # index
+        # max(cors.values())  # highest correlation value
+
+
+def get_signatures(analysis, trait):
+    """
+    """
+    # Read in openness values in regions associated with clinical traits
+    features = pd.read_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
+
+    # Clinical traits
+    traits = ["IGHV", "CD38", "ZAP70", "primary_CLL", "treated", "chemo_treated", "target_treated"]
+    muts = ['del11', 'tri12']  # abnormalities
+    muts += ['TP53']  # mutations
+    traits += muts
+
+    # Position each patient within the trait-specific chromatin signature
+    fig, axis = plt.subplots(nrows=2, ncols=5, sharex=False, sharey=False, figsize=(60, 20))
+    axis = axis.flatten()
+    for i, trait in enumerate(traits):
+        print(trait)
+
+        # Get trait-specific signature
+        # 1. get median accessibility of each group
+        samples = [s for s in analysis.samples if s.cellLine == "CLL" and s.technique == "ATAC-seq"]
+        x = features[features["trait"] == trait].drop_duplicates(['chrom', 'start', 'end'])
+        if trait != "mutations":
+            x1 = x[[s.name for s in samples if getattr(s, trait) is True]].apply(np.median, axis=1)
+            x2 = x[[s.name for s in samples if getattr(s, trait) is False]].apply(np.median, axis=1)
+        else:
+            x1 = x[[s.name for s in samples if trait in s.mutations]].apply(np.median, axis=1)
+            x2 = x[[s.name for s in samples if trait in s.mutations]].apply(np.median, axis=1)
+
+        # 2. get signature matrix
+        sign = generate_signature_matrix(np.vstack([x1, x2]).T, n=100)
+
+        # 3. get position of each patient
+        # x[[s.name for s in samples]].apply(best_signature_matrix, matrix=sign, axis=1)
+        sigs = dict()
+        for name in [s.name for s in samples]:
+            if name in x.columns:
+                sigs[name] = best_signature_matrix(array=x[name], matrix=sign)
+
+        sns.distplot(sigs.values(), bins=100, kde=False, ax=axis[i])
+    # Save fig
+    output_pdf = os.path.join(
+        analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.trait_signatures.svg")
+    fig.savefig(output_pdf, bbox_inches='tight')
 
 
 def create_clinical_epigenomic_space(analysis):
@@ -3220,7 +3305,7 @@ def main():
 
     # Start project
     prj = Project("cll-patients")
-    prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
+    prj.addSampleSheet("metadata/sequencing_sample_annotation.submission.csv")
 
     # Start analysis object
     # only with ATAC-seq samples that passed QC
