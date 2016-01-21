@@ -373,9 +373,7 @@ class Analysis(object):
         self.coverage_qnorm.to_csv(os.path.join(self.data_dir, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t", index=False)
 
     @pickle_me
-    def annotate(self):
-        atacseq_samples = [sample for sample in self.samples if sample.cellLine == "CLL"]
-
+    def annotate(self, samples):
         # add closest gene
         self.coverage_qnorm_annotated = pd.merge(
             self.coverage_qnorm,
@@ -393,9 +391,9 @@ class Analysis(object):
             self.coverage_qnorm_annotated,
             self.support[['chrom', 'start', 'end', 'support']], on=['chrom', 'start', 'end'])
         # calculate mean coverage
-        self.coverage_qnorm_annotated['mean'] = self.coverage_qnorm_annotated[[sample.name for sample in atacseq_samples]].apply(lambda x: np.mean(x), axis=1)
+        self.coverage_qnorm_annotated['mean'] = self.coverage_qnorm_annotated[[sample.name for sample in samples]].apply(lambda x: np.mean(x), axis=1)
         # calculate coverage variance
-        self.coverage_qnorm_annotated['variance'] = self.coverage_qnorm_annotated[[sample.name for sample in atacseq_samples]].apply(lambda x: np.var(x), axis=1)
+        self.coverage_qnorm_annotated['variance'] = self.coverage_qnorm_annotated[[sample.name for sample in samples]].apply(lambda x: np.var(x), axis=1)
         # calculate std deviation (sqrt(variance))
         self.coverage_qnorm_annotated['std_deviation'] = np.sqrt(self.coverage_qnorm_annotated['variance'])
         # calculate dispersion (variance / mean)
@@ -404,7 +402,7 @@ class Analysis(object):
         self.coverage_qnorm_annotated['qv2'] = (self.coverage_qnorm_annotated['std_deviation'] / self.coverage_qnorm_annotated['mean']) ** 2
 
         # calculate "fold-change" (max - min)
-        self.coverage_qnorm_annotated['fold_change'] = self.coverage_qnorm_annotated[[sample.name for sample in atacseq_samples]].apply(lambda x: x.max() - x.min(), axis=1)
+        self.coverage_qnorm_annotated['fold_change'] = self.coverage_qnorm_annotated[[sample.name for sample in samples]].apply(lambda x: x.max() - x.min(), axis=1)
 
         self.coverage_qnorm_annotated.to_csv(os.path.join(self.data_dir, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t", index=False)
 
@@ -446,7 +444,191 @@ class Analysis(object):
             with open("f%i-genes.txt" % i, 'w') as handle:
                 handle.writelines("\n".join(d.tolist()))
 
-    def inspect_variability(self):
+    def gene_oppeness_across_samples(self, samples):
+        """
+        Annotates peaks with closest gene.
+        Needs files downloaded by prepare_external_files.py
+        """
+        from collections import OrderedDict
+        from scipy.stats import ks_2samp
+
+        sns.set(style="whitegrid", palette="pastel", color_codes=True)
+
+        # genes of interest
+        sel_genes = OrderedDict({
+            # main B cell surface markers
+            "CD19": "ENSG00000177455",
+            "CD21": "ENSG00000117322",
+            "CD22": "ENSG00000012124",
+            "FCGR2B": "ENSG00000072694",  # CD32
+
+            # other B cell surface markers
+            "CD20": "ENSG00000156738",
+            "CD24": "ENSG00000272398",
+            "CD38": "ENSG00000004468",
+            "CD72": "ENSG00000137101",
+            "CD74": "ENSG00000019582",  # MHC2
+            "CD79A": "ENSG00000105369",
+            "CD79B": "ENSG00000007312",
+            "CD83": "ENSG00000112149",
+            "CD86": "ENSG00000114013",
+
+            # signal transduction molecules
+            "SYK": "ENSG00000165025",
+            "LYN": "ENSG00000254087",
+            "BTK": "ENSG00000010671",
+            "BLNK": "ENSG00000095585",
+            "BLK": "ENSG00000136573",
+
+            # signaling important for B cells
+            "NOTCH1": "ENSG00000148400",
+            "NFKB1": "ENSG00000109320",
+
+            # downstream of BCR signaling / proliferation
+            "AKT1": "ENSG00000142208",
+            "AIMP2": "ENSG00000106305",  # p38
+            "mTOR": "ENSG00000198793",
+            "ERK1": "ENSG00000102882",
+            "PIK3CA": "ENSG00000121879",
+
+            #
+            "MYC": "ENSG00000136997",
+            "MYCN": "ENSG00000134323",
+
+            # transcriptional regulators
+            "EBF1": "ENSG00000164330",
+            "PAX5": "ENSG00000196092",
+            "POU2AF1": "ENSG00000110777",
+            "SPIB": "ENSG00000269404",
+            "SPI1": "ENSG00000066336",
+            "IRF4": "ENSG00000137265",
+            "IRF8": "ENSG00000140968",
+            "CEBPB": "ENSG00000172216",
+            "BCL6": "ENSG00000113916",
+
+            # others
+            "ZAP70": "ENSG00000115085",
+            "IL2": "ENSG00000109471",
+
+            # CLL mutated genes
+            # notch pathway
+            "FBXW7": "ENSG00000109670",
+            "SPEN": "ENSMUSG00000040761",
+            "CREBBP": "ENSG00000005339",
+            # b cell signaling
+            "TLR2": "ENSG00000137462",
+            "BCOR": "ENSG00000183337",
+            "KLHL6": "ENSG00000172578",
+            "IKZF3": "ENSG00000161405",
+            # dna repair
+            "ATM": "ENSG00000149311",
+            "ATR": "ENSG00000175054",
+            "POT1": "ENSG00000128513",
+            "TP53": "ENSG00000141510",
+            # chromatin
+            "ARID1A": "ENSG00000117713",
+            "SETD1A": "ENSG00000099381",
+            "HIST1H1B": "ENSG00000168298",
+            "ZMYM3": "ENSG00000147130",
+            "SETD2": "ENSG00000181555",
+            "KMT2D": "ENSG00000167548",  # MLL2
+            "CHD2": "ENSG00000173575",
+            "SYNE1": "ENSG00000234577",
+            "ASXL1": "ENSG00000171456",
+            # cell cycle
+            "PTPN11": "ENSG00000179295",
+            "KRAS": "ENSG00000133703",
+            "NRAS": "ENSG00000213281",
+            "BRAF": "ENSG00000157764",
+            "CDKN1B": "ENSG00000111276",
+            "CDKN2A": "ENSG00000147889",
+            "CCND2": "ENSG00000118971",
+            # apoptosis
+            "BAX": "ENSG00000087088",
+            "ANKHD1": "ENSG00000254996 ",
+            # rna metabolism
+            "MGA": "ENSG00000174197",
+            "CNOT3": "ENSG00000088038 ",
+            "MED12": "ENSG00000184634 ",
+            "NXF1": "ENSG00000162231 ",
+            "ZNF292": "ENSG00000188994",
+            "SF3B1": "ENSG00000115524",
+            "DDX3X": "ENSG00000215301",
+            "XPO1": "ENSG00000082898",
+            "TRAF3": "ENSG00000131323",
+            "BIRC3": "ENSG00000023445",
+            "NFKB2": "ENSG00000077150 ",
+            "EGR2": "ENSG00000122877 ",
+            "NFKBIE": "ENSG00000146232",
+            "NKAP": "ENSG00000101882",
+        })
+
+        # get distance to gene and ensembl gene id annotation in whole matrix
+        df = pd.merge(self.coverage_qnorm_annotated, self.gene_annotation, on=['chrom', 'start', 'end', 'gene_name'])
+
+        # GET 1(!) element per gene
+        # get peaks around promoter (+/- 1kb)
+        df2 = df[df['distance'] <= 2500]
+        # promoters
+        promoter_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
+        promoters = df2.ix[promoter_index]
+
+        # get peaks away from promoters (> 1kb)
+        df2 = df[df['distance'] > 2500]
+        # enhancers
+        enhancer_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
+        enhancers = df2.ix[enhancer_index]
+
+        # Figure 2a - variability
+        # 81 genes on top of all genes
+        genes_str = "|".join(sel_genes.values())
+        p_values = promoters[promoters['ensembl_gene_id'].str.contains(genes_str)]['variance']
+        e_values = enhancers[enhancers['ensembl_gene_id'].str.contains(genes_str)]['variance']
+
+        fig, axis = plt.subplots(2, sharex=True, sharey=True)
+        sns.distplot(np.log2(1 + promoters['variance']), ax=axis[0], bins=100)
+        sns.distplot(np.log2(1 + enhancers['variance']), ax=axis[1], bins=100)
+        sns.distplot(np.log2(1 + p_values), ax=axis[0], rug=True, bins=20)
+        sns.distplot(np.log2(1 + e_values), ax=axis[1], rug=True, bins=20)
+        fig.savefig("prom-enh.variance.log2.svg", bbox_inches="tight")
+
+        # test difference in distributions
+        D, p = ks_2samp(promoters['variance'], p_values)
+        D, p = ks_2samp(enhancers['variance'], e_values)
+
+        # Plot distributions of amplitude (fold_change)
+        fig, axis = plt.subplots(1, figsize=(15, 10))
+        sns.distplot(promoters['amplitude'], color="b", ax=axis)
+        sns.distplot(enhancers['amplitude'], color="y", ax=axis)
+        fig.savefig(os.path.join("results", "plots", "all_genes.distplot.svg"), bbox_inches='tight')
+
+        # plot aditional boxplots for selected genes
+        gene_values = promoters[promoters['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in samples]].T
+        gene_values.columns = promoters.ix[gene_values.columns]['gene_name']
+        promoter_data = pd.melt(gene_values, var_name="gene", value_name="openness")
+        promoter_data['region'] = 'promoter'
+
+        gene_values = enhancers[enhancers['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in samples]].T
+        gene_values.columns = enhancers.ix[gene_values.columns]['gene_name']
+        enhancer_data = pd.melt(gene_values, var_name="gene", value_name="openness")
+        enhancer_data['region'] = 'enhancer'
+
+        boxplot_data = pd.concat([promoter_data, enhancer_data])
+
+        fig, axis = plt.subplots(1, figsize=(45, 10))
+        sns.violinplot(data=boxplot_data.sort('openness'), x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
+        fig.savefig(os.path.join("results", "plots", "relevant_genes.full.violinplot.svg"), bbox_inches='tight')
+
+        # sort by predefined order (intensity/functional classes)
+        sorterIndex = dict(zip(sel_genes.keys(), range(len(sel_genes.keys()))))
+        boxplot_data['order'] = boxplot_data['gene'].map(sorterIndex)
+        boxplot_data.sort('order', ascending=False, inplace=True)
+
+        fig, axis = plt.subplots(1, figsize=(45, 10))
+        sns.violinplot(data=boxplot_data, x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
+        fig.savefig(os.path.join("results", "plots", "relevant_genes.full.violinplot.funcorder.svg"), bbox_inches='tight')
+
+    def inspect_variability(self, samples):
         """
         Investigate variability within sample groups.
         """
@@ -468,8 +650,8 @@ class Analysis(object):
         plt.savefig(os.path.join(self.plots_dir, "mean_dispersion.svg"), bbox_inches="tight")
 
         # divide samples per IGHV status
-        ighv_u = [s.name for s in self.samples if not s.mutated]
-        ighv_m = [s.name for s in self.samples if s.mutated]
+        ighv_u = [s.name for s in samples if not s.mutated]
+        ighv_m = [s.name for s in samples if s.mutated]
 
         df_u = self.coverage_qnorm_annotated[ighv_u]
         df_m = self.coverage_qnorm_annotated[ighv_m]
@@ -639,192 +821,6 @@ class Analysis(object):
         for c, genes in out.items():
             with open("data/ighv_mutation_variable_comparison/%sCLL/genes.txt" % c, 'w') as handle:
                 handle.writelines("\n".join(genes.tolist()))
-
-    def gene_oppeness_across_samples(self):
-        """
-        Annotates peaks with closest gene.
-        Needs files downloaded by prepare_external_files.py
-        """
-        from collections import OrderedDict
-        from scipy.stats import ks_2samp
-
-        sns.set(style="whitegrid", palette="pastel", color_codes=True)
-
-        names = [s.name for s in self.samples]
-
-        # genes of interest
-        sel_genes = OrderedDict({
-            # main B cell surface markers
-            "CD19": "ENSG00000177455",
-            "CD21": "ENSG00000117322",
-            "CD22": "ENSG00000012124",
-            "FCGR2B": "ENSG00000072694",  # CD32
-
-            # other B cell surface markers
-            "CD20": "ENSG00000156738",
-            "CD24": "ENSG00000272398",
-            "CD38": "ENSG00000004468",
-            "CD72": "ENSG00000137101",
-            "CD74": "ENSG00000019582",  # MHC2
-            "CD79A": "ENSG00000105369",
-            "CD79B": "ENSG00000007312",
-            "CD83": "ENSG00000112149",
-            "CD86": "ENSG00000114013",
-
-            # signal transduction molecules
-            "SYK": "ENSG00000165025",
-            "LYN": "ENSG00000254087",
-            "BTK": "ENSG00000010671",
-            "BLNK": "ENSG00000095585",
-            "BLK": "ENSG00000136573",
-
-            # signaling important for B cells
-            "NOTCH1": "ENSG00000148400",
-            "NFKB1": "ENSG00000109320",
-
-            # downstream of BCR signaling / proliferation
-            "AKT1": "ENSG00000142208",
-            "AIMP2": "ENSG00000106305",  # p38
-            "mTOR": "ENSG00000198793",
-            "ERK1": "ENSG00000102882",
-            "PIK3CA": "ENSG00000121879",
-
-            #
-            "MYC": "ENSG00000136997",
-            "MYCN": "ENSG00000134323",
-
-            # transcriptional regulators
-            "EBF1": "ENSG00000164330",
-            "PAX5": "ENSG00000196092",
-            "POU2AF1": "ENSG00000110777",
-            "SPIB": "ENSG00000269404",
-            "SPI1": "ENSG00000066336",
-            "IRF4": "ENSG00000137265",
-            "IRF8": "ENSG00000140968",
-            "CEBPB": "ENSG00000172216",
-            "BCL6": "ENSG00000113916",
-
-            # others
-            "ZAP70": "ENSG00000115085",
-            "IL2": "ENSG00000109471",
-
-            # CLL mutated genes
-            # notch pathway
-            "FBXW7": "ENSG00000109670",
-            "SPEN": "ENSMUSG00000040761",
-            "CREBBP": "ENSG00000005339",
-            # b cell signaling
-            "TLR2": "ENSG00000137462",
-            "BCOR": "ENSG00000183337",
-            "KLHL6": "ENSG00000172578",
-            "IKZF3": "ENSG00000161405",
-            # dna repair
-            "ATM": "ENSG00000149311",
-            "ATR": "ENSG00000175054",
-            "POT1": "ENSG00000128513",
-            "TP53": "ENSG00000141510",
-            # chromatin
-            "ARID1A": "ENSG00000117713",
-            "SETD1A": "ENSG00000099381",
-            "HIST1H1B": "ENSG00000168298",
-            "ZMYM3": "ENSG00000147130",
-            "SETD2": "ENSG00000181555",
-            "KMT2D": "ENSG00000167548",  # MLL2
-            "CHD2": "ENSG00000173575",
-            "SYNE1": "ENSG00000234577",
-            "ASXL1": "ENSG00000171456",
-            # cell cycle
-            "PTPN11": "ENSG00000179295",
-            "KRAS": "ENSG00000133703",
-            "NRAS": "ENSG00000213281",
-            "BRAF": "ENSG00000157764",
-            "CDKN1B": "ENSG00000111276",
-            "CDKN2A": "ENSG00000147889",
-            "CCND2": "ENSG00000118971",
-            # apoptosis
-            "BAX": "ENSG00000087088",
-            "ANKHD1": "ENSG00000254996 ",
-            # rna metabolism
-            "MGA": "ENSG00000174197",
-            "CNOT3": "ENSG00000088038 ",
-            "MED12": "ENSG00000184634 ",
-            "NXF1": "ENSG00000162231 ",
-            "ZNF292": "ENSG00000188994",
-            "SF3B1": "ENSG00000115524",
-            "DDX3X": "ENSG00000215301",
-            "XPO1": "ENSG00000082898",
-            "TRAF3": "ENSG00000131323",
-            "BIRC3": "ENSG00000023445",
-            "NFKB2": "ENSG00000077150 ",
-            "EGR2": "ENSG00000122877 ",
-            "NFKBIE": "ENSG00000146232",
-            "NKAP": "ENSG00000101882",
-        })
-
-        # get distance to gene and ensembl gene id annotation in whole matrix
-        df = pd.merge(self.coverage_qnorm_annotated, self.gene_annotation, on=['chrom', 'start', 'end', 'gene_name'])
-
-        # GET 1(!) element per gene
-        # get peaks around promoter (+/- 1kb)
-        df2 = df[df['distance'] <= 2500]
-        # promoters
-        promoter_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
-        promoters = df2.ix[promoter_index]
-
-        # get peaks away from promoters (> 1kb)
-        df2 = df[df['distance'] > 2500]
-        # enhancers
-        enhancer_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
-        enhancers = df2.ix[enhancer_index]
-
-        # Figure 2a - variability
-        # 81 genes on top of all genes
-        genes_str = "|".join(sel_genes.values())
-        p_values = promoters[promoters['ensembl_gene_id'].str.contains(genes_str)]['variance']
-        e_values = enhancers[enhancers['ensembl_gene_id'].str.contains(genes_str)]['variance']
-
-        fig, axis = plt.subplots(2, sharex=True, sharey=True)
-        sns.distplot(np.log2(1 + promoters['variance']), ax=axis[0], bins=100)
-        sns.distplot(np.log2(1 + enhancers['variance']), ax=axis[1], bins=100)
-        sns.distplot(np.log2(1 + p_values), ax=axis[0], rug=True, bins=20)
-        sns.distplot(np.log2(1 + e_values), ax=axis[1], rug=True, bins=20)
-        fig.savefig("prom-enh.variance.log2.svg", bbox_inches="tight")
-
-        # test difference in distributions
-        D, p = ks_2samp(promoters['variance'], p_values)
-        D, p = ks_2samp(enhancers['variance'], e_values)
-
-        # Plot distributions of amplitude (fold_change)
-        fig, axis = plt.subplots(1, figsize=(15, 10))
-        sns.distplot(promoters['amplitude'], color="b", ax=axis)
-        sns.distplot(enhancers['amplitude'], color="y", ax=axis)
-        fig.savefig(os.path.join("results", "plots", "all_genes.distplot.svg"), bbox_inches='tight')
-
-        # plot aditional boxplots for selected genes
-        gene_values = promoters[promoters['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in self.samples]].T
-        gene_values.columns = promoters.ix[gene_values.columns]['gene_name']
-        promoter_data = pd.melt(gene_values, var_name="gene", value_name="openness")
-        promoter_data['region'] = 'promoter'
-
-        gene_values = enhancers[enhancers['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in self.samples]].T
-        gene_values.columns = enhancers.ix[gene_values.columns]['gene_name']
-        enhancer_data = pd.melt(gene_values, var_name="gene", value_name="openness")
-        enhancer_data['region'] = 'enhancer'
-
-        boxplot_data = pd.concat([promoter_data, enhancer_data])
-
-        fig, axis = plt.subplots(1, figsize=(45, 10))
-        sns.violinplot(data=boxplot_data.sort('openness'), x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
-        fig.savefig(os.path.join("results", "plots", "relevant_genes.full.violinplot.svg"), bbox_inches='tight')
-
-        # sort by predefined order (intensity/functional classes)
-        sorterIndex = dict(zip(sel_genes.keys(), range(len(sel_genes.keys()))))
-        boxplot_data['order'] = boxplot_data['gene'].map(sorterIndex)
-        boxplot_data.sort('order', ascending=False, inplace=True)
-
-        fig, axis = plt.subplots(1, figsize=(45, 10))
-        sns.violinplot(data=boxplot_data, x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
-        fig.savefig(os.path.join("results", "plots", "relevant_genes.full.violinplot.funcorder.svg"), bbox_inches='tight')
 
     def correlate_expression(self):
         # get expression
@@ -1509,6 +1505,8 @@ def annotate_disease_treatments(samples, clinical):
             sample.diagnosis_date = string_to_date(sample_c['diagnosis_date'])
             # Get diagnosis disease
             sample.diagnosis_disease = sample_c['diagnosis_disease'] if type(sample_c['diagnosis_disease']) is str else None
+            sample.primary_CLL = True if sample.diagnosis_disease == "CLL" else False  # binary label useful for later
+
             # Get time since diagnosis
             sample.time_since_diagnosis = sample.collection_date - sample.diagnosis_date
 
@@ -1528,16 +1526,20 @@ def annotate_disease_treatments(samples, clinical):
                     # and no treatment end date in between, mark as under treatment
                     if treatment_end_date is pd.NaT:
                         sample.treatment_active = True
+                        sample.treated = True
                     else:
                         # if sample is collected after treatment end, mark as not under treatment
                         if treatment_date < treatment_end_date < sample.collection_date:
                             sample.treatment_active = False
+                            sample.treated = False
                         # if sample is collected before treatment end, mark as under treatment
                         elif treatment_date < sample.collection_date < treatment_end_date:
                             sample.treatment_active = True
+                            sample.treated = True
             # if there were no treatments before collection, consider untreated
             if not hasattr(sample, "treatment_active"):
                 sample.treatment_active = False
+                sample.treated = False
                 # if there were no treatments before collection, and collection was within 30 days of diagnosis, tag as collected at diagnosis
                 if sample.time_since_diagnosis is not pd.NaT:
                     if abs(sample.time_since_diagnosis) < pd.to_timedelta(30, unit="days"):
@@ -1582,7 +1584,7 @@ def annotate_disease_treatments(samples, clinical):
 
         # If any attribute is not set, set to None
         for attr in ['diagnosis_collection', 'diagnosis_date', 'diagnosis_disease', 'time_since_treatment', 'treatment_type',
-                     'treatment_response', "treatment_active", "previous_treatment_date", "previous_response", 'relapse']:
+                     'treatment_response', "treatment_active", "treated", "previous_treatment_date", "previous_response", 'relapse']:
             if not hasattr(sample, attr):
                 setattr(sample, attr, pd.np.nan)
 
@@ -2465,6 +2467,100 @@ def trait_analysis(analysis):
     classify_samples(analysis, sel_samples, labels, comparison="early_diagnosis", rerun=True)
 
 
+def generate_signature_matrix(array, n=101, bounds=(0, 0)):
+    """
+    :param np.array: 2D np.array
+    """
+    def get_score(i, j, p, n):
+        """Get signature score between p% of the values of the two groups."""
+        return ((float(i) * p) + (float(j) * (n - p))) / n
+
+    matrix = np.zeros([array.shape[0], n])
+    for x in range(array.shape[0]):
+        for y, p in enumerate(np.linspace(0 + bounds[0], n + bounds[1], n)):
+            matrix[x, y] = get_score(array[x, 0], array[x, 1], p, n)
+
+    return matrix
+
+
+def best_signature_matrix(array, matrix):
+    """
+    :param np.array: 2D np.array
+    """
+    from scipy.stats import pearsonr
+
+    cors = dict()
+    for i in range(matrix.shape[1]):
+        cors[i] = pearsonr(array, matrix[:, i])
+
+    return cors.values().index(max(cors.values()))  # index
+    # (
+    # cors.values().index(max(cors.values())),  # index
+    # max(cors.values())  # highest correlation value
+
+
+def get_signatures(analysis, trait):
+    """
+    """
+    # Read in openness values in regions associated with clinical traits
+    features = pd.read_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
+
+    # Clinical traits
+    traits = ["IGHV", "CD38", "ZAP70", "primary_CLL", "treated", "chemo_treated", "target_treated"]
+    muts = ['del11', 'tri12']  # abnormalities
+    muts += ['TP53']  # mutations
+    traits += muts
+
+    # Under treament but with different types
+    # Chemotherapy
+    chemo_drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR']
+    target_drugs = ['Alemtuz', 'Ibrutinib']
+    muts = ['del13', 'del11', 'tri12']  # "drivers"
+    muts += ['SF3B1', 'ATM', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
+    for sample in analysis.samples:
+        sample.chemo_treated = True if sample.treatment_active and sample.treatment_type in chemo_drugs else False
+        sample.target_treated = True if sample.treatment_active and sample.treatment_type in target_drugs else False
+        for mut in muts:
+            setattr(sample, mut, True if type(sample.mutations) is list and mut in sample.mutations else False)
+
+    # Position each patient within the trait-specific chromatin signature
+    fig, axis = plt.subplots(nrows=2, ncols=5, sharex=False, sharey=False, figsize=(20, 8))
+    axis = axis.flatten()
+
+    samples = [s for s in analysis.samples if s.cellLine == "CLL" and s.technique == "ATAC-seq"]
+    sigs = pd.DataFrame(index=[s.name for s in samples])
+    for i, trait in enumerate(traits):
+        print(trait)
+
+        # Get trait-specific signature
+        # 1. get median accessibility of each group
+        x = features[features["trait"] == trait].drop_duplicates(['chrom', 'start', 'end'])
+        if trait != "mutations":
+            x1 = x[[s.name for s in samples if getattr(s, trait) is True]].apply(np.median, axis=1)
+            x2 = x[[s.name for s in samples if getattr(s, trait) is False]].apply(np.median, axis=1)
+        else:
+            x1 = x[[s.name for s in samples if trait in s.mutations]].apply(np.median, axis=1)
+            x2 = x[[s.name for s in samples if trait in s.mutations]].apply(np.median, axis=1)
+
+        # 2. get signature matrix
+        sign = generate_signature_matrix(np.vstack([x1, x2]).T, n=101, bounds=(-20, 20))
+
+        # 3. get signature value of each patient
+        # x[[s.name for s in samples]].apply(best_signature_matrix, matrix=sign, axis=1)
+        trait_sigs = list()
+        for name in [s.name for s in samples]:
+            if name in x.columns:  # this is temporary
+                trait_sigs.append(best_signature_matrix(array=x[name], matrix=sign))
+        sigs[trait] = trait_sigs
+
+        # Plot distribution of signature values
+        sns.distplot(sigs.values(), bins=100, kde=False, ax=axis[i])
+    # Save fig
+    output_pdf = os.path.join(
+        analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.trait_signatures.1001.svg")
+    fig.savefig(output_pdf, bbox_inches='tight')
+
+
 class gaussian_kde(object):
     """Representation of a kernel-density estimate using Gaussian kernels.
 
@@ -2751,86 +2847,6 @@ class gaussian_kde(object):
         self.covariance = self._data_covariance * self.factor ** 2
         self.inv_cov = self._data_inv_cov / self.factor ** 2
         self._norm_factor = np.sqrt(np.linalg.det(2 * np.pi * self.covariance))  # * self.n
-
-
-def generate_signature_matrix(array, n=100):
-    """
-    :param np.array: 2D np.array
-    """
-    def get_score(i, j, p, n):
-        """Get signature score between p% of the values of the two groups."""
-        return ((float(i) * p) + (float(j) * (n - p))) / n
-
-    matrix = np.zeros([array.shape[0], n])
-    for x in range(array.shape[0]):
-        for y in range(0, n):
-            matrix[x, y] = get_score(array[x, 0], array[x, 1], y, n)
-
-    return matrix
-
-
-def best_signature_matrix(array, matrix):
-    """
-    :param np.array: 2D np.array
-    """
-    from scipy.stats import pearsonr
-
-    cors = dict()
-    for i in range(matrix.shape[1]):
-        cors[i] = pearsonr(array, matrix[:, i])
-
-    perc = np.argmax(cors.values()) / float(matrix.shape[1])
-
-    return cors.values().index(max(cors.values()))  # index
-        # (
-        # cors.values().index(max(cors.values())),  # index
-        # max(cors.values())  # highest correlation value
-
-
-def get_signatures(analysis, trait):
-    """
-    """
-    # Read in openness values in regions associated with clinical traits
-    features = pd.read_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
-
-    # Clinical traits
-    traits = ["IGHV", "CD38", "ZAP70", "primary_CLL", "treated", "chemo_treated", "target_treated"]
-    muts = ['del11', 'tri12']  # abnormalities
-    muts += ['TP53']  # mutations
-    traits += muts
-
-    # Position each patient within the trait-specific chromatin signature
-    fig, axis = plt.subplots(nrows=2, ncols=5, sharex=False, sharey=False, figsize=(60, 20))
-    axis = axis.flatten()
-    for i, trait in enumerate(traits):
-        print(trait)
-
-        # Get trait-specific signature
-        # 1. get median accessibility of each group
-        samples = [s for s in analysis.samples if s.cellLine == "CLL" and s.technique == "ATAC-seq"]
-        x = features[features["trait"] == trait].drop_duplicates(['chrom', 'start', 'end'])
-        if trait != "mutations":
-            x1 = x[[s.name for s in samples if getattr(s, trait) is True]].apply(np.median, axis=1)
-            x2 = x[[s.name for s in samples if getattr(s, trait) is False]].apply(np.median, axis=1)
-        else:
-            x1 = x[[s.name for s in samples if trait in s.mutations]].apply(np.median, axis=1)
-            x2 = x[[s.name for s in samples if trait in s.mutations]].apply(np.median, axis=1)
-
-        # 2. get signature matrix
-        sign = generate_signature_matrix(np.vstack([x1, x2]).T, n=100)
-
-        # 3. get position of each patient
-        # x[[s.name for s in samples]].apply(best_signature_matrix, matrix=sign, axis=1)
-        sigs = dict()
-        for name in [s.name for s in samples]:
-            if name in x.columns:
-                sigs[name] = best_signature_matrix(array=x[name], matrix=sign)
-
-        sns.distplot(sigs.values(), bins=100, kde=False, ax=axis[i])
-    # Save fig
-    output_pdf = os.path.join(
-        analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.trait_signatures.svg")
-    fig.savefig(output_pdf, bbox_inches='tight')
 
 
 def create_clinical_epigenomic_space(analysis):
@@ -3334,7 +3350,7 @@ def main():
         # estimate peak saturation among all samples
         analysis.estimate_peak_saturation(n=1000)
         # Calculate peak support
-        analysis.calculate_peak_support()
+        analysis.calculate_peak_support(samples=[sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"])
         # Annotate peaks with closest gene
         analysis.get_peak_gene_annotation()
         # Annotate peaks with genomic regions
@@ -3363,7 +3379,7 @@ def main():
         analysis.normalize_coverage_quantiles()
         # Annotate peaks with closest gene, chromatin state,
         # genomic location, mean and variance measurements across samples
-        analysis.annotate()
+        analysis.annotate(samples=[sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"])
 
         # Characterize all CLL regions as a whole
         # region's composition
@@ -3375,6 +3391,7 @@ def main():
         analysis.coverage = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.raw_coverage.tsv"), sep="\t", index_col=0)
         analysis.coverage_qnorm = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t")
         analysis.coverage_qnorm_annotated = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
+
     # Plot rpkm features across peaks/samples
     analysis.plot_coverage()
     analysis.plot_variance()
@@ -3382,7 +3399,15 @@ def main():
     # Observe exponential fit to the coeficient of variation
     analysis.plot_qv2_fit()
 
-    # TRAIT-SPECIFIC ANALYSIS
+    # INTER-PATIENT VARIATION (Figure 2)
+    # cross-cohort variation at gene level
+    analysis.gene_oppeness_across_samples(samples=[sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"])
+    # try seeing what most variable regions are with LOLA (no good results - not included)
+    analysis.variability()
+    # inter-group variation
+    analysis.inspect_variability(samples=[sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"])
+
+    # TRAIT-SPECIFIC ANALYSIS (Figure 3)
     trait_analysis(analysis)
     # MEDICAL EPIGENOMIC SPACE
     # build it (biplot) + add survival
