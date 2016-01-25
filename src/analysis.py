@@ -237,8 +237,8 @@ class Analysis(object):
         ensembl_gtp = pd.read_table(os.path.join(self.data_dir, "ensGtp.txt"), header=None)[[0, 1]]
         ensembl_gtp.columns = ['ensembl_gene_id', 'ensembl_transcript_id']
 
-        gene_annotation = pd.merge(gene_annotation, ensembl_gtn)
-        self.gene_annotation = pd.merge(gene_annotation, ensembl_gtp)
+        gene_annotation = pd.merge(gene_annotation, ensembl_gtn, how="left")
+        self.gene_annotation = pd.merge(gene_annotation, ensembl_gtp, how="left")
 
         # save to disk
         self.gene_annotation.to_csv(os.path.join(self.data_dir, "cll_peaks.gene_annotation.csv"), index=False)
