@@ -12,7 +12,7 @@ import recipy
 from argparse import ArgumentParser
 import os
 import sys
-from pipelines.models import Project, ATACseqSample
+from pipelines.models import Project
 import pybedtools
 import matplotlib
 import matplotlib.pyplot as plt
@@ -77,7 +77,7 @@ class Analysis(object):
     @pickle_me
     def get_consensus_sites(self):
         # GET CONSENSUS SITES ACROSS CLL ATAC-SEQ SAMPLES
-        samples = [sample for sample in self.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"]
+        samples = [sample for sample in self.samples if sample.cell_line == "CLL" and sample.library == "ATAC-seq"]
 
         for i, sample in enumerate(samples):
             print(sample.name)
@@ -112,7 +112,7 @@ class Analysis(object):
         from scipy import stats
 
         # GET CONSENSUS SITES ACROSS CLL ATAC-SEQ SAMPLES
-        samples = [sample for sample in self.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"]
+        samples = [sample for sample in self.samples if sample.cell_line == "CLL" and sample.library == "ATAC-seq"]
 
         peak_count = np.zeros((len(samples), n))
         for i in range(n):
@@ -164,7 +164,7 @@ class Analysis(object):
         from scipy import stats
 
         # GET CONSENSUS SITES ACROSS CLL ATAC-SEQ SAMPLES
-        samples = [sample for sample in self.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"]
+        samples = [sample for sample in self.samples if sample.cell_line == "CLL" and sample.library == "ATAC-seq"]
 
         read_count = np.zeros((len(samples), n))
         for i in range(n):
@@ -198,7 +198,7 @@ class Analysis(object):
         df.to_csv(os.path.join(self.data_dir, "cll_samples.cum_read_count.95CI.csv"), index=False)
 
     def calculate_peak_support(self, samples):
-        samples = [s for s in self.samples if s.technique == "ATAC-seq" and s.cellLine == "CLL"]
+        samples = [s for s in self.samples if s.library == "ATAC-seq" and s.cell_line == "CLL"]
         # calculate support (number of samples overlaping each merged peak)
         for i, sample in enumerate(samples):
             print(sample.name)
@@ -1041,30 +1041,30 @@ class Analysis(object):
     def plot_variance(self):
         sns.jointplot('mean', "dispersion", data=self.coverage_qnorm_annotated, kind="kde")
         plt.savefig(os.path.join(self.plots_dir, "norm_counts_per_sample.dispersion.svg"), bbox_inches="tight")
-        plt.close('all')
+        plt.close("all")
 
         sns.jointplot('mean', "qv2", data=self.coverage_qnorm_annotated)
         plt.savefig(os.path.join(self.plots_dir, "norm_counts_per_sample.qv2_vs_mean.svg"), bbox_inches="tight")
-        plt.close('all')
+        plt.close("all")
 
         sns.jointplot('support', "qv2", data=self.coverage_qnorm_annotated)
         plt.savefig(os.path.join(self.plots_dir, "norm_counts_per_sample.support_vs_qv2.svg"), bbox_inches="tight")
-        plt.close('all')
+        plt.close("all")
 
         # Filter out regions which the maximum across all samples is below a treshold
         filtered = self.coverage_qnorm_annotated[self.coverage_qnorm_annotated[[sample.name for sample in self.samples]].apply(max, axis=1) > 3]
 
         sns.jointplot('mean', "dispersion", data=filtered)
         plt.savefig(os.path.join(self.plots_dir, "norm_counts_per_sample.dispersion.filtered.svg"), bbox_inches="tight")
-        plt.close('all')
+        plt.close("all")
         sns.jointplot('mean', "qv2", data=filtered)
         plt.savefig(os.path.join(self.plots_dir, "norm_counts_per_sample.support_vs_qv2.filtered.svg"), bbox_inches="tight")
 
     def plot_qnorm_comparison(self):
         # Compare raw counts vs qnormalized data
         fig, axis = plt.subplots(2, sharex=True)
-        [sns.distplot(np.log2(1 + self.coverage[[sample.name]]), ax=axis[0], hist=False) for sample in self.samples if sample.cellLine != "PBMC"]
-        [sns.distplot(self.coverage_qnorm[[sample.name]], ax=axis[1], hist=False) for sample in self.samples if sample.cellLine != "PBMC"]
+        [sns.distplot(np.log2(1 + self.coverage[[sample.name]]), ax=axis[0], hist=False) for sample in self.samples if sample.cell_line != "PBMC"]
+        [sns.distplot(self.coverage_qnorm[[sample.name]], ax=axis[1], hist=False) for sample in self.samples if sample.cell_line != "PBMC"]
         axis[0].set_title("Raw counts")
         axis[1].set_title("Quantile normalized counts")
         axis[1].set_xlabel("log2(1 + x)")
@@ -1152,7 +1152,7 @@ class Analysis(object):
             figsize=(20, 16)
         )
         plt.savefig(os.path.join(self.plots_dir, "cll_peaks.correlation_clustering.svg"), bbox_inches="tight")
-        plt.close('all')
+        plt.close("all")
 
 
 def add_args(parser):
@@ -1272,7 +1272,7 @@ def samples_to_color(samples, method="mutation"):
             elif sample.mutated is False:
                 colors.append(sns.color_palette("colorblind")[2])  # vermillion #d55e00
             elif sample.mutated is None:
-                if sample.cellLine == "CLL":
+                if sample.cell_line == "CLL":
                     colors.append('gray')
                 else:
                     colors.append('black')
@@ -1289,7 +1289,7 @@ def samples_to_color(samples, method="mutation"):
             if 86 < sample.ighv_homology < 100:
                 colors.append(m.to_rgba(sample.ighv_homology))
             else:
-                if sample.cellLine == "CLL":
+                if sample.cell_line == "CLL":
                     colors.append('gray')
                 else:
                     colors.append('black')
@@ -1312,7 +1312,7 @@ def samples_to_color(samples, method="mutation"):
             elif sample.patient_gender is "M":
                 colors.append('blue')
             elif sample.patient_gender is None:
-                if sample.cellLine == "CLL":
+                if sample.cell_line == "CLL":
                     colors.append('gray')
                 else:
                     colors.append('black')
@@ -1377,103 +1377,7 @@ def samples_to_symbol(samples, method="unique"):
 #     ]
 
 
-def annotate_IGHV(samples, clinical):
-    new_samples = list()
-
-    for sample in samples:
-        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
-            _id = name_to_sample_id(sample.name)
-            h = clinical.loc[clinical['sample_id'] == _id, 'igvh_homology']
-            if len(h) != 1:
-                sample.ighv_homology = None
-                sample.mutated = None
-                sample.IGHV = None
-            else:
-                sample.ighv_homology = h.tolist()[0]
-                if clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 1:
-                    sample.mutated = True
-                    sample.IGHV = True
-                elif clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 0:
-                    sample.mutated = False
-                    sample.IGHV = False
-                else:
-                    sample.mutated = None
-                    sample.IGHV = None
-        else:
-            sample.ighv_homology = None
-            sample.mutated = None
-            sample.IGHV = None
-        new_samples.append(sample)
-    return new_samples
-
-
-def annotate_CD38(samples, clinical):
-    new_samples = list()
-
-    for sample in samples:
-        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
-            _id = name_to_sample_id(sample.name)
-            c = clinical.loc[clinical['sample_id'] == _id, 'CD38_cells_percentage']
-
-            if len(c) != 1:
-                sample.CD38_percentage = None
-                sample.CD38 = None
-            else:
-                sample.CD38_percentage = c.tolist()[0]
-                if clinical.loc[clinical['sample_id'] == _id, 'CD38_positive'].tolist()[0] == 1:
-                    sample.CD38 = True
-                elif clinical.loc[clinical['sample_id'] == _id, 'CD38_positive'].tolist()[0] == 0:
-                    sample.CD38 = False
-                else:
-                    sample.CD38 = None
-        else:
-            sample.CD38_percentage = None
-            sample.CD38 = None
-        new_samples.append(sample)
-    return new_samples
-
-
-def annotate_ZAP70(samples, clinical):
-    new_samples = list()
-
-    for sample in samples:
-        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
-            _id = name_to_sample_id(sample.name)
-
-            z = clinical.loc[clinical['sample_id'] == _id, 'ZAP70_cells_percentage']
-
-            if len(z) != 1:
-                sample.ZAP70_percentage = None
-                sample.ZAP70 = None
-            else:
-                sample.ZAP70_percentage = z.tolist()[0]
-
-                # ZAP70 expression
-                if clinical.loc[clinical['sample_id'] == _id, 'ZAP70_positive'].tolist()[0] == 1:
-                    sample.ZAP70 = True
-                elif clinical.loc[clinical['sample_id'] == _id, 'ZAP70_positive'].tolist()[0] == 0:
-                    sample.ZAP70 = False
-                else:
-                    sample.ZAP70 = None
-
-            # ZAP70 mono-allelic methylation/expression
-            zm = clinical.loc[clinical['sample_id'] == _id, 'ZAP70_monoallelic_methylation']
-            if len(zm) != 1:
-                sample.ZAP70_monoallelic = False
-            else:
-                if zm.tolist()[0] == "Y":
-                    sample.ZAP70_monoallelic = True
-                else:
-                    sample.ZAP70_monoallelic = False
-        else:
-            sample.ZAP70_percentage = None
-            sample.ZAP70 = None
-            sample.ZAP70_monoallelic = None
-        new_samples.append(sample)
-    return new_samples
-
-
-def annotate_disease_treatments(samples, clinical):
+def annotate_disease_treatments(samples):
     """
     Annotate samples with timepoint, treatment_status, treatment_type
     """
@@ -1490,165 +1394,50 @@ def annotate_disease_treatments(samples, clinical):
     new_samples = list()
 
     for sample in samples:
-        if sample.cellLine == "CLL":
-            # get sample id
-            sample_id = name_to_sample_id(sample.name)
-
-            # get corresponding series from "clinical"
-            sample_c = clinical[clinical['sample_id'] == sample_id].squeeze()
-
-            # Get patient timepoint
-            sample.timepoint = sample_c['timepoint']
+        if sample.cell_line == "CLL":
             # Get sample collection date
-            sample.collection_date = string_to_date(sample_c['sample_collection_date'])
+            sample.collection_date = string_to_date(sample.sample_collection_date)
             # Get diagnosis date
-            sample.diagnosis_date = string_to_date(sample_c['diagnosis_date'])
+            sample.diagnosis_date = string_to_date(sample.diagnosis_date)
             # Get diagnosis disease
-            sample.diagnosis_disease = sample_c['diagnosis_disease'] if type(sample_c['diagnosis_disease']) is str else None
             sample.primary_CLL = True if sample.diagnosis_disease == "CLL" else False  # binary label useful for later
 
             # Get time since diagnosis
             sample.time_since_diagnosis = sample.collection_date - sample.diagnosis_date
 
-            # Get all treatment dates
-            treatment_dates = [string_to_date(date) for date in sample_c[["treatment_%i_date" % (x) for x in range(1, 5)]].squeeze()]
-            # Get treatment end date
-            treatment_end_date = string_to_date(clinical[(clinical['sample_id'] == sample_id)][["treatment_end_date"]])
-            # Check if there are earlier "timepoints"
-            earlier_dates = [treatment_date for treatment_date in treatment_dates if treatment_date < sample.collection_date]
-
-            # Annotate samples with active treatment
-            for treatment_date in treatment_dates:
-                # if one of the treatment dates is earlier
-                if treatment_date < sample.collection_date:
-                    # this sample was not collected at diagnosis time
-                    sample.diagnosis_collection = False
-                    # and no treatment end date in between, mark as under treatment
-                    if treatment_end_date is pd.NaT:
-                        sample.treatment_active = True
-                        sample.treated = True
-                    else:
-                        # if sample is collected after treatment end, mark as not under treatment
-                        if treatment_date < treatment_end_date < sample.collection_date:
-                            sample.treatment_active = False
-                            sample.treated = False
-                        # if sample is collected before treatment end, mark as under treatment
-                        elif treatment_date < sample.collection_date < treatment_end_date:
-                            sample.treatment_active = True
-                            sample.treated = True
-            # if there were no treatments before collection, consider untreated
-            if not hasattr(sample, "treatment_active"):
-                sample.treatment_active = False
-                sample.treated = False
-                # if there were no treatments before collection, and collection was within 30 days of diagnosis, tag as collected at diagnosis
-                if sample.time_since_diagnosis is not pd.NaT:
-                    if abs(sample.time_since_diagnosis) < pd.to_timedelta(30, unit="days"):
-                        sample.diagnosis_collection = True
-            if not hasattr(sample, "diagnosis_collection"):
-                sample.diagnosis_collection = False
-
             # Annotate treatment type, time since treatment
-            if sample.treatment_active:
-                if len(earlier_dates) > 0:
-                    # Find out which earlier "timepoint" is closest and annotate treatment and response
-                    previous_dates = [date for date in clinical[(clinical['sample_id'] == sample_id)][["treatment_%i_date" % (x) for x in range(1, 5)]].squeeze()]
-                    closest_date = previous_dates[np.argmin([abs(date - sample.collection_date) for date in earlier_dates])]
-
-                    # Annotate previous treatment date
-                    sample.previous_treatment_date = string_to_date(closest_date)
-                    # Annotate time since treatment
-                    sample.time_since_treatment = sample.collection_date - string_to_date(closest_date)
-
-                    # Get closest clinical "timepoint", annotate response
-                    closest_timepoint = [tp for tp in range(1, 5) if closest_date == sample_c["treatment_%i_date" % tp]][0]
-
-                    sample.treatment_type = sample_c['treatment_%i_regimen' % closest_timepoint]
-                    sample.treatment_response = sample_c['treatment_%i_response' % closest_timepoint]
-
-            # Annotate relapses
-            # are there previous timepoints with good response?
-            # Get previous clinical "timepoints", annotate response
-            if len(earlier_dates) > 0:
-                closest_timepoint = [tp for tp in range(1, 5) if closest_date == sample_c["treatment_%i_date" % tp]][0]
-
-                # Annotate with previous known response
-                sample.previous_response = sample_c['treatment_%i_response' % closest_timepoint]
-
-                # if prior had bad response, mark current as relapse
-                if sample_c['treatment_%i_response' % closest_timepoint] in ["CR", "GR"]:
-                    sample.relapse = True
-                else:
-                    sample.relapse = False
-            else:
-                sample.relapse = False
-
-        # If any attribute is not set, set to None
-        for attr in ['diagnosis_collection', 'diagnosis_date', 'diagnosis_disease', 'time_since_treatment', 'treatment_type',
-                     'treatment_response', "treatment_active", "treated", "previous_treatment_date", "previous_response", 'relapse']:
-            if not hasattr(sample, attr):
-                setattr(sample, attr, pd.np.nan)
+            if sample.under_treatment:
+                sample.time_since_treatment = sample.collection_date - string_to_date(sample.treatment_date)
 
         # Append sample
         new_samples.append(sample)
     return new_samples
 
 
-def annotate_mutations(samples, clinical):
+def annotate_samples(samples):
     new_samples = list()
-
-    clinical2 = clinical.replace(to_replace=["q", "loss", "\?"], value=[""] * 3, regex=True)
-
     for sample in samples:
-        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
-            _id = name_to_sample_id(sample.name)
-            if clinical2.loc[clinical2['sample_id'] == _id, 'mutations'].empty:
-                sample.mutations = []
-            else:
-                m = clinical2[clinical2['sample_id'] == _id]['mutations']
-                if len(m) == 1:
-                    if type(m.tolist()[0]) is str:
-                        sample.mutations = m.tolist()[0].split(",")
-                    else:
-                        sample.mutations = None
-                else:
-                    sample.mutations = None
-        else:
-            sample.mutations = None
+        # If any attribute is not set, set to NaN
+        attrs = [
+            "sample_name", "cell_line", "number_cells", "library", "ip", "patient_id", "sample_id", "condition",
+            "experiment_name", "technical_replicate", "organism", "flowcell", "lane", "BSF_name", "clinical_centre", "sample_type",
+            "cell_type", "sample_origin", "original_patient_id", "timepoint", "timepoint_name", "patient_gender", "patient_birth_date",
+            "patient_death_date", "patient_last_checkup_date", "diagnosis_date", "diagnosis_disease", "hospital", "diagnosis_change_date",
+            "diagnosis_stage_rai", "diagnosis_stage_binet", "under_treatment", "treatment_date", "treatment_regimen", "treatment_response",
+            "treatment_end_date", "relapse", "treatment_1_date", "treatment_1_regimen", "treatment_1_duration", "treatment_1_response",
+            "treatment_2_date", "treatment_2_regimen", "treatment_2_duration", "treatment_2_response", "treatment_3_date", "treatment_3_regimen",
+            "treatment_3_duration", "treatment_3_response", "treatment_4_date", "treatment_4_regimen", "treatment_4_response", "treatment_end_date.1",
+            "igvh_gene", "igvh_homology", "igvh_mutation_status", "CD38_cells_percentage", "CD38_positive", "CD38_measurement_date", "CD38_changed",
+            "ZAP70_cells_percentage", "ZAP70_positive", "ZAP70_monoallelic_methylation", "sample_collection_date", "storage_condition", "lymp_count",
+            "mutations", "sample_shippment_batch", "sample_cell_number", "sample_experiment_name", "sample_processing_date", "sample_viability"
+            "diagnosis_collection", "diagnosis_date", "diagnosis_disease", "time_since_treatment", "treatment_type",
+            "treatment_response", "treatment_active", "treated", "previous_treatment_date", "previous_response", "relapse"]
+        for attr in attrs:
+            if not hasattr(sample, attr):
+                setattr(sample, attr, pd.np.nan)
         new_samples.append(sample)
-    return new_samples
 
-
-def annotate_gender(samples, clinical):
-    new_samples = list()
-
-    for sample in samples:
-        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
-            _id = name_to_sample_id(sample.name)
-            g = clinical.loc[clinical['sample_id'] == _id, 'patient_gender']
-
-            if len(g) != 1:
-                sample.patient_gender = None
-            else:
-                if g.tolist()[0] == "F":
-                    sample.patient_gender = "F"
-                elif clinical.loc[clinical['sample_id'] == _id, 'patient_gender'].tolist()[0] == "M":
-                    sample.patient_gender = "M"
-                else:
-                    sample.patient_gender = None
-        else:
-            sample.patient_gender = None
-        new_samples.append(sample)
-    return new_samples
-
-
-def annotate_samples(samples, clinical):
-    samples = annotate_IGHV(samples, clinical)
-    samples = annotate_CD38(samples, clinical)
-    samples = annotate_ZAP70(samples, clinical)
-    samples = annotate_disease_treatments(samples, clinical)
-    samples = annotate_gender(samples, clinical)
-    samples = annotate_mutations(samples, clinical)
-    return samples
+    return annotate_disease_treatments(new_samples)
 
 
 def state_enrichment_overlap(n=100):
@@ -2052,14 +1841,14 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
     print(Counter(labels))
 
     dataframe_file = os.path.join(
-        analysis.prj.dirs.data,
+        analysis.prj.paths.results_subdir,
         "trait_specific",
         "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % comparison)
     if os.path.exists(dataframe_file) and not rerun:  # Load up
         dataframe = pd.read_csv(dataframe_file, sep="\t")
     else:  # Run analysis
         # Get all CLL ATAC-seq samples for validation
-        all_samples = [s for s in analysis.samples if s.cellLine == "CLL" and s.technique == "ATAC-seq"]
+        all_samples = [s for s in analysis.samples if s.cell_line == "CLL" and s.library == "ATAC-seq"]
 
         # Get colors depending on this feature label (comparison) (True == green; False == redish)
         palette = sns.color_palette("colorblind")
@@ -2161,7 +1950,7 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
         fig.savefig(os.path.join(
             analysis.prj.dirs.plots,
             "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.mean_importance.svg" % comparison), bbox_inches="tight")
-        plt.close('all')
+        plt.close("all")
 
         # get important features
         # n = 500; x = matrix.loc[np.argsort(mean_importance)[-n:], :] # get n top features
@@ -2178,7 +1967,7 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
         plt.savefig(os.path.join(
             analysis.prj.dirs.plots,
             "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.svg" % comparison), bbox_inches="tight")
-        plt.close('all')
+        plt.close("all")
 
         # SEE ALL SAMPLES
         # Display most informative features for ALL samples:
@@ -2187,7 +1976,7 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
         x = matrix.loc[[i for i, j in enumerate(mean_importance > 1e-4) if j == True], :]  # get features on the tail of the importance distribution
 
         # get colors for each cluster
-        group_number = 4 if comparison == 'IGHV' else 2  # 4 IGHV groups, everything else 2
+        group_number = 4 if comparison == "IGHV" else 2  # 4 IGHV groups, everything else 2
         # cluster all samples first
         samples_cluster = sns.clustermap(x.corr())
         # get cluster labels for samples
@@ -2205,7 +1994,7 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
         plt.savefig(os.path.join(
             analysis.prj.dirs.plots,
             "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_correlation.svg" % comparison), bbox_inches="tight")
-        plt.close('all')
+        plt.close("all")
 
         # pca on these regions
         pca_r(x, colors, os.path.join(
@@ -2221,9 +2010,9 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
         # characterize_regions_function(df=analysis.coverage_qnorm_annotated.loc[x.index, :], output_dir=output_dir, prefix=comparison)
 
         # Split in major groups
-        if comparison == 'gender':
+        if comparison == "gender":
             gr = 2
-        elif comparison == 'IGHV':
+        elif comparison == "IGHV":
             gr = 4
         else:
             gr = 5
@@ -2243,30 +2032,30 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
         plt.savefig(os.path.join(
             analysis.prj.dirs.plots,
             "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sites_labels.svg" % comparison), bbox_inches="tight")
-        plt.close('all')
+        plt.close("all")
 
         # Export info
         dataframe = analysis.coverage_qnorm_annotated.loc[x.index, :]
         # add difference of standardized openness between positive and negative groups used in classification
         df2 = dataframe[[s.name for s in sel_samples]].apply(lambda j: (j - j.min()) / (j.max() - j.min()), axis=0)
-        dataframe['change'] = df2.icol([i for i, l in enumerate(labels) if l == 1]).mean(axis=1) - df2.icol([i for i, l in enumerate(labels) if l == 0]).mean(axis=1)
+        dataframe["change"] = df2.icol([i for i, l in enumerate(labels) if l == 1]).mean(axis=1) - df2.icol([i for i, l in enumerate(labels) if l == 0]).mean(axis=1)
         # add feature importance
-        dataframe['importance'] = mean_importance[x.index]
+        dataframe["importance"] = mean_importance[x.index]
         # get cluster labels for sites
-        dataframe['cluster'] = clusters
+        dataframe["cluster"] = clusters
         # Save whole dataframe as csv
         dataframe_file = os.path.join(
-            analysis.prj.dirs.data,
+            analysis.prj.paths.results_subdir,
             "trait_specific",
             "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % comparison)
         dataframe.to_csv(dataframe_file, sep="\t", index=False)
 
         # Save as bed
         bed_file = os.path.join(
-            analysis.prj.dirs.data,
+            analysis.prj.paths.results_subdir,
             "trait_specific",
             "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % comparison)
-        dataframe[['chrom', 'start', 'end']].to_csv(bed_file, sep="\t", header=False, index=False)
+        dataframe[["chrom", "start", "end"]].to_csv(bed_file, sep="\t", header=False, index=False)
 
     # # Region characterization
     # # plot chromosome distribution of regions
@@ -2353,13 +2142,13 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
     # plt.savefig(os.path.join(
     #     analysis.prj.dirs.plots,
     #     "trait_specific", "%s_regions.motif_enrichment.svg" % comparison), bbox_inches="tight")
-    # plt.close('all')
+    # plt.close("all")
 
     # sns.clustermap(df3[(df3.icol(0) > 30) & (df3.icol(1) > 30)], cmap=plt.cm.YlGn)
     # plt.savefig(os.path.join(
     #     analysis.prj.dirs.plots,
     #     "trait_specific", "%s_regions.motif_enrichment.highest.svg" % comparison), bbox_inches="tight")
-    # plt.close('all')
+    # plt.close("all")
 
     # # save data
     # df3.to_csv(os.path.join(
@@ -2389,82 +2178,94 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
     # plt.savefig(os.path.join(
     #     analysis.prj.dirs.plots,
     #     "trait_specific", "%s_regions.motif_enrichment.difference.svg" % comparison), bbox_inches="tight")
-    # plt.close('all')
+    # plt.close("all")
 
 
-def trait_analysis(analysis):
+def trait_analysis(analysis, samples):
     # Gender
-    sel_samples = [s for s in analysis.samples if type(s.patient_gender) is str]
+    sel_samples = [s for s in samples if s.patient_gender is not pd.np.nan]
     labels = np.array([1 if s.patient_gender == "M" else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="gender", rerun=True)
 
     # IGHV mutation status
-    sel_samples = [s for s in analysis.samples if type(s.mutated) is bool]
-    labels = np.array([1 if s.mutated else 0 for s in sel_samples])
+    sel_samples = [s for s in samples if s.igvh_mutation_status is not pd.np.nan]
+    labels = np.array([1 if s.igvh_mutation_status else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="IGHV", rerun=True)
 
     # CD38 expression
-    sel_samples = [s for s in analysis.samples if type(s.CD38) is bool]
-    labels = np.array([1 if s.CD38 else 0 for s in sel_samples])
+    sel_samples = [s for s in samples if s.CD38_positive is not pd.np.nan]
+    labels = np.array([1 if s.CD38_positive else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="CD38", rerun=True)
 
     # ZAP70 expression
-    sel_samples = [s for s in analysis.samples if type(s.ZAP70) is bool]
-    labels = np.array([1 if s.ZAP70 else 0 for s in sel_samples])
+    sel_samples = [s for s in samples if s.ZAP70_positive is not pd.np.nan]
+    labels = np.array([1 if s.ZAP70_positive else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="ZAP70", rerun=True)
 
     # ZAP70 mono-allelic expression
-    sel_samples = [s for s in analysis.samples if type(s.ZAP70_monoallelic) == bool]
-    labels = np.array([1 if s.ZAP70_monoallelic else 0 for s in sel_samples])
+    sel_samples = [s for s in samples if s.ZAP70_monoallelic_methylation is not pd.np.nan]
+    labels = np.array([1 if s.ZAP70_monoallelic_methylation else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="ZAP70_monoallelic", rerun=True)
 
     # Disease at Diagnosis - comparison in untreated samples
     # Primary vs Secondary CLL (progressed from MBL and SLL)
-    sel_samples = [s for s in analysis.samples if type(s.diagnosis_disease) is str]
+    # Positive class are samples diagnosed with CLL in the earliest timepoint not under treatment
+    # Negative class are samples diagnosed with other (MBL or SLL)
+    sel_samples = [s for s in samples if s.diagnosis_disease is not pd.np.nan and not s.under_treatment and s.timepoint == 1]
     labels = np.array([1 if s.diagnosis_disease == "CLL" else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="primary_CLL", rerun=True)
 
-    # Treatment types
+    # Treatments:
     # Under treatment
-    sel_samples = [s for s in analysis.samples if type(s.treatment_active) is bool]
-    labels = np.array([1 if s.treatment_active else 0 for s in sel_samples])
+    sel_samples = [s for s in samples if s.under_treatment is not pd.np.nan]
+    labels = np.array([1 if s.under_treatment else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="treated", rerun=True)
 
     # Under treament but with different types
     # Chemotherapy
-    chemo_drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR']
-    sel_samples = [s for s in analysis.samples if s.treatment_active]
-    labels = np.array([1 if s.treatment_type in chemo_drugs else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="chemo_treated", rerun=True)
-    # B cell antibodies
-    target_drugs = ['Alemtuz', 'Ibrutinib']
-    sel_samples = [s for s in analysis.samples if s.treatment_active]
-    labels = np.array([1 if s.treatment_type in target_drugs else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="target_treated", rerun=True)
+    # chemo_drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR']
+    # sel_samples = [s for s in samples if s.under_treatment]
+    # labels = np.array([1 if s.treatment_type in chemo_drugs else 0 for s in sel_samples])
+    # classify_samples(analysis, sel_samples, labels, comparison="chemo_treated", rerun=True)
+
+    # # B cell antibodies
+    # target_drugs = ['Alemtuz', 'Ibrutinib']
+    # sel_samples = [s for s in samples if s.under_treatment]
+    # labels = np.array([1 if s.treatment_type in target_drugs else 0 for s in sel_samples])
+    # classify_samples(analysis, sel_samples, labels, comparison="target_treated", rerun=True)
+
+    # Ibrutinib (particular for AKH cohort)
+    # Samples from AKH
+    # Positive label: after ibrubinib treatment
+    # Negative label: before ibrubinib treatment
+    sel_samples = [s for s in samples if s.hospital == "AKH"]
+    labels = np.array([1 if s.under_treatment else 0 for s in sel_samples])
+    classify_samples(analysis, sel_samples, labels, comparison="ibrutinib", rerun=True)
 
     # Mutations / abnormalities
-    muts = ['del13', 'del11', 'tri12']  # "drivers"
+    # positive against all
+    muts = ['del13', 'del11', 'tri12', "del17p"]  # "drivers"
     muts += ['SF3B1', 'ATM', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
     # see mutations:
-    # Counter([x for s in prj.samples if s.cellLine == "CLL" and s.technique == "ATAC-seq" for x in s.mutations])
+    # Counter([x for s in prj.samples if s.cell_line == "CLL" and s.library == "ATAC-seq" for x in s.mutations])
     for mut in muts:
         # later add as well:
         # IGHVun +/- del; IGHVmut +/- del
-        sel_samples = [s for s in analysis.samples if type(s.mutations) is list]
+        sel_samples = [s for s in samples if s.mutations is not pd.np.nan]
         labels = np.array([1 if mut in s.mutations else 0 for s in sel_samples])
         classify_samples(analysis, sel_samples, labels, comparison=mut, rerun=True)
 
     # Relapse
     # "relapse", ("True", "False", rerun=True), # relapse or before relapse
-    sel_samples = [s for s in analysis.samples if type(s.relapse) is bool]
+    sel_samples = [s for s in samples if s.relapse in [1, 0]]
     labels = np.array([1 if s.relapse else 0 for s in sel_samples])
     classify_samples(analysis, sel_samples, labels, comparison="relapse", rerun=True)
 
-    # Early vs Late
-    # "progression", ("True", "False", rerun=True), # early vs late timepoint
-    sel_samples = [s for s in analysis.samples if type(s.diagnosis_collection) is bool]
-    labels = np.array([1 if s.diagnosis_collection else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="early_diagnosis", rerun=True)
+    # # Early vs Late
+    # # "progression", ("True", "False", rerun=True), # early vs late timepoint
+    # sel_samples = [s for s in samples if type(s.diagnosis_collection) is bool]
+    # labels = np.array([1 if s.diagnosis_collection else 0 for s in sel_samples])
+    # classify_samples(analysis, sel_samples, labels, comparison="early_diagnosis", rerun=True)
 
 
 def generate_signature_matrix(array, n=101, bounds=(0, 0)):
@@ -2499,11 +2300,11 @@ def best_signature_matrix(array, matrix):
     # max(cors.values())  # highest correlation value
 
 
-def get_signatures(analysis, trait):
+def get_signatures(analysis):
     """
     """
     # Read in openness values in regions associated with clinical traits
-    features = pd.read_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
+    features = pd.read_csv(os.path.join(analysis.prj.paths.results_subdir, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
 
     # Clinical traits
     traits = ["IGHV", "CD38", "ZAP70", "primary_CLL", "treated", "chemo_treated", "target_treated"]
@@ -2527,7 +2328,7 @@ def get_signatures(analysis, trait):
     fig, axis = plt.subplots(nrows=2, ncols=5, sharex=False, sharey=False, figsize=(20, 8))
     axis = axis.flatten()
 
-    samples = [s for s in analysis.samples if s.cellLine == "CLL" and s.technique == "ATAC-seq"]
+    samples = [s for s in analysis.samples if s.cell_line == "CLL" and s.library == "ATAC-seq"]
     sigs = pd.DataFrame(index=[s.name for s in samples])
     for i, trait in enumerate(traits):
         print(trait)
@@ -3041,8 +2842,8 @@ def create_clinical_epigenomic_space(analysis):
     features['direction'] = features['change'].apply(lambda x: 1 if x > 0 else -1)
 
     # # Save whole dataframe as csv
-    features.to_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t", index=False)
-    features = pd.read_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
+    features.to_csv(os.path.join(analysis.prj.paths.results_subdir, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t", index=False)
+    features = pd.read_csv(os.path.join(analysis.prj.paths.results_subdir, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
 
     # Plot matrix of overlap between sets
     m = pd.DataFrame()  # build matrix of common features
@@ -3056,7 +2857,7 @@ def create_clinical_epigenomic_space(analysis):
     output_pdf = os.path.join(
         analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.common_trait_regions.svg")
     plt.savefig(output_pdf, bbox_inches='tight')
-    plt.close('all')
+    plt.close("all")
 
     # See how much the regions are positively or negatively correlated with the feature
     g = sns.FacetGrid(features, col="trait", col_wrap=4)
@@ -3064,7 +2865,7 @@ def create_clinical_epigenomic_space(analysis):
     output_pdf = os.path.join(
         analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.trait-region_association.svg")
     plt.savefig(output_pdf, bbox_inches='tight')
-    plt.close('all')
+    plt.close("all")
 
     # # see fraction of features from total which are explained with clinical associations
     # features.shape[0]
@@ -3128,8 +2929,8 @@ def create_clinical_epigenomic_space(analysis):
     obs = pd.DataFrame(x_new).apply(lambda j: (j - j.mean()) / j.std(), axis=0)
     var = loadings.drop(["trait", "variable", "direction"], axis=1).apply(lambda j: (j - j.mean()) / j.std(), axis=0)
     # pickle that
-    pickle.dump((obs, var), open(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.pickle"), "w"))
-    (obs, var) = pickle.load(open(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.pickle"), "r"))
+    pickle.dump((obs, var), open(os.path.join(analysis.prj.paths.results_subdir, "trait_specific", "cll_peaks.medical_epigenomics_space.pickle"), "w"))
+    (obs, var) = pickle.load(open(os.path.join(analysis.prj.paths.results_subdir, "trait_specific", "cll_peaks.medical_epigenomics_space.pickle"), "r"))
 
     add_survival(chrom_x=pd.DataFrame(x_new), chrom_y=loadings.drop(["trait", "variable", "direction"], axis=1))
 
@@ -3147,7 +2948,7 @@ def describe_patients_clinically(analysis):
     # because they exist in either only one patient
 
     # Read trait-specific chromatin regions in one matrix
-    features = pd.read_csv(os.path.join(analysis.prj.dirs.data, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
+    features = pd.read_csv(os.path.join(analysis.prj.paths.results_subdir, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
 
     # add direction of chromatin feature association with clinical feature
     features['direction'] = features['change'].apply(lambda x: 1 if x > 0 else -1)
@@ -3161,7 +2962,7 @@ def describe_patients_clinically(analysis):
     g = sns.FacetGrid(df2, col="trait", hue="sample", margin_titles=True, sharey=False, col_wrap=3, palette="Set2")
     g.map(plt.plot, "direction", "value")
     plt.savefig(os.path.join(analysis.prj.dirs.plots, "trait_specific", "cll_peaks.medical_epigenomics_space.sample_change_in_feature.svg"), bbox_inches='tight')
-    plt.close('all')
+    plt.close("all")
 
     # Plot rank vs value
     fig, axis = plt.subplots(1)
@@ -3320,17 +3121,16 @@ def main():
     args = parser.parse_args()
 
     # Start project
-    prj = Project("cll-patients")
-    prj.addSampleSheet("metadata/sequencing_sample_annotation.submission.csv")
+    prj = Project("metadata/project_config.yaml")
+    prj.add_sample_sheet()
+
+    # annotated samples with a few more things:
+    prj.samples = annotate_samples(prj.samples)
 
     # Start analysis object
     # only with ATAC-seq samples that passed QC
     samples_to_exclude = ['CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19']
-    samples = [sample for sample in prj.samples if sample.cellLine == "CLL" and sample.name not in samples_to_exclude]
-
-    # Get clinical info and annotate samples with it
-    clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation.csv"))
-    prj.samples = annotate_samples(prj.samples, clinical)
+    samples = [sample for sample in prj.samples if sample.cell_line == "CLL" and sample.name not in samples_to_exclude]
 
     # Start analysis object
     analysis = Analysis(
@@ -3341,7 +3141,6 @@ def main():
     )
     # pair analysis and Project
     analysis.prj = prj
-    analysis.clinical = clinical
 
     # GET CONSENSUS PEAK SET, ANNOTATE IT, PLOT FEATURES
     if args.generate:
@@ -3350,7 +3149,7 @@ def main():
         # estimate peak saturation among all samples
         analysis.estimate_peak_saturation(n=1000)
         # Calculate peak support
-        analysis.calculate_peak_support(samples=[sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"])
+        analysis.calculate_peak_support(samples=[sample for sample in analysis.samples if sample.cell_line == "CLL" and sample.library == "ATAC-seq"])
         # Annotate peaks with closest gene
         analysis.get_peak_gene_annotation()
         # Annotate peaks with genomic regions
@@ -3358,15 +3157,15 @@ def main():
         # Annotate peaks with ChromHMM state from CD19+ cells
         analysis.get_peak_chromatin_state()
     else:
-        analysis.sites = pybedtools.BedTool(os.path.join(analysis.prj.dirs.data, "cll_peaks.bed"))
-        analysis.peak_count = pickle.load(open(os.path.join(analysis.prj.dirs.data, "cll_peaks.cum_peak_count.pickle"), 'rb'))
-        analysis.support = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.support.csv"))
-        analysis.gene_annotation = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.gene_annotation.csv"))
-        analysis.closest_tss_distances = pickle.load(open(os.path.join(analysis.prj.dirs.data, "cll_peaks.closest_tss_distances.pickle"), 'rb'))
-        analysis.region_annotation = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.region_annotation.csv"))
-        analysis.region_annotation_b = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.region_annotation_background.csv"))
-        analysis.chrom_state_annotation = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.chromatin_state.csv"))
-        analysis.chrom_state_annotation_b = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.chromatin_state_background.csv"))
+        analysis.sites = pybedtools.BedTool(os.path.join(analysis.prj.paths.results_subdir, "cll_peaks.bed"))
+        analysis.peak_count = pickle.load(open(os.path.join(analysis.prj.paths.results_subdir, "cll_peaks.cum_peak_count.pickle"), 'rb'))
+        analysis.support = pd.read_csv(os.path.join(analysis.prj.paths.results_subdir, "cll_peaks.support.csv"))
+        analysis.gene_annotation = pd.read_csv(os.path.join(analysis.prj.paths.results_subdir, "cll_peaks.gene_annotation.csv"))
+        analysis.closest_tss_distances = pickle.load(open(os.path.join(analysis.prj.paths.results_subdir, "cll_peaks.closest_tss_distances.pickle"), 'rb'))
+        analysis.region_annotation = pd.read_csv(os.path.join(analysis.prj.paths.results_subdir, "cll_peaks.region_annotation.csv"))
+        analysis.region_annotation_b = pd.read_csv(os.path.join(analysis.prj.paths.results_subdir, "cll_peaks.region_annotation_background.csv"))
+        analysis.chrom_state_annotation = pd.read_csv(os.path.join(analysis.prj.paths.results_subdir, "cll_peaks.chromatin_state.csv"))
+        analysis.chrom_state_annotation_b = pd.read_csv(os.path.join(analysis.prj.paths.results_subdir, "cll_peaks.chromatin_state_background.csv"))
 
     # Plot general peak set features
     analysis.plot_peak_characteristics()
@@ -3374,23 +3173,23 @@ def main():
     # GET CHROMATIN OPENNESS MEASUREMENTS, PLOT
     if args.generate:
         # Get coverage values for each peak in each sample of ATAC-seq and ChIPmentation
-        analysis.measure_coverage(samples=[sample for sample in analysis.samples if sample.cellLine == "CLL"])
+        analysis.measure_coverage([sample for sample in analysis.samples if sample.cell_line == "CLL"])
         # normalize coverage values
         analysis.normalize_coverage_quantiles()
         # Annotate peaks with closest gene, chromatin state,
         # genomic location, mean and variance measurements across samples
-        analysis.annotate(samples=[sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"])
-
-        # Characterize all CLL regions as a whole
-        # region's composition
-        characterize_regions_composition(df=analysis.coverage_qnorm_annotated, prefix="all_regions")
-        # region's function
-        output_dir = os.path.join(analysis.data_dir, "%s_peaks" % "all_regions")
-        characterize_regions_function(df=analysis.coverage_qnorm_annotated, output_dir=output_dir, prefix="all_regions")
+        analysis.annotate([sample for sample in analysis.samples if sample.cell_line == "CLL" and sample.library == "ATAC-seq"])
     else:
-        analysis.coverage = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.raw_coverage.tsv"), sep="\t", index_col=0)
-        analysis.coverage_qnorm = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t")
-        analysis.coverage_qnorm_annotated = pd.read_csv(os.path.join(analysis.prj.dirs.data, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
+        analysis.coverage = pd.read_csv(os.path.join(analysis.prj.paths.results_subdir, "cll_peaks.raw_coverage.tsv"), sep="\t", index_col=0)
+        analysis.coverage_qnorm = pd.read_csv(os.path.join(analysis.prj.paths.results_subdir, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t")
+        analysis.coverage_qnorm_annotated = pd.read_csv(os.path.join(analysis.prj.paths.results_subdir, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
+
+    # Characterize all CLL regions as a whole
+    # region's composition
+    characterize_regions_composition(df=analysis.coverage_qnorm_annotated, prefix="all_regions")
+    # region's function
+    output_dir = os.path.join(analysis.data_dir, "%s_peaks" % "all_regions")
+    characterize_regions_function(df=analysis.coverage_qnorm_annotated, output_dir=output_dir, prefix="all_regions")
 
     # Plot rpkm features across peaks/samples
     analysis.plot_coverage()
@@ -3401,14 +3200,14 @@ def main():
 
     # INTER-PATIENT VARIATION (Figure 2)
     # cross-cohort variation at gene level
-    analysis.gene_oppeness_across_samples(samples=[sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"])
+    analysis.gene_oppeness_across_samples(samples=[sample for sample in analysis.samples if sample.cell_line == "CLL" and sample.library == "ATAC-seq"])
     # try seeing what most variable regions are with LOLA (no good results - not included)
     analysis.variability()
     # inter-group variation
-    analysis.inspect_variability(samples=[sample for sample in analysis.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq"])
+    analysis.inspect_variability(samples=[sample for sample in analysis.samples if sample.cell_line == "CLL" and sample.library == "ATAC-seq"])
 
     # TRAIT-SPECIFIC ANALYSIS (Figure 3)
-    trait_analysis(analysis)
+    trait_analysis(analysis, samples=[sample for sample in analysis.samples if sample.cell_line == "CLL" and sample.library == "ATAC-seq"])
     # MEDICAL EPIGENOMIC SPACE
     # build it (biplot) + add survival
     create_clinical_epigenomic_space(analysis)
