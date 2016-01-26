@@ -1865,13 +1865,15 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
 
         for i, (train_index, test_index) in enumerate(loo):
             # Remove samples from the same patient that we are predicting during training
-            # # get patient:sample mappings
-            # p_s_mapping = dict(pd.DataFrame([pd.Series(s.__dict__) for s in sel_samples]).groupby('patientID').groups.items())
-            # group = p_s_mapping.index([x for x in p_s_mapping.values() if train_index in x][0])
-            # if test_index in p_s_mapping[group][:].pop(group):
-            #     continue
+            # get current patient_id
+            _pid = [s.patient_id for s in sel_samples][test_index]
+            # get indexes of samples from current patient
+            _p_indexes = [index for index, s in enumerate(sel_samples) if s.patient_id == _pid]
+            # remove indexes from training
+            train_index = np.delete(train_index, _p_indexes)
+            train_index = np.delete(train_index, _p_indexes)
 
-            # print(i)
+            # Slice accordingly
             X_train, X_test = X[train_index], X[test_index]
             y_train, y_test = y[train_index], y[test_index]
 
