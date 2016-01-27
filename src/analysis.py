@@ -1434,6 +1434,19 @@ def annotate_samples(samples):
                 setattr(sample, attr, pd.np.nan)
         new_samples.append(sample)
 
+    # read in file with IGHV group of samples selected for ChIPmentation
+    selected = pd.read_csv(os.path.join("metadata", "selected_samples.tsv"), sep="\t").astype(str)
+    # annotate samples with the respective IGHV group
+    for sample in samples:
+        group = selected[
+            (selected["patient_id"] == sample.patient_id) &
+            (selected["sample_id"] == sample.sample_id)
+        ]["sample_cluster"]
+        if len(group) == 1:
+            sample.ighv_group = group.squeeze()
+        else:
+            sample.ighv_group = pd.np.nan
+
     return annotate_disease_treatments(new_samples)
 
 
@@ -2454,19 +2467,6 @@ def characterize_regions_chromatin(analysis, traits):
 
     # read in dataframe
     features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), sep="\t")
-
-    # read in file with IGHV group of samples selected for ChIPmentation
-    selected = pd.read_csv(os.path.join("metadata", "selected_samples.tsv"), sep="\t").astype(str)
-    # annotate samples with the respective IGHV group
-    for sample in analysis.samples:
-        group = selected[
-            (selected["patient_id"] == sample.patient_id) &
-            (selected["sample_id"] == sample.sample_id)
-        ]["sample_cluster"]
-        if len(group) == 1:
-            sample.ighv_group = group.squeeze()
-        else:
-            sample.ighv_group = pd.np.nan
 
     # Heatmap accessibility and histone marks
     # for each trait make heatmap with chroamtin marks in each
