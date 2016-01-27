@@ -1701,7 +1701,7 @@ def parse_ame(ame_dir):
     return output
 
 
-def characterize_regions_composition(df, prefix, universe_df=None, plots_dir="results/plots"):
+def characterize_regions_structure(df, prefix, universe_df=None, plots_dir="results/plots"):
     # use all cll sites as universe
     if universe_df is None:
         universe_df = pd.read_csv(os.path.join("data", "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
@@ -1828,29 +1828,38 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
     # meme_ame(fasta_file, meme_output)
 
 
-def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
+def characterize_regions_chromatin(df, output_dir, prefix, data_dir="data", universe_file=None):
+    #
+
+    #
+
+    #
+    pass
+
+
+def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
     """
     Use a machine learning approach for sample classification based on known sample attributes.
     Extract features most important to separate samples and investigate those.
     """
-    print("Trait:%s" % comparison)
+    print("Trait:%s" % trait)
     print("%i samples with trait annotated" % len(sel_samples))
     print(Counter(labels))
 
     dataframe_file = os.path.join(
         analysis.data_dir,
         "trait_specific",
-        "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % comparison)
+        "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
     if os.path.exists(dataframe_file) and not rerun:  # Load up
         dataframe = pd.read_csv(dataframe_file, sep="\t")
     else:  # Run analysis
         # Get all CLL ATAC-seq samples for validation
         all_samples = [s for s in analysis.samples if s.cell_line == "CLL" and s.library == "ATAC-seq"]
 
-        # Get colors depending on this feature label (comparison) (True == green; False == redish)
+        # Get colors depending on this feature label (trait) (True == green; False == redish)
         palette = sns.color_palette("colorblind")
-        comparison_colors = [palette[1] if l else palette[2] for l in labels]
-        all_samples_colors = [comparison_colors[sel_samples.index(s)] if s in sel_samples else "gray" for s in all_samples]
+        trait_colors = [palette[1] if l else palette[2] for l in labels]
+        all_samples_colors = [trait_colors[sel_samples.index(s)] if s in sel_samples else "gray" for s in all_samples]
         cmap = sns.cubehelix_palette(8, start=.5, rot=-.75, as_cmap=True)  # for later usage in heatmaps
 
         # ALL CLL OPEN CHROMATIN REGIONS
@@ -1937,7 +1946,7 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
         axis[0].plot(1 - TNR, TPR, 'o', color='gray')  # , s=50)
         fig.savefig(os.path.join(
             analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.ROC_PRC.svg" % comparison), bbox_inches="tight")
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.ROC_PRC.svg" % trait), bbox_inches="tight")
 
         # Display training and prediction of pre-labeled samples of most informative features:
         # average feature importance across iterations
@@ -1948,7 +1957,7 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
         sns.distplot(mean_importance, ax=axis)
         fig.savefig(os.path.join(
             analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.mean_importance.svg" % comparison), bbox_inches="tight")
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.mean_importance.svg" % trait), bbox_inches="tight")
         plt.close("all")
 
         # get important features
@@ -1961,11 +1970,11 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
             x,
             cmap=cmap,
             standard_scale=0,
-            col_colors=comparison_colors,
+            col_colors=trait_colors,
             yticklabels=False)
         plt.savefig(os.path.join(
             analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.svg" % comparison), bbox_inches="tight")
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.svg" % trait), bbox_inches="tight")
         plt.close("all")
 
         # SEE ALL SAMPLES
@@ -1975,7 +1984,7 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
         x = matrix.loc[[i for i, j in enumerate(mean_importance > 1e-4) if j == True], :]  # get features on the tail of the importance distribution
 
         # get colors for each cluster
-        group_number = 4 if comparison == "IGHV" else 2  # 4 IGHV groups, everything else 2
+        group_number = 4 if trait == "IGHV" else 2  # 4 IGHV groups, everything else 2
         # cluster all samples first
         samples_cluster = sns.clustermap(x.corr())
         # get cluster labels for samples
@@ -1992,26 +2001,19 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
             row_colors=all_samples_colors)
         plt.savefig(os.path.join(
             analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_correlation.svg" % comparison), bbox_inches="tight")
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_correlation.svg" % trait), bbox_inches="tight")
         plt.close("all")
 
         # pca on these regions
         pca_r(x, all_samples_colors, os.path.join(
             analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_labels.svg" % comparison))
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_labels.svg" % trait))
 
         # REGIONS
-        # Characterize regions as a whole
-        # region's composition
-        # characterize_regions_composition(df=analysis.coverage_qnorm_annotated.loc[x.index, :], prefix=comparison)
-        # region's function
-        # output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks" % comparison)
-        # characterize_regions_function(df=analysis.coverage_qnorm_annotated.loc[x.index, :], output_dir=output_dir, prefix=comparison)
-
         # Split in major groups
-        if comparison == "gender":
+        if trait == "gender":
             gr = 2
-        elif comparison == "IGHV":
+        elif trait == "IGHV":
             gr = 4
         else:
             gr = 5
@@ -2030,7 +2032,7 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
             yticklabels=False)
         plt.savefig(os.path.join(
             analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sites_labels.svg" % comparison), bbox_inches="tight")
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sites_labels.svg" % trait), bbox_inches="tight")
         plt.close("all")
 
         # Export info
@@ -2046,138 +2048,168 @@ def classify_samples(analysis, sel_samples, labels, comparison, rerun=False):
         dataframe_file = os.path.join(
             analysis.data_dir,
             "trait_specific",
-            "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % comparison)
+            "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
         dataframe.to_csv(dataframe_file, sep="\t", index=False)
 
         # Save as bed
         bed_file = os.path.join(
             analysis.data_dir,
             "trait_specific",
-            "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % comparison)
+            "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % trait)
         dataframe[["chrom", "start", "end"]].to_csv(bed_file, sep="\t", header=False, index=False)
 
-    # # Region characterization
-    # # plot chromosome distribution of regions
-    # chrom_count = Counter(dataframe[['chrom', 'start', 'end']].chrom)
-    # chrom_count = np.array(sorted(chrom_count.items(), key=lambda x: x[1], reverse=True))
-    # fig, axis = plt.subplots(1, figsize=(10, 5))
-    # sns.barplot(chrom_count[:, 0], chrom_count[:, 1].astype(int), ax=axis)
-    # fig.savefig(os.path.join(
-    #     analysis.plots_dir,
-    #     "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.sites_location.svg" % comparison), bbox_inches="tight")
 
-    # for i, cluster in enumerate(np.unique(dataframe['cluster'])):
-    #     # GET REGIONS FROM CLUSTER
-    #     df = dataframe[dataframe['cluster'] == cluster]
+def characterize_regions(analysis, traits):
+    """
+    Characterize structural-, functionally and in the chromatin regions trait-specific regions.
+    """
+    for trait in traits:
+        # Load dataframe with trait-specific regions
+        dataframe = pd.read_csv(
+            os.path.join(
+                analysis.data_dir,
+                "trait_specific",
+                "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait
+            ), sep="\t")
 
-    #     # ignore clusters with less than 20 regions
-    #     if len(df) < 20:
-    #         continue
+        # ALL REGIONS
+        # region's structure
+        characterize_regions_structure(df=dataframe, prefix=trait)
+        # plot chromosome distribution of regions
+        chrom_count = Counter(dataframe[['chrom', 'start', 'end']].chrom)
+        chrom_count = np.array(sorted(chrom_count.items(), key=lambda x: x[1], reverse=True))
+        fig, axis = plt.subplots(1, figsize=(10, 5))
+        sns.barplot(chrom_count[:, 0], chrom_count[:, 1].astype(int), ax=axis)
+        fig.savefig(os.path.join(
+            analysis.plots_dir,
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.sites_location.svg" % trait), bbox_inches="tight")
 
-    #     # output folder
-    #     outdir = os.path.join("%s_cluster%i" % (comparison, cluster))
-    #     if not os.path.exists(outdir):
-    #         os.makedirs(outdir)
+        # region's function
+        output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks" % trait)
+        characterize_regions_function(df=dataframe, output_dir=output_dir, prefix=trait)
 
-    #     # region's composition
-    #     regions = characterize_regions_composition(df=df, prefix="%s_cluster%i" % (comparison, cluster), universe_df=analysis.coverage_qnorm_annotated)
-    #     regions['cluster'] = cluster
+        # region's chromatin
+        output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks" % trait)
+        characterize_regions_chromatin(df=dataframe, output_dir=output_dir, prefix=trait)
 
-    #     if i == 0:
-    #         df3 = regions
-    #     else:
-    #         df3 = df3.append(regions)
+        # CLUSTERS OF REGIONS
+        # Region characterization of each cluster of regions
+        for i, cluster in enumerate(np.unique(dataframe['cluster'])):
+            # GET REGIONS FROM CLUSTER
+            df = dataframe[dataframe['cluster'] == cluster]
 
-    #     # region's function
-    #     output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks_cluster%i" % (comparison, cluster))
-    #     characterize_regions_function(df=df, output_dir=output_dir, prefix="%s_cluster%i" % (comparison, cluster))
+            # ignore clusters with less than 20 regions
+            if len(df) < 20:
+                continue
 
-        # # parse meme-ame output
-        # motifs = pd.DataFrame(parse_ame(os.path.join(output_dir, "meme")), columns=['motifs', 'q_values'])
-        # motifs['cluster'] = cluster
-        # if i == 0:
-        #     df2 = motifs
-        # else:
-        #     df2 = pd.concat([df2, motifs])
+            # output folder
+            outdir = os.path.join("%s_cluster%i" % (trait, cluster))
+            if not os.path.exists(outdir):
+                os.makedirs(outdir)
 
-    # # Plot region enrichment
-    # df3['region'] = df3.index
-    # df3 = df3.sort(['region'])
-    # df3 = df3.replace(np.nan, 0)
+            # region's structure
+            regions = characterize_regions_structure(df=df, prefix="%s_cluster%i" % (trait, cluster), universe_df=analysis.coverage_qnorm_annotated)
+            regions['cluster'] = cluster
 
-    # g = sns.FacetGrid(col="region", data=df3[df3['variable'] == 'genomic_region'], col_wrap=3, sharey=True)
-    # g.map(sns.barplot, "cluster", "value")
-    # plt.savefig(os.path.join(
-    #     analysis.plots_dir,
-    #     "trait_specific", "%s_regions.region_enrichment.svg" % comparison), bbox_inches="tight")
+            if i == 0:
+                df3 = regions
+            else:
+                df3 = df3.append(regions)
 
-    # g = sns.FacetGrid(col="region", data=df3[df3['variable'] == 'chromatin_state'], col_wrap=3, sharey=True)
-    # g.map(sns.barplot, "cluster", "value")
-    # plt.savefig(os.path.join(
-    #     analysis.plots_dir,
-    #     "trait_specific", "%s_regions.chromatin_enrichment.svg" % comparison), bbox_inches="tight")
+            # region's function
+            output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks_cluster%i" % (trait, cluster))
+            characterize_regions_function(df=df, output_dir=output_dir, prefix="%s_cluster%i" % (trait, cluster))
 
-    # # save data
-    # df3.to_csv(os.path.join(
-    #     analysis.plots_dir,
-    #     "trait_specific", "%s_regions.region_enrichment.csv" % comparison), index=False)
+            # region's chromatin
+            output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks_cluster%i" % (trait, cluster))
+            characterize_regions_chromatin(df=df, output_dir=output_dir, prefix="%s_cluster%i" % (trait, cluster))
 
-    # # Plot motif enrichments
-    # df2['q_values'] = -np.log10(np.array(df2['q_values'], dtype=float))
-    # # get highest (worst) p-value from motifs of the same TF
-    # df3 = df2.groupby(['motifs', 'cluster']).aggregate(max).reset_index()
-    # # spread again for each cluster
-    # df3 = df3.pivot('motifs', 'cluster', 'q_values')
-    # # replace nan with 0
-    # df3 = df3.replace(np.nan, 0)
-    # # fix types
-    # for i in [1, 2]:
-    #     df3[i] = df3[i].astype(float)
+            # # parse meme-ame output
+            # motifs = pd.DataFrame(parse_ame(os.path.join(output_dir, "meme")), columns=['motifs', 'q_values'])
+            # motifs['cluster'] = cluster
+            # if i == 0:
+            #     df2 = motifs
+            # else:
+            #     df2 = pd.concat([df2, motifs])
 
-    # # sort
-    # df3 = df3.sort([1])
-    # # plot heatmap of p-values
-    # sns.clustermap(df3, z_score=1, figsize=(8, 24), linewidths=0, cmap=plt.cm.YlGn)
-    # plt.savefig(os.path.join(
-    #     analysis.plots_dir,
-    #     "trait_specific", "%s_regions.motif_enrichment.svg" % comparison), bbox_inches="tight")
-    # plt.close("all")
+        # Plot region enrichment
+        df3['region'] = df3.index
+        df3 = df3.sort(['region'])
+        df3 = df3.replace(np.nan, 0)
 
-    # sns.clustermap(df3[(df3.icol(0) > 30) & (df3.icol(1) > 30)], cmap=plt.cm.YlGn)
-    # plt.savefig(os.path.join(
-    #     analysis.plots_dir,
-    #     "trait_specific", "%s_regions.motif_enrichment.highest.svg" % comparison), bbox_inches="tight")
-    # plt.close("all")
+        g = sns.FacetGrid(col="region", data=df3[df3['variable'] == 'genomic_region'], col_wrap=3, sharey=True)
+        g.map(sns.barplot, "cluster", "value")
+        plt.savefig(os.path.join(
+            analysis.plots_dir,
+            "trait_specific", "%s_regions.region_enrichment.svg" % trait), bbox_inches="tight")
 
-    # # save data
-    # df3.to_csv(os.path.join(
-    #     analysis.plots_dir,
-    #     "trait_specific", "%s_regions.motif_enrichment.csv" % comparison), index=False)
+        g = sns.FacetGrid(col="region", data=df3[df3['variable'] == 'chromatin_state'], col_wrap=3, sharey=True)
+        g.map(sns.barplot, "cluster", "value")
+        plt.savefig(os.path.join(
+            analysis.plots_dir,
+            "trait_specific", "%s_regions.chromatin_state_enrichment.svg" % trait), bbox_inches="tight")
 
-    # # get n_max most different motifs
-    # n_max = 25
-    # p_value = 3  # -log10
+        # save data
+        df3.to_csv(os.path.join(
+            analysis.plots_dir,
+            "trait_specific", "%s_regions.region_enrichment.csv" % trait), index=False)
 
-    # # filter p-values
-    # df4 = df3[(df3[1] > p_value) | (df3[2] > p_value)]
+        # # Plot motif enrichments
+        # df2['q_values'] = -np.log10(np.array(df2['q_values'], dtype=float))
+        # # get highest (worst) p-value from motifs of the same TF
+        # df3 = df2.groupby(['motifs', 'cluster']).aggregate(max).reset_index()
+        # # spread again for each cluster
+        # df3 = df3.pivot('motifs', 'cluster', 'q_values')
+        # # replace nan with 0
+        # df3 = df3.replace(np.nan, 0)
+        # # fix types
+        # for i in [1, 2]:
+        #     df3[i] = df3[i].astype(float)
 
-    # # floor n_max
-    # if len(df4) < n_max:
-    #     n_max = len(df4)
+        # # sort
+        # df3 = df3.sort([1])
+        # # plot heatmap of p-values
+        # sns.clustermap(df3, z_score=1, figsize=(8, 24), linewidths=0, cmap=plt.cm.YlGn)
+        # plt.savefig(os.path.join(
+        #     analysis.plots_dir,
+        #     "trait_specific", "%s_regions.motif_enrichment.svg" % trait), bbox_inches="tight")
+        # plt.close("all")
 
-    # # get n most dissimilar features
-    # s = abs(df4[1] - df4[2])
-    # # sort by similarity
-    # s.sort(ascending=False)
-    # # get top
-    # index = s.irow(range(n_max)).index
+        # sns.clustermap(df3[(df3.icol(0) > 30) & (df3.icol(1) > 30)], cmap=plt.cm.YlGn)
+        # plt.savefig(os.path.join(
+        #     analysis.plots_dir,
+        #     "trait_specific", "%s_regions.motif_enrichment.highest.svg" % trait), bbox_inches="tight")
+        # plt.close("all")
 
-    # # plot matrix of clusters/terms with p_values
-    # sns.clustermap(df4.ix[index], col_cluster=False, cmap=plt.cm.YlGn)
-    # plt.savefig(os.path.join(
-    #     analysis.plots_dir,
-    #     "trait_specific", "%s_regions.motif_enrichment.difference.svg" % comparison), bbox_inches="tight")
-    # plt.close("all")
+        # # save data
+        # df3.to_csv(os.path.join(
+        #     analysis.plots_dir,
+        #     "trait_specific", "%s_regions.motif_enrichment.csv" % trait), index=False)
+
+        # # get n_max most different motifs
+        # n_max = 25
+        # p_value = 3  # -log10
+
+        # # filter p-values
+        # df4 = df3[(df3[1] > p_value) | (df3[2] > p_value)]
+
+        # # floor n_max
+        # if len(df4) < n_max:
+        #     n_max = len(df4)
+
+        # # get n most dissimilar features
+        # s = abs(df4[1] - df4[2])
+        # # sort by similarity
+        # s.sort(ascending=False)
+        # # get top
+        # index = s.irow(range(n_max)).index
+
+        # # plot matrix of clusters/terms with p_values
+        # sns.clustermap(df4.ix[index], col_cluster=False, cmap=plt.cm.YlGn)
+        # plt.savefig(os.path.join(
+        #     analysis.plots_dir,
+        #     "trait_specific", "%s_regions.motif_enrichment.difference.svg" % trait), bbox_inches="tight")
+        # plt.close("all")
 
 
 def classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, comparison):
@@ -2761,7 +2793,7 @@ class gaussian_kde(object):
         self._norm_factor = np.sqrt(np.linalg.det(2 * np.pi * self.covariance))  # * self.n
 
 
-def create_clinical_epigenomic_space(analysis):
+def create_clinical_epigenomic_space(analysis, traits):
     """
     """
     from sklearn.decomposition import PCA
@@ -2926,14 +2958,6 @@ def create_clinical_epigenomic_space(analysis):
         fig.savefig(output_pdf, bbox_inches='tight')
 
     #
-
-    traits = ["IGHV", "CD38", "ZAP70", "treated", "primary_CLL", "ibrutinib", "chemo_treated", "target_treated"]
-    muts = ['del11', 'tri12', "del17p"]  # abnormalities
-    muts += ['TP53']  # mutations
-    traits += muts
-
-    # Here I am removing traits which had poor classification performance or too few patients associated
-    # because they exist in either only one patient
 
     # Put trait-specific chromatin regions in one matrix
     features = pd.DataFrame()
@@ -3300,13 +3324,16 @@ def main():
         analysis.coverage_qnorm_annotated = pd.read_csv(os.path.join(analysis.data_dir, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
 
     # Characterize all CLL regions as a whole
-    # region's composition
-    characterize_regions_composition(df=analysis.coverage_qnorm_annotated, prefix="all_regions")
+    # region's structure
+    characterize_regions_structure(df=analysis.coverage_qnorm_annotated, prefix="all_regions")
     # region's function
     output_dir = os.path.join(analysis.data_dir, "%s_peaks" % "all_regions")
     characterize_regions_function(df=analysis.coverage_qnorm_annotated, output_dir=output_dir, prefix="all_regions")
+    # region's chromatin
+    output_dir = os.path.join(analysis.data_dir, "%s_peaks" % "all_regions")
+    characterize_regions_chromatin(df=analysis.coverage_qnorm_annotated, output_dir=output_dir, prefix="all_regions")
 
-    # Plot rpkm features across peaks/samples
+    # Plot oppenness across peaks/samples
     analysis.plot_coverage()
     analysis.plot_variance()
     analysis.plot_sample_correlations()
@@ -3322,14 +3349,35 @@ def main():
     analysis.inspect_variability(atac_seq_samples)
 
     # TRAIT-SPECIFIC ANALYSIS (Figure 3)
+    # all traits (~21)
     trait_analysis(analysis, atac_seq_samples)
+
+    # characterize trait-specific regions
+    # structurally, functionaly and in light of histone marks
+    traits = ["IGHV", "CD38", "ZAP70", "treated", "primary_CLL", "ibrutinib", "chemo_treated", "target_treated"]
+    muts = ['del11', 'tri12', "del17p"]
+    muts += ['TP53']  # mutations
+    traits += muts
+    # here I am removing traits which had poor classification performance or too few patients associated
+    # because they exist in either only one patient
+    characterize_regions(analysis, traits)
+
     # MEDICAL EPIGENOMIC SPACE
-    # build it (biplot) + add survival
-    create_clinical_epigenomic_space(analysis)
+    traits = ["IGHV", "CD38", "ZAP70", "treated", "primary_CLL", "ibrutinib", "chemo_treated", "target_treated"]
+    muts = ['del11', 'tri12', "del17p"]
+    muts += ['TP53']  # mutations
+    traits += muts
+    # here I am removing traits which had poor classification performance or too few patients associated
+    # because they exist in either only one patient
+
+    # Build it (biplot) + add survival
+    create_clinical_epigenomic_space(analysis, traits)
     # Describe patient across clinical epigenomics axis
     describe_patients_clinically(analysis)
 
     #
+
+    # Post-processing
 
     # Compare go terms/LOLA results from regions
     # compare_go_terms(
