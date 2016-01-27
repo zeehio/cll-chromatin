@@ -36,15 +36,15 @@ from scipy.cluster.hierarchy import fcluster
 import cPickle as pickle
 from collections import Counter
 
+
 # Set settings
 pd.set_option("date_dayfirst", True)
-sns.set_style("whitegrid")
-sns.set_context("paper")
+sns.set(context="paper", style="white")
+sns.set_style({'font.family': 'sans-serif', 'font.sans-serif': ['Helvetica']})
 sns.set_palette(sns.color_palette("colorblind"))
-matplotlib.rcParams['svg.fonttype'] = 'none'
-matplotlib.rc('font', family='sans-serif')
-matplotlib.rc('font', serif='Helvetica Neue')
-matplotlib.rc('text', usetex='false')
+matplotlib.rcParams["svg.fonttype"] = "none"
+matplotlib.rc('font', **{'family': 'sans-serif', 'sans-serif': ['Helvetica']})
+matplotlib.rc('text', usetex=False)
 
 
 def pickle_me(function):
@@ -449,7 +449,7 @@ class Analysis(object):
         from collections import OrderedDict
         from scipy.stats import ks_2samp
 
-        sns.set(style="whitegrid", palette="pastel", color_codes=True)
+        sns.set(style="white", palette="pastel", color_codes=True)
 
         # genes of interest
         sel_genes = OrderedDict({
@@ -2079,10 +2079,6 @@ def characterize_regions(analysis, traits):
         output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks" % trait)
         characterize_regions_function(df=dataframe, output_dir=output_dir, prefix=trait)
 
-        # region's chromatin
-        output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks" % trait)
-        characterize_regions_chromatin(df=dataframe, output_dir=output_dir, prefix=trait)
-
         # CLUSTERS OF REGIONS
         # Region characterization of each cluster of regions
         for i, cluster in enumerate(np.unique(dataframe['cluster'])):
@@ -2110,10 +2106,6 @@ def characterize_regions(analysis, traits):
             # region's function
             output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks_cluster%i" % (trait, cluster))
             characterize_regions_function(df=df, output_dir=output_dir, prefix="%s_cluster%i" % (trait, cluster))
-
-            # region's chromatin
-            output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks_cluster%i" % (trait, cluster))
-            characterize_regions_chromatin(df=df, output_dir=output_dir, prefix="%s_cluster%i" % (trait, cluster))
 
             # # parse meme-ame output
             # motifs = pd.DataFrame(parse_ame(os.path.join(output_dir, "meme")), columns=['motifs', 'q_values'])
@@ -2432,11 +2424,49 @@ def characterize_regions_chromatin(analysis, traits):
     Visualize histone mark ratios dependent on the positive- or negative-association of regions with
     accessibility signal.
     """
+    def get_intensities(df, subset, mark):
+        samples = [s for s in analysis.samples if s.library == "ChIPmentation"]
+        # subset samples according to requested group (all, uCLL, iCLL or mCLL)
+        if subset == "all":
+            samples = [s for s in samples if s.ighv_group is not pd.np.nan]
+        else:
+            samples = [s for s in samples if s.ighv_group == subset]
+
+        # mean of that mark across the subset of samples
+        return df[[s.name for s in samples if s.ip == mark]].mean(axis=1)
+
+    def calculate_ratio(df, subset, kind):
+        samples = [s for s in analysis.samples if s.library == "ChIPmentation"]
+        # subset samples according to requested group (all, uCLL, iCLL or mCLL)
+        if subset == "all":
+            samples = [s for s in samples if s.ighv_group is not pd.np.nan]
+        else:
+            samples = [s for s in samples if s.ighv_group == subset]
+
+        # get ratio of the requested histone marks
+        if kind == "A:R":
+            a = df[[s.name for s in samples if s.ip == "H3K27ac"]]
+            r = df[[s.name for s in samples if s.ip == "H3K27me3"]]
+        elif kind == "P:R":
+            a = df[[s.name for s in samples if s.ip == "H3K4me1"]]
+            r = df[[s.name for s in samples if s.ip == "H3K27me3"]]
+        return np.log2(((1 + a.values) / (1 + r.values))).mean(axis=1)
+
     # read in dataframe
     features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), sep="\t")
 
     # read in file with IGHV group of samples selected for ChIPmentation
-    selected = pd.read_csv(os.path.join("metadata", "selected_samples.tsv"), sep="\t")
+    selected = pd.read_csv(os.path.join("metadata", "selected_samples.tsv"), sep="\t").astype(str)
+    # annotate samples with the respective IGHV group
+    for sample in analysis.samples:
+        group = selected[
+            (selected["patient_id"] == sample.patient_id) &
+            (selected["sample_id"] == sample.sample_id)
+        ]["sample_cluster"]
+        if len(group) == 1:
+            sample.ighv_group = group.squeeze()
+        else:
+            sample.ighv_group = pd.np.nan
 
     # Heatmap accessibility and histone marks
     # for each trait make heatmap with chroamtin marks in each
@@ -2445,36 +2475,101 @@ def characterize_regions_chromatin(analysis, traits):
 
         sns.heatmap()
 
-    # compute ratios of chromatin marks
+    # get intensity of chromatin marks
     # across all patients
-    features["ratio_A:R"] = features.apply()
-    features["ratio_P:R"] = features.apply()
+    for group in ["all", "uCLL", "iCLL", "mCLL"]:
+        for mark in ["H3K27ac", "H3K4me1", "H3K27me3"]:
+            features["%s_intensity_%s" % (group, mark)] = get_intensities(features, group, mark)
 
-    # for each each IGHV class
-    for group in ["uCLL", "iCLL", "mCLL"]:
-        features["%s_ratio_A:R" % group] = features.apply()
-        features["%s_ratio_P:R" % group] = features.apply()
+    # compute ratios of chromatin marks
+    # across all patients and for each each IGHV class
+    for group in ["all", "uCLL", "iCLL", "mCLL"]:
+        for ratio in ["A:R", "P:R"]:
+            features["%s_ratio_%s" % (group, ratio)] = calculate_ratio(features, group, ratio)
 
-    # save dataframe with ratios of chroamtin marks per peak
-    features.to_csv()
+    # save dataframe with intensities/ratios of chromatin marks per peak
+    features.to_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.histone_intensities_ratios.csv"), index=False)
 
+    # Plot values
     # subset data and melt dataframe for ploting
     features_slim = pd.melt(
         features[
             ["trait", "direction"] +
-            ["ratio_A:R", "ratio_P:R"] +
-            ["%s_ratio_A:R" % group for group in ["uCLL", "iCLL", "mCLL"]] +
-            ["%s_ratio_P:R" % group for group in ["uCLL", "iCLL", "mCLL"]]
+            ["%s_intensity_H3K27ac" % group for group in ["uCLL", "iCLL", "mCLL"]] +
+            ["%s_intensity_H3K4me1" % group for group in ["uCLL", "iCLL", "mCLL"]] +
+            ["%s_intensity_H3K27me3" % group for group in ["uCLL", "iCLL", "mCLL"]]
         ],
-        on=["trait", "direction"])
+        id_vars=["trait", "direction"],
+        var_name="mark_type",
+        value_name="intensity"
+    )
+    features_slim["group"] = features_slim["mark_type"].apply(lambda x: x.split("_")[0])
+    features_slim["mark"] = features_slim["mark_type"].apply(lambda x: x.split("_")[2])
 
     # traits as columns, group by positively- and negatively-associated regions
-    g = sns.FacetGrid(features_slim, col="trait", col_wrap=4, hue="ratio_type")
-    g.map(sns.violinplot, "direction", "value")
-    output_file = os.path.join(
-        analysis.plots_dir, "trait_specific", "cll.trait-specific_regions.chromatin_ratios.svg")
-    plt.savefig(output_file, bbox_inches='tight')
-    plt.close("all")
+    for trait in ["IGHV", "CD38", "ZAP70"]:
+        p = features_slim[features_slim['trait'] == trait].dropna()
+
+        g = sns.FacetGrid(p, col="group", row="direction", legend_out=True, row_order=[-1, 1], margin_titles=True)
+        g.map(sns.violinplot, "mark", "intensity", split=True)
+        sns.despine()
+        plt.savefig(os.path.join(
+            analysis.plots_dir, "trait_specific", "cll.trait-specific_regions.chromatin_intensity.%s.mark_centric.svg" % trait),
+            bbox_inches='tight')
+
+        g = sns.FacetGrid(p, col="group", row="mark", legend_out=True, margin_titles=True)
+        g.map(sns.violinplot, "direction", "intensity", split=True, order=[-1, 1])
+        sns.despine()
+        plt.savefig(os.path.join(
+            analysis.plots_dir, "trait_specific", "cll.trait-specific_regions.chromatin_intensity.%s.direction_centric.svg" % trait),
+            bbox_inches='tight')
+
+        g = sns.FacetGrid(p, row="mark", col="direction", legend_out=True, margin_titles=True)
+        g.map(sns.violinplot, "group", "intensity", split=True, order=["uCLL", "iCLL", "mCLL"])
+        sns.despine()
+        plt.savefig(os.path.join(
+            analysis.plots_dir, "trait_specific", "cll.trait-specific_regions.chromatin_intensity.%s.group_centric.svg" % trait),
+            bbox_inches='tight')
+
+    # Plot ratios
+    # subset data and melt dataframe for ploting
+    features_slim = pd.melt(
+        features[
+            ["trait", "direction"] +
+            ["%s_ratio_A:R" % group for group in ["all", "uCLL", "iCLL", "mCLL"]] +
+            ["%s_ratio_P:R" % group for group in ["all", "uCLL", "iCLL", "mCLL"]]
+        ],
+        id_vars=["trait", "direction"],
+        var_name="ratio_type",
+        value_name="ratio"
+    )
+    features_slim["group"] = features_slim["ratio_type"].apply(lambda x: x.split("_")[0])
+    features_slim["type"] = features_slim["ratio_type"].apply(lambda x: x.split("_")[2])
+
+    # traits as columns, group by positively- and negatively-associated regions
+    for trait in ["IGHV", "CD38", "ZAP70"]:
+        p = features_slim[features_slim['trait'] == trait].dropna()
+
+        g = sns.FacetGrid(p, col="group", row="direction", legend_out=True)
+        g.map(sns.violinplot, "type", "ratio", split=True)
+        sns.despine()
+        plt.savefig(os.path.join(
+            analysis.plots_dir, "trait_specific", "cll.trait-specific_regions.chromatin_ratios.%s.mark_centric.svg" % trait),
+            bbox_inches='tight')
+
+        g = sns.FacetGrid(p, col="group", row="type", legend_out=True)
+        g.map(sns.violinplot, "direction", "ratio", split=True)
+        sns.despine()
+        plt.savefig(os.path.join(
+            analysis.plots_dir, "trait_specific", "cll.trait-specific_regions.chromatin_ratios.%s.direction_centric.svg" % trait),
+            bbox_inches='tight')
+
+        g = sns.FacetGrid(p, row="type", col="direction", legend_out=True, margin_titles=True)
+        g.map(sns.violinplot, "group", "ratio", split=True, order=["uCLL", "iCLL", "mCLL"])
+        sns.despine()
+        plt.savefig(os.path.join(
+            analysis.plots_dir, "trait_specific", "cll.trait-specific_regions.chromatin_ratios.%s.group_centric.svg" % trait),
+            bbox_inches='tight')
 
 
 def generate_signature_matrix(array, n=101, bounds=(0, 0)):
@@ -3375,9 +3470,6 @@ def main():
     # region's function
     output_dir = os.path.join(analysis.data_dir, "%s_peaks" % "all_regions")
     characterize_regions_function(df=analysis.coverage_qnorm_annotated, output_dir=output_dir, prefix="all_regions")
-    # region's chromatin
-    output_dir = os.path.join(analysis.data_dir, "%s_peaks" % "all_regions")
-    characterize_regions_chromatin(df=analysis.coverage_qnorm_annotated, output_dir=output_dir, prefix="all_regions")
 
     # Plot oppenness across peaks/samples
     analysis.plot_coverage()
@@ -3409,6 +3501,7 @@ def main():
     # characterize trait-specific regions
     # structurally, functionaly and in light of histone marks
     characterize_regions(analysis, traits)
+    characterize_regions_chromatin(analysis, traits)
 
     # MEDICAL EPIGENOMIC SPACE
     # Build it (biplot) + add survival
