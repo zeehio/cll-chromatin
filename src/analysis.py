@@ -1828,15 +1828,6 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
     # meme_ame(fasta_file, meme_output)
 
 
-def characterize_regions_chromatin(df, output_dir, prefix, data_dir="data", universe_file=None):
-    #
-
-    #
-
-    #
-    pass
-
-
 def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
     """
     Use a machine learning approach for sample classification based on known sample attributes.
@@ -2411,6 +2402,81 @@ def trait_analysis(analysis, samples):
     # classify_samples(analysis, sel_samples, labels, comparison="early_diagnosis", rerun=True)
 
 
+def join_trait_specific_regions(analysis, traits):
+    # Put trait-specific chromatin regions in one matrix
+    features = pd.DataFrame()
+    for trait in traits:
+        file_name = os.path.join(
+            "data",
+            "trait_specific",
+            "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
+        try:
+            df = pd.read_csv(file_name, sep="\t")
+            df['trait'] = trait
+            features = features.append(df, ignore_index=True)
+        except IOError:
+            print("Trait %s did not generate any associated regions" % trait)
+
+    # add direction of chromatin feature association with clinical feature
+    features['direction'] = features['change'].apply(lambda x: 1 if x > 0 else -1)
+
+    # # Save whole dataframe as csv
+    features.to_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), sep="\t", index=False)
+
+
+def characterize_regions_chromatin(analysis, traits):
+    """
+    For each trait-associated region, get ratios of active/repressed and poised/repressed chromatin,
+    across all patients or groups of patients with same IGHV mutation status.
+
+    Visualize histone mark ratios dependent on the positive- or negative-association of regions with
+    accessibility signal.
+    """
+    # read in dataframe
+    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), sep="\t")
+
+    # read in file with IGHV group of samples selected for ChIPmentation
+    selected = pd.read_csv(os.path.join("metadata", "selected_samples.tsv"), sep="\t")
+
+    # Heatmap accessibility and histone marks
+    # for each trait make heatmap with chroamtin marks in each
+    for trait in traits:
+        features[features["trait"] == trait]
+
+        sns.heatmap()
+
+    # compute ratios of chromatin marks
+    # across all patients
+    features["ratio_A:R"] = features.apply()
+    features["ratio_P:R"] = features.apply()
+
+    # for each each IGHV class
+    for group in ["uCLL", "iCLL", "mCLL"]:
+        features["%s_ratio_A:R" % group] = features.apply()
+        features["%s_ratio_P:R" % group] = features.apply()
+
+    # save dataframe with ratios of chroamtin marks per peak
+    features.to_csv()
+
+    # subset data and melt dataframe for ploting
+    features_slim = pd.melt(
+        features[
+            ["trait", "direction"] +
+            ["ratio_A:R", "ratio_P:R"] +
+            ["%s_ratio_A:R" % group for group in ["uCLL", "iCLL", "mCLL"]] +
+            ["%s_ratio_P:R" % group for group in ["uCLL", "iCLL", "mCLL"]]
+        ],
+        on=["trait", "direction"])
+
+    # traits as columns, group by positively- and negatively-associated regions
+    g = sns.FacetGrid(features_slim, col="trait", col_wrap=4, hue="ratio_type")
+    g.map(sns.violinplot, "direction", "value")
+    output_file = os.path.join(
+        analysis.plots_dir, "trait_specific", "cll.trait-specific_regions.chromatin_ratios.svg")
+    plt.savefig(output_file, bbox_inches='tight')
+    plt.close("all")
+
+
 def generate_signature_matrix(array, n=101, bounds=(0, 0)):
     """
     :param np.array: 2D np.array
@@ -2447,7 +2513,7 @@ def get_signatures(analysis):
     """
     """
     # Read in openness values in regions associated with clinical traits
-    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
+    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), sep="\t")
 
     # Clinical traits
     traits = ["IGHV", "CD38", "ZAP70", "primary_CLL", "treated", "chemo_treated", "target_treated"]
@@ -2957,28 +3023,8 @@ def create_clinical_epigenomic_space(analysis, traits):
             analysis.plots_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.raw_1-survival.svg")
         fig.savefig(output_pdf, bbox_inches='tight')
 
-    #
-
-    # Put trait-specific chromatin regions in one matrix
-    features = pd.DataFrame()
-    for trait in traits:
-        file_name = os.path.join(
-            "data",
-            "trait_specific",
-            "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
-        try:
-            df = pd.read_csv(file_name, sep="\t")
-            df['trait'] = trait
-            features = features.append(df, ignore_index=True)
-        except IOError:
-            print("Trait %s did not generate any associated regions" % trait)
-
-    # add direction of chromatin feature association with clinical feature
-    features['direction'] = features['change'].apply(lambda x: 1 if x > 0 else -1)
-
-    # # Save whole dataframe as csv
-    features.to_csv(os.path.join(analysis.data_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t", index=False)
-    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
+    # read in trait-specific regions
+    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), sep="\t")
 
     # Plot matrix of overlap between sets
     m = pd.DataFrame()  # build matrix of common features
@@ -3085,7 +3131,7 @@ def describe_patients_clinically(analysis):
     # because they exist in either only one patient
 
     # Read trait-specific chromatin regions in one matrix
-    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.csv"), sep="\t")
+    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), sep="\t")
 
     # add direction of chromatin feature association with clinical feature
     features['direction'] = features['change'].apply(lambda x: 1 if x > 0 else -1)
@@ -3351,25 +3397,20 @@ def main():
     # TRAIT-SPECIFIC ANALYSIS (Figure 3)
     # all traits (~21)
     trait_analysis(analysis, atac_seq_samples)
-
-    # characterize trait-specific regions
-    # structurally, functionaly and in light of histone marks
+    # Inspect which traits have good performance
     traits = ["IGHV", "CD38", "ZAP70", "treated", "primary_CLL", "ibrutinib", "chemo_treated", "target_treated"]
     muts = ['del11', 'tri12', "del17p"]
     muts += ['TP53']  # mutations
     traits += muts
     # here I am removing traits which had poor classification performance or too few patients associated
     # because they exist in either only one patient
+    # Join all regions in one dataframe
+    join_trait_specific_regions(analysis, traits)
+    # characterize trait-specific regions
+    # structurally, functionaly and in light of histone marks
     characterize_regions(analysis, traits)
 
     # MEDICAL EPIGENOMIC SPACE
-    traits = ["IGHV", "CD38", "ZAP70", "treated", "primary_CLL", "ibrutinib", "chemo_treated", "target_treated"]
-    muts = ['del11', 'tri12', "del17p"]
-    muts += ['TP53']  # mutations
-    traits += muts
-    # here I am removing traits which had poor classification performance or too few patients associated
-    # because they exist in either only one patient
-
     # Build it (biplot) + add survival
     create_clinical_epigenomic_space(analysis, traits)
     # Describe patient across clinical epigenomics axis
