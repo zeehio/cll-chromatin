@@ -3177,9 +3177,18 @@ def create_clinical_epigenomic_space(analysis, traits):
         m.loc[t1, t2] = len(a.intersection(b)) / float(len(features[features['trait'] == t1].drop_duplicates()))
         m.loc[t2, t1] = len(a.intersection(b)) / float(len(features[features['trait'] == t2].drop_duplicates()))
     m.replace(np.nan, 1, inplace=True)
+
+    # clustermap on values
     sns.clustermap(np.log2(m.sort(axis=0).sort(axis=1)))
     output_pdf = os.path.join(
-        analysis.plots_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.common_trait_regions.svg")
+        analysis.plots_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.common_trait_regions.values.svg")
+    plt.savefig(output_pdf, bbox_inches='tight')
+    plt.close("all")
+
+    # clustermap on correlation
+    sns.clustermap(np.log2(m).corr())
+    output_pdf = os.path.join(
+        analysis.plots_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.common_trait_regions.correlation.svg")
     plt.savefig(output_pdf, bbox_inches='tight')
     plt.close("all")
 
