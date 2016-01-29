@@ -2468,13 +2468,6 @@ def characterize_regions_chromatin(analysis, traits):
     # read in dataframe
     features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), sep="\t")
 
-    # Heatmap accessibility and histone marks
-    # for each trait make heatmap with chroamtin marks in each
-    for trait in traits:
-        features[features["trait"] == trait]
-
-        sns.heatmap()
-
     # get intensity of chromatin marks
     # across all patients
     for group in ["all", "uCLL", "iCLL", "mCLL"]:
@@ -2489,6 +2482,61 @@ def characterize_regions_chromatin(analysis, traits):
 
     # save dataframe with intensities/ratios of chromatin marks per peak
     features.to_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.histone_intensities_ratios.csv"), index=False)
+
+    # Heatmap accessibility and histone marks
+    # for each trait make heatmap with chroamtin marks in each
+    for trait in traits:
+        # get regions specific to this trait
+        df = features[features["trait"] == trait]
+
+        # get all ATAC-seq samples
+        samples = [s for s in analysis.samples if s.library == "ATAC-seq"]
+
+        # color samples according to mutation status
+        palette = sns.color_palette("colorblind")
+        trait_colors = {True: palette[1], False: palette[2]}
+        sample_colors = [trait_colors[s.igvh_mutation_status] if s.igvh_mutation_status is not pd.np.nan else "gray" for s in samples]
+
+        # colormap for heatmap values
+        cmap = sns.cubehelix_palette(8, start=.5, rot=-.75, as_cmap=True)
+
+        # heatmap
+        dend = sns.clustermap(
+            df[[s.name for s in samples]],
+            cmap=cmap,
+            standard_scale=0,
+            col_colors=sample_colors,
+            yticklabels=False)
+        plt.savefig("/home/arendeiro/ighv_atac.svg", bbox_inches="tight")
+
+        # order rows by ATAC-seq dendrogram
+        chrom = df[df.columns[df.columns.str.contains("intensity")]]
+        order = dend.dendrogram_row.dendrogram['leaves']
+        chrom = chrom.ix[order]
+
+        # order columns by histone mark
+        chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: x.split("_")[2])]
+        sns.heatmap(chrom, yticklabels=False)
+        plt.savefig("/home/arendeiro/ighv_histones.ordered_mark.svg", bbox_inches="tight")
+        plt.close("all")
+
+        # order columns by group
+        chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: (x.split("_")[0], x.split("_")[2]))]
+        sns.heatmap(chrom, yticklabels=False)
+        plt.savefig("/home/arendeiro/ighv_histones.ordered_group.svg", bbox_inches="tight")
+        plt.close("all")
+
+        # Z-scored, order columns by histone mark
+        chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: x.split("_")[2])]
+        sns.heatmap(chrom.apply(lambda x: (x - x.mean()) / x.std(), axis=0), yticklabels=False)
+        plt.savefig("/home/arendeiro/ighv_histones.ordered_mark.zscore_rows.svg", bbox_inches="tight")
+        plt.close("all")
+
+        # Z-scored, order columns by group
+        chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: (x.split("_")[0], x.split("_")[2]))]
+        sns.heatmap(chrom.apply(lambda x: (x - x.mean()) / x.std(), axis=0), yticklabels=False)
+        plt.savefig("/home/arendeiro/ighv_histones.ordered_group.zscore_rows.svg", bbox_inches="tight")
+        plt.close("all")
 
     # Plot values
     # subset data and melt dataframe for ploting
