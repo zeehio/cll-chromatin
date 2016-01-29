@@ -1374,6 +1374,53 @@ def samples_to_symbol(samples, method="unique"):
 #     ]
 
 
+def annotate_clinical_traits(samples):
+    # Annotate traits
+    # Gender
+    t = [1 if s.patient_gender == "M" else 0 if s.patient_gender is not pd.np.nan else pd.np.nan for s in samples]
+    for i, s in enumerate(samples): s.gender = t[i]
+    # IGHV mutation status
+    t = [1 if s.igvh_mutation_status else 0 if s.igvh_mutation_status is not pd.np.nan else pd.np.nan for s in samples]
+    for i, s in enumerate(samples): s.IGHV = t[i]
+    # CD38 expression
+    t = [1 if s.CD38_positive else 0 if s.CD38_positive is not pd.np.nan else pd.np.nan for s in samples]
+    for i, s in enumerate(samples): s.CD38 = t[i]
+    # ZAP70 expression
+    t = [1 if s.ZAP70_positive else 0 if s.ZAP70_positive is not pd.np.nan else pd.np.nan for s in samples]
+    for i, s in enumerate(samples): s.ZAP70 = t[i]
+    # ZAP70 mono-allelic expression
+    t = [1 if s.ZAP70_monoallelic_methylation else 0 if s.ZAP70_monoallelic_methylation is not pd.np.nan else pd.np.nan for s in samples]
+    for i, s in enumerate(samples): s.ZAP70_monoallelic_methylation = t[i]
+    # Disease at Diagnosis - comparison in untreated samples
+    # Primary vs Secondary CLL (progressed from MBL and SLL)
+    t = [1 if s.diagnosis_disease == "CLL" else 0 if s.diagnosis_disease is not pd.np.nan and not s.under_treatment and s.timepoint == 1 is not pd.np.nan else pd.np.nan for s in samples]
+    for i, s in enumerate(samples): s.primary_CLL = t[i]
+    # Treatments: Under treatment
+    t = [1 if s.under_treatment else 0 if s.under_treatment is not pd.np.nan else pd.np.nan for s in samples]
+    for i, s in enumerate(samples): s.treated = t[i]
+    # Relapse
+    # "relapse", ("True", "False", rerun=True), # relapse or before relapse
+    t = [1 if s.relapse else 0 if s.relapse in [1, 0] is not pd.np.nan else pd.np.nan for s in samples]
+    for i, s in enumerate(samples): s.relapse = t[i]
+    # # Early vs Late
+    # # "progression", ("True", "False", rerun=True), # early vs late timepoint
+    # t = [1 if s.diagnosis_collection else 0 if type(s.diagnosis_collection) is bool is not pd.np.nan else pd.np.nan for s in samples]
+    # for i, s in enumerate(samples): s.early = t[i]
+
+    # Annotate samples which are under treament but with different types
+    chemo_drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR']  # Chemotherapy
+    target_drugs = ['Alemtuz', 'Ibrutinib']  # targeted treatments
+    muts = ['del13', 'del11', 'tri12', 'del17']  # chrom abnorms
+    muts += ['SF3B1', 'ATM', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']  # mutations
+    for sample in samples:
+        sample.chemo_treated = True if sample.treatment_active and sample.treatment_type in chemo_drugs else False
+        sample.target_treated = True if sample.treatment_active and sample.treatment_type in target_drugs else False
+        for mut in muts:
+            setattr(sample, mut, True if type(sample.mutations) is list and mut in sample.mutations else False)
+
+    return samples
+
+
 def annotate_disease_treatments(samples):
     """
     Annotate samples with timepoint, treatment_status, treatment_type
@@ -1447,7 +1494,7 @@ def annotate_samples(samples):
         else:
             sample.ighv_group = pd.np.nan
 
-    return annotate_disease_treatments(new_samples)
+    return annotate_clinical_traits(annotate_disease_treatments(new_samples))
 
 
 def state_enrichment_overlap(n=100):
@@ -2291,120 +2338,25 @@ def classification_validation(analysis, train_samples, train_labels, val_samples
         "trait_specific", "cll_peaks.%s_significant.classification_validation.random_forest.loocv.ROC_PRC.svg" % comparison), bbox_inches="tight")
 
 
-def trait_analysis(analysis, samples):
-    # Gender
-    sel_samples = [s for s in samples if s.patient_gender is not pd.np.nan]
-    labels = np.array([1 if s.patient_gender == "M" else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="gender", rerun=True)
+def trait_analysis(analysis, samples, traits):
 
-    # independent validation
-    train_samples = [s for s in samples if s.patient_gender is not pd.np.nan and s.hospital != "AKH"]
-    train_labels = np.array([1 if s.patient_gender == "M" else 0 for s in train_samples])
-    val_samples = [s for s in samples if s.patient_gender is not pd.np.nan and s.hospital == "AKH"]
-    val_labels = np.array([1 if s.patient_gender == "M" else 0 for s in val_samples])
-    classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, comparison="gender")
-
-    # IGHV mutation status
-    sel_samples = [s for s in samples if s.igvh_mutation_status is not pd.np.nan]
-    labels = np.array([1 if s.igvh_mutation_status else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="IGHV", rerun=True)
-
-    # independent validation
-    train_samples = [s for s in samples if s.igvh_mutation_status is not pd.np.nan and s.hospital != "AKH"]
-    train_labels = np.array([1 if s.igvh_mutation_status else 0 for s in train_samples])
-    val_samples = [s for s in samples if s.igvh_mutation_status is not pd.np.nan and s.hospital == "AKH"]
-    val_labels = np.array([1 if s.igvh_mutation_status else 0 for s in val_samples])
-    classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, comparison="IGHV")
-
-    # CD38 expression
-    sel_samples = [s for s in samples if s.CD38_positive is not pd.np.nan]
-    labels = np.array([1 if s.CD38_positive else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="CD38", rerun=True)
-
-    # ZAP70 expression
-    sel_samples = [s for s in samples if s.ZAP70_positive is not pd.np.nan]
-    labels = np.array([1 if s.ZAP70_positive else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="ZAP70", rerun=True)
-
-    # ZAP70 mono-allelic expression
-    sel_samples = [s for s in samples if s.ZAP70_monoallelic_methylation is not pd.np.nan]
-    labels = np.array([1 if s.ZAP70_monoallelic_methylation else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="ZAP70_monoallelic", rerun=True)
-
-    # Disease at Diagnosis - comparison in untreated samples
-    # Primary vs Secondary CLL (progressed from MBL and SLL)
-    # Positive class are samples diagnosed with CLL in the earliest timepoint not under treatment
-    # Negative class are samples diagnosed with other (MBL or SLL)
-    sel_samples = [s for s in samples if s.diagnosis_disease is not pd.np.nan and not s.under_treatment and s.timepoint == 1]
-    labels = np.array([1 if s.diagnosis_disease == "CLL" else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="primary_CLL", rerun=True)
-
-    # Treatments:
-    # Under treatment
-    sel_samples = [s for s in samples if s.under_treatment is not pd.np.nan]
-    labels = np.array([1 if s.under_treatment else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="treated", rerun=True)
-
-    # independent validation
-    train_samples = [s for s in samples if s.under_treatment is not pd.np.nan and s.hospital != "AKH"]
-    train_labels = np.array([1 if s.under_treatment else 0 for s in train_samples])
-    val_samples = [s for s in samples if s.under_treatment is not pd.np.nan and s.hospital == "AKH"]
-    val_labels = np.array([1 if s.under_treatment else 0 for s in val_samples])
-    classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, comparison="treated")
-
-    # Under treament but with different types
-    # Chemotherapy
-    # chemo_drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR']
-    # sel_samples = [s for s in samples if s.under_treatment]
-    # labels = np.array([1 if s.treatment_type in chemo_drugs else 0 for s in sel_samples])
-    # classify_samples(analysis, sel_samples, labels, comparison="chemo_treated", rerun=True)
-
-    # # B cell antibodies
-    # target_drugs = ['Alemtuz', 'Ibrutinib']
-    # sel_samples = [s for s in samples if s.under_treatment]
-    # labels = np.array([1 if s.treatment_type in target_drugs else 0 for s in sel_samples])
-    # classify_samples(analysis, sel_samples, labels, comparison="target_treated", rerun=True)
-
-    # Ibrutinib (particular for AKH cohort)
-    # Samples from AKH
-    # Positive label: after ibrubinib treatment
-    # Negative label: before ibrubinib treatment
-    sel_samples = [s for s in samples if s.hospital == "AKH"]
-    labels = np.array([1 if s.under_treatment else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="ibrutinib", rerun=True)
-
-    # Mutations / abnormalities
-    # positive against all
-    dels = ['del13', 'del11', 'tri12', "del17p"]  # "drivers"
-    muts = dels + ['SF3B1', 'ATM', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
-    # see mutations:
-    # Counter([x for s in analysis.samples if s.cell_line == "CLL" and s.library == "ATAC-seq" for x in s.mutations])
-    for mut in muts:
-        # later add as well:
-        # IGHVun +/- del; IGHVmut +/- del
-        sel_samples = [s for s in samples if s.mutations is not pd.np.nan]
-        labels = np.array([1 if mut in s.mutations else 0 for s in sel_samples])
-        classify_samples(analysis, sel_samples, labels, comparison=mut, rerun=True)
-
-        if mut in dels and mut != "del17p":
+    for trait in traits:
+        if trait != "ibrutinib":
+            sel_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan]
+            labels = np.array([getattr(s, trait) for s in sel_samples])
+            classify_samples(analysis, sel_samples, labels, comparison=trait, rerun=True)
             # independent validation
-            train_samples = [s for s in samples if s.mutations is not pd.np.nan and s.hospital != "AKH"]
-            train_labels = np.array([1 if mut in s.mutations else 0 for s in train_samples])
-            val_samples = [s for s in samples if s.mutations is not pd.np.nan and s.hospital == "AKH"]
-            val_labels = np.array([1 if mut in s.mutations else 0 for s in val_samples])
-            classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, comparison=mut)
-
-    # Relapse
-    # "relapse", ("True", "False", rerun=True), # relapse or before relapse
-    sel_samples = [s for s in samples if s.relapse in [1, 0]]
-    labels = np.array([1 if s.relapse else 0 for s in sel_samples])
-    classify_samples(analysis, sel_samples, labels, comparison="relapse", rerun=True)
-
-    # # Early vs Late
-    # # "progression", ("True", "False", rerun=True), # early vs late timepoint
-    # sel_samples = [s for s in samples if type(s.diagnosis_collection) is bool]
-    # labels = np.array([1 if s.diagnosis_collection else 0 for s in sel_samples])
-    # classify_samples(analysis, sel_samples, labels, comparison="early_diagnosis", rerun=True)
+            if trait in ["gender", "IGHV", "CD38", "treated"]:
+                train_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan and s.hospital != "AKH"]
+                train_labels = np.array([getattr(s, trait) for s in sel_samples])
+                val_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan and s.hospital == "AKH"]
+                val_labels = np.array([getattr(s, trait) for s in sel_samples])
+                classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, comparison=trait)
+        # for ibrutinib, train only on AKH samples
+        else:
+            sel_samples = [s for s in samples if s.hospital == "AKH"]
+            labels = np.array([1 if s.under_treatment else 0 for s in sel_samples])
+            classify_samples(analysis, sel_samples, labels, comparison=trait, rerun=True)
 
 
 def join_trait_specific_regions(analysis, traits):
@@ -2660,21 +2612,9 @@ def get_signatures(analysis):
 
     # Clinical traits
     traits = ["IGHV", "CD38", "ZAP70", "primary_CLL", "treated", "chemo_treated", "target_treated"]
-    muts = ['del11', 'tri12']  # abnormalities
+    muts = ['del11', 'tri12', 'del17']  # chrom abs
     muts += ['TP53']  # mutations
     traits += muts
-
-    # Under treament but with different types
-    # Chemotherapy
-    chemo_drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR']
-    target_drugs = ['Alemtuz', 'Ibrutinib']
-    muts = ['del13', 'del11', 'tri12']  # "drivers"
-    muts += ['SF3B1', 'ATM', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']
-    for sample in analysis.samples:
-        sample.chemo_treated = True if sample.treatment_active and sample.treatment_type in chemo_drugs else False
-        sample.target_treated = True if sample.treatment_active and sample.treatment_type in target_drugs else False
-        for mut in muts:
-            setattr(sample, mut, True if type(sample.mutations) is list and mut in sample.mutations else False)
 
     # Position each patient within the trait-specific chromatin signature
     fig, axis = plt.subplots(nrows=2, ncols=5, sharex=False, sharey=False, figsize=(20, 8))
