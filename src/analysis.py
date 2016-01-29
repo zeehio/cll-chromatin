@@ -3200,9 +3200,23 @@ def create_clinical_epigenomic_space(analysis, traits):
     plt.savefig(output_pdf, bbox_inches='tight')
     plt.close("all")
 
-    # # see fraction of features from total which are explained with clinical associations
-    # features.shape[0]
-    # features[['chrom', 'start', 'end']].drop_duplicates().shape[0]  # unique chromatin features
+    # Get numbers for fractions of regions associated with traits
+    trait_associated = features[['chrom', 'start', 'end']].drop_duplicates().shape[0]  # unique trait-associated features
+    total = len(analysis.sites)  # unique total features
+    variable = analysis.coverage_qnorm_annotated[analysis.coverage_qnorm_annotated["dispersion"] > 0.5].shape[0]  # unique "variable" regions
+    # fraction of total discovered regions associated with a clinical trait
+    fraction_total = trait_associated / float(total)
+    # fraction of variable regions associated with a clinical trait
+    fraction_variable = trait_associated / float(variable)
+    # write these numbers out
+    fig, axis = plt.subplots(2)
+    sns.stripplot(["total", "variable"], [total, variable], ax=axis[0])
+    axis[0].set_xlim((0, total))
+    sns.stripplot(["fraction_total", "fraction_variable"], [fraction_total, fraction_variable], ax=axis[1])
+    axis[1].set_xlim((0, 1))
+    fig.savefig(os.path.join(analysis.plots_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.fraction_regions_with_traits.svg"), bbox_inches='tight')
+
+    # Build space
     fig, axis = plt.subplots(nrows=2, ncols=5, sharex=True, sharey=True, figsize=(60, 20))
     for i in range(1, len(traits) + 1):
         print(traits[:i])
