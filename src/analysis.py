@@ -2044,7 +2044,7 @@ def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
             "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_labels.svg" % trait))
 
         # colors of the direction each region is associated to
-        region_colors = dict(zip([1, 0], sns.color_palette("colorblind")[1:3]))
+        region_colors = dict(zip([1, -1], sns.color_palette("colorblind")[1:3]))
         colors = [region_colors[c] for c in dataframe['direction']]
         sns.clustermap(
             x,
@@ -3176,7 +3176,7 @@ def create_clinical_epigenomic_space(analysis, traits):
         fig.savefig(output_pdf, bbox_inches='tight')
 
     # read in trait-specific regions
-    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), sep="\t")
+    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"))
 
     # Plot matrix of overlap between sets
     m = pd.DataFrame()  # build matrix of common features
@@ -3306,10 +3306,7 @@ def describe_patients_clinically(analysis):
     # because they exist in either only one patient
 
     # Read trait-specific chromatin regions in one matrix
-    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), sep="\t")
-
-    # add direction of chromatin feature association with clinical feature
-    features['direction'] = features['change'].apply(lambda x: 1 if x > 0 else -1)
+    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"))
 
     # sum vectors for each clinical variable, dependent on the direction of the features (positive or negatively associated)
     df = features.groupby(['trait', 'direction'])[[s.name for s in analysis.samples]].aggregate(np.nanmedian)
@@ -3355,14 +3352,14 @@ def describe_patients_clinically(analysis):
     plt.savefig(os.path.join(analysis.plots_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.sample_rank_dist_features.svg"), bbox_inches='tight')
 
 
-def compare_go_terms(cluster_labels, file_names, plot, p_value=0.05, n_max=35):
+def compare_go_terms(labels, file_names, plot, p_value=0.05, n_max=35):
     """
     """
     for i, _ in enumerate(file_names):
         # read in file
         df = pd.read_csv(file_names[i])
         # label as cluster
-        df['cluster'] = cluster_labels[i]
+        df['direction'] = labels[i]
         # append / concatenate
         if i == 0:
             df2 = df
@@ -3372,9 +3369,9 @@ def compare_go_terms(cluster_labels, file_names, plot, p_value=0.05, n_max=35):
     # make readable name
     df2['name'] = (df2['Name'] + " (" + df2['GOID'] + ")").tolist()
     # melt
-    df3 = pd.melt(df2, value_vars=['FDR'], id_vars=['name', 'cluster'])
+    df3 = pd.melt(df2, value_vars=['FDR'], id_vars=['name', 'direction'])
     # expand to two axis terms/cluster, fill with p=1
-    df3 = df3.pivot('name', 'cluster', 'value').replace(np.nan, 1)
+    df3 = df3.pivot('name', 'direction', 'value').replace(np.nan, 1)
 
     # filter p-values
     df3 = df3[(df3[1] < p_value) | (df3[2] < p_value)]
@@ -3395,14 +3392,14 @@ def compare_go_terms(cluster_labels, file_names, plot, p_value=0.05, n_max=35):
     plt.savefig(plot, bbox_inches='tight')
 
 
-def compare_pathway_enrichment(cluster_labels, file_names, plot, p_value=0.05, n_max=35):
+def compare_pathway_enrichment(labels, file_names, plot, p_value=0.05, n_max=35):
     """
     """
     for i, _ in enumerate(file_names):
         # read in file
         df = pd.read_csv(file_names[i])
         # label as cluster
-        df['cluster'] = cluster_labels[i]
+        df['direction'] = labels[i]
         # append / concatenate
         if i == 0:
             df2 = df
@@ -3412,10 +3409,10 @@ def compare_pathway_enrichment(cluster_labels, file_names, plot, p_value=0.05, n
     # make readable name
     df2['name'] = (df2['#Term'] + " (" + df2['Database'] + " " + df2['ID'].astype(str) + ")").tolist()
     # melt
-    df3 = pd.melt(df2, value_vars=['P-Value'], id_vars=['name', 'cluster'])
+    df3 = pd.melt(df2, value_vars=['P-Value'], id_vars=['name', 'direction'])
     df3.drop_duplicates(inplace=True)
     # expand to two axis terms/cluster, fill with p=1
-    df3 = df3.pivot('name', 'cluster', 'value').replace(np.nan, 1)
+    df3 = df3.pivot('name', 'direction', 'value').replace(np.nan, 1)
 
     # filter p-values
     df4 = df3[(df3[1] < p_value) | (df3[2] < p_value)]
@@ -3432,14 +3429,14 @@ def compare_pathway_enrichment(cluster_labels, file_names, plot, p_value=0.05, n
     plt.savefig(plot, bbox_inches='tight')
 
 
-def compare_lola_enrichment(cluster_labels, file_names, plot, p_value=20, n_max=35):
+def compare_lola_enrichment(labels, file_names, plot, p_value=20, n_max=35):
     """
     """
     for i, _ in enumerate(file_names):
         # read in file
         df = pd.read_csv(file_names[i], sep="\t")
         # label as cluster
-        df['cluster'] = cluster_labels[i]
+        df['direction'] = labels[i]
         # append / concatenate
         if i == 0:
             df2 = df
@@ -3449,10 +3446,10 @@ def compare_lola_enrichment(cluster_labels, file_names, plot, p_value=20, n_max=
     # make readable name
     df2['name'] = (df2['description'] + " (" + df2['tissue'] + " " + df2['antibody'] + ")").tolist()
     # melt
-    df3 = pd.melt(df2, value_vars=['pValueLog'], id_vars=['name', 'cluster'])
-    df3.drop_duplicates(['name', 'cluster'], inplace=True)
+    df3 = pd.melt(df2, value_vars=['pValueLog'], id_vars=['name', 'direction'])
+    df3.drop_duplicates(['name', 'direction'], inplace=True)
     # expand to two axis terms/cluster, fill with p=1
-    df3 = df3.pivot('name', 'cluster', 'value').replace(np.nan, 1)
+    df3 = df3.pivot('name', 'direction', 'value').replace(np.nan, 1)
 
     # filter p-values
     df4 = df3[(df3[1] > p_value) | (df3[2] > p_value)]
@@ -3467,6 +3464,28 @@ def compare_lola_enrichment(cluster_labels, file_names, plot, p_value=20, n_max=
     # plot matrix of clusters/terms with p_values
     sns.clustermap(df4.ix[index], col_cluster=False, cmap=plt.cm.YlGn_r)
     plt.savefig(plot, bbox_inches='tight')
+
+
+def compare_regions(analysis, traits):
+    for trait in traits:
+        output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks" % trait)
+        compare_go_terms(
+            [1, -1],
+            [os.path.join(output_dir, "%s_direction%i_regions.seq2pathway.csv" % (trait, direction)) for direction in [1, -1]],
+            os.path.join(output_dir, "%s_direction%i_regions.goterm_enrichment.svg" % (trait, direction)),
+            p_value=0.05)
+
+        compare_pathway_enrichment(
+            [1, -1],
+            [os.path.join(output_dir, "%s_direction%i_regions.pathway_enrichment.csv" % (trait, direction)) for direction in [1, -1]],
+            os.path.join(output_dir, "%s_direction%i_regions.pathway_enrichment.svg" % (trait, direction)),
+            p_value=0.05)
+
+        compare_lola_enrichment(
+            [1, -1],
+            [os.path.join(output_dir, "%s_direction%i_regions/lola/allEnrichments.txt" % (trait, direction)) for direction in [1, -1]],
+            os.path.join(output_dir, "%s_direction%i_regions.lola.svg" % (trait, direction)),
+            p_value=0.05)
 
 
 def main():
@@ -3573,6 +3592,7 @@ def main():
     muts += ['TP53']  # mutations
     traits += muts
     trait_analysis(analysis, atac_seq_samples, traits)
+
     # Inspect which traits have good performance
     traits = ["IGHV", "CD38", "ZAP70", "treated", "primary_CLL", "chemo_treated", "target_treated", "del11", "tri12", "del17"]
     # here I am removing traits which had poor classification performance or too few patients associated
@@ -3583,6 +3603,10 @@ def main():
     # structurally, functionaly and in light of histone marks
     characterize_regions(analysis, traits)
     characterize_regions_chromatin(analysis, traits)
+
+    # Compare trait-associated regions
+    compare_regions(analysis, traits)
+
     # Clinical trait signatures and enrichment of samples in them
     get_signatures(analysis, traits)
 
@@ -3592,42 +3616,9 @@ def main():
     # Describe patient across clinical epigenomics axis
     describe_patients_clinically(analysis)
 
-    #
-
-    # Post-processing
-
-    # Compare go terms/LOLA results from regions
-    # compare_go_terms(
-    #     [1, 2],
-    #     ["data/mutation_peaks_cluster1/mutation_cluster1_regions.seq2pathway.csv', 'data/mutation_peaks_cluster2/mutation_cluster2_regions.seq2pathway.csv'],
-    #     "results/plots/mutation_regions.goterm_enrichment.svg",
-    #     p_value=0.05)
-
-    # compare_pathway_enrichment(
-    #     [1, 2],
-    #     ['data/mutation_peaks_cluster1/mutation_cluster1_regions.pathway_enrichment.csv', 'data/mutation_peaks_cluster2/mutation_cluster2_regions.pathway_enrichment.csv'],
-    #     "results/plots/mutation_regions.pathway_enrichment.svg",
-    #     p_value=0.05)
-
-    # compare_pathway_enrichment(
-    #     [1, 2],
-    #     ['data/mutation_peaks_cluster1/mutation_cluster1_regions.disease_enrichment.csv', 'data/mutation_peaks_cluster2/mutation_cluster2_regions.disease_enrichment.csv'],
-    #     "results/plots/mutation_regions.disease_enrichment.svg",
-    #     p_value=0.05)
-
-    # compare_lola_enrichment(
-    #     [1, 2],
-    #     ['data/mutation_peaks_cluster1/lola/allEnrichments.txt', 'data/mutation_peaks_cluster2/lola/allEnrichments.txt'],
-    #     "results/plots/mutation_regions.lola_enrichment.svg",
-    #     p_value=0.05)
-
     # # save "digested" clinical sheet to disk
-    # if args.generate:
-    #     fields = [
-    #         'sampleName', 'diagnosis_disease', 'diagnosis_date', 'collection_date', 'time_since_diagnosis',
-    #         'diagnosis_collection', "under_treatment", 'previous_treatment_date', 'time_since_treatment',
-    #         'treatment_regimen', 'treatment_response', 'relapse']
-    #     prj.sheet.asDataFrame()[fields].drop_duplicates().to_csv("clinical_annotation_digested.csv", index=False)
+    if args.generate:
+        prj.sheet.asDataFrame().drop_duplicates().to_csv("clinical_annotation_digested.csv", index=False)
 
 
 if __name__ == '__main__':
