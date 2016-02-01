@@ -37,8 +37,8 @@ Absolute values of lymphocytosis (>15,000/mm3) are considered in all stages.
 - Stage 0: no adenopathy, hepatosplenomegaly, anemia, or thrombocytopenia.
 - Stage I: lymphadenopathy without hepatosplenomegaly, anemia, or thrombocytopenia.
 - Stage II: either hepatomegaly or splenomegaly with or without lymphadenopathy.
-- Stage III: anemia (hemoglobin <11 g/dL) with or without lymphadenopathy, hepatomegaly, or splenomegaly.
-- Stage IV: characterized by absolute lymphocytosis and thrombocytopenia (<100,000/mm3) with or without lymphadenopathy, hepatomegaly, splenomegaly, or anemia.
+- Stage III: anemia (hemoglobin less than 11 g/dL) with or without lymphadenopathy, hepatomegaly, or splenomegaly.
+- Stage IV: characterized by absolute lymphocytosis and thrombocytopenia (less than 100,000/mm3) with or without lymphadenopathy, hepatomegaly, splenomegaly, or anemia.
 
 #### Binet Classification
 
@@ -64,7 +64,7 @@ Compiled from various publications (see )
 
 
 ## Classical markers
-- IGHV mutational status (<98% homology is considered mutated)
+- IGHV mutational status (less than 98% homology is considered mutated)
 - cytogenetics
 - CD38 expression
 - ZAP-70 expression (predictive of IGHV mutation status)
@@ -83,6 +83,7 @@ The last three are nowadays considered **not fundamental** for the initiation or
 #### First-line treatments
 
 + B - Bendamustine
++ Benda - Bendamustine
 + BR - Bendamustine, Rituximab
 + 2CDA - Cladribine
 + C - Cyclophosphamide
@@ -111,6 +112,9 @@ The last three are nowadays considered **not fundamental** for the initiation or
 + Fludarabine
 + Rituximab
 + Ibrutinib
++ Lenalidomide (Revlimid)
++ CC292 (BTK inhibitor)
++ Obinutuzumab (GA101)
 
 #### Secondary therapies - combination therapies:
 + BR (bendamustine and rituximab)
