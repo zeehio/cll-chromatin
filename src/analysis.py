@@ -1998,39 +1998,35 @@ def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
             "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.mean_importance.svg" % trait), bbox_inches="tight")
         plt.close("all")
 
-        # get important features
-        # n = 500; x = matrix.loc[np.argsort(mean_importance)[-n:], :] # get n top features
-        # or
-        # Get most informative features
-        matrix = analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]]
-        x = matrix.loc[[i for i, j in enumerate(mean_importance > 1e-4) if j == True], :]  # get features on the tail of the importance distribution
-        sites_cluster = sns.clustermap(
-            x,
-            cmap=cmap,
-            standard_scale=0,
-            col_colors=trait_colors,
-            yticklabels=False)
-        plt.savefig(os.path.join(
-            analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.svg" % trait), bbox_inches="tight")
-        plt.close("all")
-
-        # SEE ALL SAMPLES
+        # SEE VALUES OF ALL SAMPLES IN IMPORTANT FEATURES
         # Display most informative features for ALL samples:
         matrix = analysis.coverage_qnorm_annotated[[s.name for s in all_samples]]
         # get important features
         x = matrix.loc[[i for i, j in enumerate(mean_importance > 1e-4) if j == True], :]  # get features on the tail of the importance distribution
 
-        # get colors for each cluster
-        group_number = 4 if trait == "IGHV" else 2  # 4 IGHV groups, everything else 2
-        # cluster all samples first
-        samples_cluster = sns.clustermap(x.corr())
-        # get cluster labels for samples
-        Z = samples_cluster.dendrogram_col.linkage
-        clusters = fcluster(Z, group_number, criterion="maxclust")
-        # get cluster colors
-        cluster_colors = dict(zip(np.unique(clusters), sns.color_palette("colorblind")))
-        colors = [cluster_colors[c] for c in clusters]
+        # Add info
+        dataframe = analysis.coverage_qnorm_annotated.loc[x.index, :]
+        # add difference of standardized openness between positive and negative groups used in classification
+        df2 = dataframe[[s.name for s in sel_samples]].apply(lambda j: (j - j.min()) / (j.max() - j.min()), axis=0)
+        dataframe["change"] = df2.icol([i for i, l in enumerate(labels) if l == 1]).mean(axis=1) - df2.icol([i for i, l in enumerate(labels) if l == 0]).mean(axis=1)
+        # add direction of chromatin feature association with trait
+        dataframe['direction'] = dataframe['change'].apply(lambda x: 1 if x > 0 else -1)
+        # add feature importance
+        dataframe["importance"] = mean_importance[x.index]
+
+        # Save whole dataframe as csv
+        dataframe_file = os.path.join(
+            analysis.data_dir,
+            "trait_specific",
+            "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
+        dataframe.to_csv(dataframe_file, index=False)
+
+        # Save as bed
+        bed_file = os.path.join(
+            analysis.data_dir,
+            "trait_specific",
+            "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % trait)
+        dataframe[["chrom", "start", "end"]].to_csv(bed_file, sep="\t", header=False, index=False)
 
         # sample correlation dendrogram
         sns.clustermap(
@@ -2047,20 +2043,9 @@ def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
             analysis.plots_dir,
             "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_labels.svg" % trait))
 
-        # REGIONS
-        # Split in major groups
-        if trait == "gender":
-            gr = 2
-        elif trait == "IGHV":
-            gr = 4
-        else:
-            gr = 5
-        Z = sites_cluster.dendrogram_row.linkage
-        clusters = fcluster(Z, gr, criterion="maxclust")
-        # # visualize  cluster site attribution
-        # # get cluster colors
-        cluster_colors = dict(zip(np.unique(clusters), sns.color_palette("colorblind")))
-        colors = [cluster_colors[c] for c in clusters]
+        # colors of the direction each region is associated to
+        region_colors = dict(zip([1, 0], sns.color_palette("colorblind")[1:3]))
+        colors = [region_colors[c] for c in dataframe['direction']]
         sns.clustermap(
             x,
             cmap=cmap,
@@ -2073,31 +2058,8 @@ def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
             "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sites_labels.svg" % trait), bbox_inches="tight")
         plt.close("all")
 
-        # Export info
-        dataframe = analysis.coverage_qnorm_annotated.loc[x.index, :]
-        # add difference of standardized openness between positive and negative groups used in classification
-        df2 = dataframe[[s.name for s in sel_samples]].apply(lambda j: (j - j.min()) / (j.max() - j.min()), axis=0)
-        dataframe["change"] = df2.icol([i for i, l in enumerate(labels) if l == 1]).mean(axis=1) - df2.icol([i for i, l in enumerate(labels) if l == 0]).mean(axis=1)
-        # add feature importance
-        dataframe["importance"] = mean_importance[x.index]
-        # get cluster labels for sites
-        dataframe["cluster"] = clusters
-        # Save whole dataframe as csv
-        dataframe_file = os.path.join(
-            analysis.data_dir,
-            "trait_specific",
-            "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
-        dataframe.to_csv(dataframe_file, index=False)
 
-        # Save as bed
-        bed_file = os.path.join(
-            analysis.data_dir,
-            "trait_specific",
-            "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % trait)
-        dataframe[["chrom", "start", "end"]].to_csv(bed_file, sep="\t", header=False, index=False)
-
-
-def characterize_regions(analysis, traits):
+def characterize_regions(analysis, traits, nmin=100):
     """
     Characterize structural-, functionally and in the chromatin regions trait-specific regions.
     """
@@ -2125,24 +2087,24 @@ def characterize_regions(analysis, traits):
         output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks" % trait)
         characterize_regions_function(df=dataframe, output_dir=output_dir, prefix=trait)
 
-        # CLUSTERS OF REGIONS
+        # GROUPS OF REGIONS
         # Region characterization of each cluster of regions
-        for i, cluster in enumerate(np.unique(dataframe['cluster'])):
-            # GET REGIONS FROM CLUSTER
-            df = dataframe[dataframe['cluster'] == cluster]
+        for i, direction in enumerate(np.unique(dataframe['direction'])):
+            # GET REGIONS FROM direction
+            df = dataframe[dataframe['direction'] == direction]
 
-            # ignore clusters with less than 20 regions
-            if len(df) < 20:
+            # ignore groups of regions with less than nmin regions
+            if len(df) < nmin:
                 continue
 
             # output folder
-            outdir = os.path.join("%s_cluster%i" % (trait, cluster))
+            outdir = os.path.join("%s_direction%i" % (trait, direction))
             if not os.path.exists(outdir):
                 os.makedirs(outdir)
 
             # region's structure
-            regions = characterize_regions_structure(df=df, prefix="%s_cluster%i" % (trait, cluster), universe_df=analysis.coverage_qnorm_annotated)
-            regions['cluster'] = cluster
+            regions = characterize_regions_structure(df=df, prefix="%s_direction%i" % (trait, direction), universe_df=analysis.coverage_qnorm_annotated)
+            regions['direction'] = direction
 
             if i == 0:
                 df3 = regions
@@ -2150,12 +2112,12 @@ def characterize_regions(analysis, traits):
                 df3 = df3.append(regions)
 
             # region's function
-            output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks_cluster%i" % (trait, cluster))
-            characterize_regions_function(df=df, output_dir=output_dir, prefix="%s_cluster%i" % (trait, cluster))
+            output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks_direction%i" % (trait, direction))
+            characterize_regions_function(df=df, output_dir=output_dir, prefix="%s_direction%i" % (trait, direction))
 
             # # parse meme-ame output
             # motifs = pd.DataFrame(parse_ame(os.path.join(output_dir, "meme")), columns=['motifs', 'q_values'])
-            # motifs['cluster'] = cluster
+            # motifs['direction'] = direction
             # if i == 0:
             #     df2 = motifs
             # else:
@@ -2167,13 +2129,13 @@ def characterize_regions(analysis, traits):
         df3 = df3.replace(np.nan, 0)
 
         g = sns.FacetGrid(col="region", data=df3[df3['variable'] == 'genomic_region'], col_wrap=3, sharey=True)
-        g.map(sns.barplot, "cluster", "value")
+        g.map(sns.barplot, "direction", "value")
         plt.savefig(os.path.join(
             analysis.plots_dir,
             "trait_specific", "%s_regions.region_enrichment.svg" % trait), bbox_inches="tight")
 
         g = sns.FacetGrid(col="region", data=df3[df3['variable'] == 'chromatin_state'], col_wrap=3, sharey=True)
-        g.map(sns.barplot, "cluster", "value")
+        g.map(sns.barplot, "direction", "value")
         plt.savefig(os.path.join(
             analysis.plots_dir,
             "trait_specific", "%s_regions.chromatin_state_enrichment.svg" % trait), bbox_inches="tight")
@@ -2186,9 +2148,9 @@ def characterize_regions(analysis, traits):
         # # Plot motif enrichments
         # df2['q_values'] = -np.log10(np.array(df2['q_values'], dtype=float))
         # # get highest (worst) p-value from motifs of the same TF
-        # df3 = df2.groupby(['motifs', 'cluster']).aggregate(max).reset_index()
-        # # spread again for each cluster
-        # df3 = df3.pivot('motifs', 'cluster', 'q_values')
+        # df3 = df2.groupby(['motifs', 'direction']).aggregate(max).reset_index()
+        # # spread again for each direction
+        # df3 = df3.pivot('motifs', 'direction', 'q_values')
         # # replace nan with 0
         # df3 = df3.replace(np.nan, 0)
         # # fix types
@@ -2324,6 +2286,24 @@ def classification_validation(analysis, train_samples, train_labels, val_samples
         "trait_specific", "cll_peaks.%s_significant.classification_validation.random_forest.loocv.ROC_PRC.svg" % comparison), bbox_inches="tight")
 
 
+def export_matrices(analysis, sel_samples, labels, trait, validation=""):
+    """
+    Use a machine learning approach for sample classification based on known sample attributes.
+    Extract features most important to separate samples and investigate those.
+    """
+    print("Trait:%s" % trait)
+    print("%i samples with trait annotated" % len(sel_samples))
+    print(Counter(labels))
+
+    # BINARY CLASSIFICATION ON ALL CLL OPEN CHROMATIN REGIONS
+    # get features and labels
+    X = pd.DataFrame(normalize(analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]].T), index=[s.name for s in sel_samples])
+    X['target'] = labels
+
+    outfile_file = "/home/arendeiro/cll-ml/ml_matrix.%s.%scsv" % (trait, validation)
+    X.T.to_csv(outfile_file, index=True)
+
+
 def trait_analysis(analysis, samples, traits):
     """
     Run trait classification (with independent validation if possible for that trait)
@@ -2335,6 +2315,8 @@ def trait_analysis(analysis, samples, traits):
             sel_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan]
             labels = np.array([getattr(s, trait) for s in sel_samples])
             classify_samples(analysis, sel_samples, labels, trait, rerun=True)
+            export_matrices(analysis, sel_samples, labels, trait)
+
             # classification with independent validation
             if trait in ["gender", "IGHV", "CD38", "treated"]:
                 train_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan and s.hospital != "AKH"]
@@ -2342,11 +2324,14 @@ def trait_analysis(analysis, samples, traits):
                 val_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan and s.hospital == "AKH"]
                 val_labels = np.array([getattr(s, trait) for s in val_samples])
                 classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, trait)
+                export_matrices(analysis, val_samples, val_labels, trait, validation="validation.")
+
         # for ibrutinib, train only on AKH samples
         else:
             sel_samples = [s for s in samples if s.hospital == "AKH"]
             labels = np.array([1 if s.under_treatment else 0 for s in sel_samples])
             classify_samples(analysis, sel_samples, labels, trait, rerun=True)
+            export_matrices(analysis, sel_samples, labels, trait)
 
 
 def join_trait_specific_regions(analysis, traits):
@@ -2364,9 +2349,6 @@ def join_trait_specific_regions(analysis, traits):
             features = features.append(df, ignore_index=True)
         except IOError:
             print("Trait %s did not generate any associated regions" % trait)
-
-    # add direction of chromatin feature association with clinical feature
-    features['direction'] = features['change'].apply(lambda x: 1 if x > 0 else -1)
 
     # # Save whole dataframe as csv
     features.to_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), index=False)
