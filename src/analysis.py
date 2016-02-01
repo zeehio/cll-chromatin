@@ -1318,13 +1318,13 @@ def samples_to_color(samples, method="mutation"):
         drugs = ['Alemtuz', "Ibrutinib"]
         colors = list()
         for sample in samples:
-            if sample.treatment_active is False and sample.relapse is False:
+            if sample.under_treatment is False and sample.relapse is False:
                 colors.append('peru')  # untreated samples
-            elif sample.treatment_active is True and sample.treatment_type not in drugs:
+            elif sample.under_treatment is True and sample.treatment_regimen not in drugs:
                 colors.append('black')  # chemo
-            elif sample.treatment_active is True and sample.treatment_type in drugs:
+            elif sample.under_treatment is True and sample.treatment_regimen in drugs:
                 colors.append('green')  # antibodies
-            elif sample.treatment_active is True and sample.treatment_type == "":
+            elif sample.under_treatment is True and sample.treatment_regimen == "":
                 colors.append('grey')  # no info
             else:
                 colors.append('grey')  # no info
@@ -1408,22 +1408,22 @@ def annotate_clinical_traits(samples):
     # for i, s in enumerate(samples): s.early = t[i]
 
     # Annotate samples which are under treament but with different types
-    chemo_drugs = ['Chlor', 'Chlor R', 'B Of', 'BR', 'CHOPR']  # Chemotherapy
-    target_drugs = ['Alemtuz', 'Ibrutinib']  # targeted treatments
-    muts = ['del13', 'del11', 'tri12', 'del17']  # chrom abnorms
-    muts += ['SF3B1', 'ATM', 'NOTCH1', 'BIRC3', 'BCL2', 'TP53', 'MYD88', 'CHD2', 'NFKIE']  # mutations
+    chemo_drugs = ["Chlor", "Chlor R", "B Of", "BR", "CHOPR"]  # Chemotherapy
+    target_drugs = ["Alemtuz", "Ibrutinib"]  # targeted treatments
+    muts = ["del13", "del11", "tri12", "del17"]  # chrom abnorms
+    muts += ["SF3B1", "ATM", "NOTCH1", "BIRC3", "BCL2", "TP53", "MYD88", "CHD2", "NFKIE"]  # mutations
     for sample in samples:
-        sample.chemo_treated = True if sample.treatment_active and sample.treatment_type in chemo_drugs else False
-        sample.target_treated = True if sample.treatment_active and sample.treatment_type in target_drugs else False
+        sample.chemo_treated = True if sample.under_treatment and sample.treatment_regimen in chemo_drugs else False
+        sample.target_treated = True if sample.under_treatment and sample.treatment_regimen in target_drugs else False
         for mut in muts:
-            setattr(sample, mut, True if type(sample.mutations) is list and mut in sample.mutations else False)
+            setattr(sample, mut, True if sample.mutations is not pd.np.nan and mut in sample.mutations else False)
 
     return samples
 
 
 def annotate_disease_treatments(samples):
     """
-    Annotate samples with timepoint, treatment_status, treatment_type
+    Annotate samples with timepoint, treatment_status, treatment_regimen
     """
     def string_to_date(string):
         if type(string) is str:
@@ -1474,8 +1474,8 @@ def annotate_samples(samples):
             "igvh_gene", "igvh_homology", "igvh_mutation_status", "CD38_cells_percentage", "CD38_positive", "CD38_measurement_date", "CD38_changed",
             "ZAP70_cells_percentage", "ZAP70_positive", "ZAP70_monoallelic_methylation", "sample_collection_date", "storage_condition", "lymp_count",
             "mutations", "sample_shippment_batch", "sample_cell_number", "sample_experiment_name", "sample_processing_date", "sample_viability"
-            "diagnosis_collection", "diagnosis_date", "diagnosis_disease", "time_since_treatment", "treatment_type",
-            "treatment_response", "treatment_active", "treated", "previous_treatment_date", "previous_response", "relapse"]
+            "diagnosis_collection", "diagnosis_date", "diagnosis_disease", "time_since_treatment", "treatment_regimen",
+            "treatment_response", "treated", "previous_treatment_date", "previous_response", "relapse"]
         for attr in attrs:
             if not hasattr(sample, attr):
                 setattr(sample, attr, pd.np.nan)
@@ -1913,12 +1913,9 @@ def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
         all_samples_colors = [trait_colors[sel_samples.index(s)] if s in sel_samples else "gray" for s in all_samples]
         cmap = sns.cubehelix_palette(8, start=.5, rot=-.75, as_cmap=True)  # for later usage in heatmaps
 
-        # ALL CLL OPEN CHROMATIN REGIONS
-        matrix = analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]]
-
-        # BINARY CLASSIFICATION
+        # BINARY CLASSIFICATION ON ALL CLL OPEN CHROMATIN REGIONS
         # get features and labels
-        X = normalize(matrix).T
+        X = normalize(analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]].T)
         y = np.array(labels)
 
         loo = cross_validation.LeaveOneOut(len(X))
@@ -2285,7 +2282,7 @@ def classification_validation(analysis, train_samples, train_labels, val_samples
     y_val = np.array(val_labels)
 
     # Train, predict
-    classifier = RandomForestClassifier(n_estimators=10, n_jobs=-1)
+    classifier = RandomForestClassifier(n_estimators=100, n_jobs=-1)
     y_score = classifier.fit(X_train, y_train).predict_proba(X_val)
 
     # Metrics
@@ -2339,24 +2336,28 @@ def classification_validation(analysis, train_samples, train_labels, val_samples
 
 
 def trait_analysis(analysis, samples, traits):
-
+    """
+    Run trait classification (with independent validation if possible for that trait)
+    on all samples with known annotation of the trait.
+    """
     for trait in traits:
         if trait != "ibrutinib":
+            # cross-validated classification
             sel_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan]
             labels = np.array([getattr(s, trait) for s in sel_samples])
-            classify_samples(analysis, sel_samples, labels, comparison=trait, rerun=True)
-            # independent validation
+            classify_samples(analysis, sel_samples, labels, trait, rerun=True)
+            # classification with independent validation
             if trait in ["gender", "IGHV", "CD38", "treated"]:
                 train_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan and s.hospital != "AKH"]
-                train_labels = np.array([getattr(s, trait) for s in sel_samples])
+                train_labels = np.array([getattr(s, trait) for s in train_samples])
                 val_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan and s.hospital == "AKH"]
-                val_labels = np.array([getattr(s, trait) for s in sel_samples])
-                classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, comparison=trait)
+                val_labels = np.array([getattr(s, trait) for s in val_samples])
+                classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, trait)
         # for ibrutinib, train only on AKH samples
         else:
             sel_samples = [s for s in samples if s.hospital == "AKH"]
             labels = np.array([1 if s.under_treatment else 0 for s in sel_samples])
-            classify_samples(analysis, sel_samples, labels, comparison=trait, rerun=True)
+            classify_samples(analysis, sel_samples, labels, trait, rerun=True)
 
 
 def join_trait_specific_regions(analysis, traits):
@@ -2604,23 +2605,60 @@ def best_signature_matrix(array, matrix):
     # max(cors.values())  # highest correlation value
 
 
-def get_signatures(analysis):
+def pairwise(iterable):
+            from itertools import tee, izip
+            "s -> (s0,s1), (s1,s2), (s2, s3), ..."
+            a, b = tee(iterable)
+            next(b, None)
+            return izip(a, b)
+
+
+def get_signatures(analysis, traits):
     """
+    Assign samples to a trait-related signature
     """
+    def biplot(x, y, samples):
+        # Z-score variables to get them into same space
+        xx = x.apply(lambda j: (j - j.mean()) / j.std(), axis=0)
+        yy = y.apply(lambda j: (j - j.mean()) / j.std(), axis=0)
+
+        # Plot samples and variables in same space (biplot)
+        fig, axis = plt.subplots(nrows=1, ncols=1, sharex=True, sharey=True)
+
+        sample_colors = samples_to_color(samples, "unique")
+        sample_symbols = samples_to_symbol(samples, "unique")
+
+        var_colors = sns.color_palette("Paired", yy.shape[0])
+
+        # Plot observations (samples)
+        samples = pd.DataFrame([pd.Series(sample.__dict__) for sample in samples])
+        for i in range(len(xx)):
+            axis.scatter(xx.ix[i][0], xx.ix[i][1], s=50, color=sample_colors[i], marker=sample_symbols[i], label=x.index[i])
+
+        # Plot variables (clinical features)
+        for i, trait in enumerate(yy.index):
+            axis.plot((0, yy.ix[trait][0]), (0, yy.ix[trait][1]), '-o', color=var_colors[i], label=x.columns[i])
+
+        # # add dashed line between patient's timepoints
+        # for patient, indexes in samples.groupby("patient_id").groups.items():
+        #     for t1, t2 in pairwise(sorted(samples.ix[indexes]["timepoint"])):
+        #         tt1 = samples[(samples["timepoint"] == sorted([t1, t2])[0]) & (samples["patient_id"] == patient)].index
+        #         tt2 = samples[(samples["timepoint"] == sorted([t1, t2])[1]) & (samples["patient_id"] == patient)].index
+        #         if len(tt1) == 1 and len(tt2) == 1:  # this is a problem due to one patient has two timepoints with same number :grrrr:
+        #             axis.annotate(
+        #                 "",  # samples.ix[t1]["patient_id"],
+        #                 xy=(xx.ix[tt1][0].squeeze(), xx.ix[tt1][1].squeeze()), xycoords="data",
+        #                 xytext=(xx.ix[tt2][0].squeeze(), xx.ix[tt2][1].squeeze()), textcoords="data",
+        #                 arrowprops=dict(arrowstyle="fancy", color="0.5", shrinkB=5, connectionstyle="arc3,rad=0.3",),
+        #             )
+        axis.legend()
+
     # Read in openness values in regions associated with clinical traits
     features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), sep="\t")
 
-    # Clinical traits
-    traits = ["IGHV", "CD38", "ZAP70", "primary_CLL", "treated", "chemo_treated", "target_treated"]
-    muts = ['del11', 'tri12', 'del17']  # chrom abs
-    muts += ['TP53']  # mutations
-    traits += muts
-
     # Position each patient within the trait-specific chromatin signature
-    fig, axis = plt.subplots(nrows=2, ncols=5, sharex=False, sharey=False, figsize=(20, 8))
-    axis = axis.flatten()
-
     samples = [s for s in analysis.samples if s.cell_line == "CLL" and s.library == "ATAC-seq"]
+    muts = ['del11', 'tri12', "del17", 'TP53']
     sigs = pd.DataFrame(index=[s.name for s in samples])
     for i, trait in enumerate(traits):
         print(trait)
@@ -2628,14 +2666,17 @@ def get_signatures(analysis):
         # Get trait-specific signature
         # 1. get median accessibility of each group
         x = features[features["trait"] == trait].drop_duplicates(['chrom', 'start', 'end'])
-        if trait != "mutations":
-            x1 = x[[s.name for s in samples if getattr(s, trait) is True]].apply(np.median, axis=1)
-            x2 = x[[s.name for s in samples if getattr(s, trait) is False]].apply(np.median, axis=1)
+        if trait not in muts:
+            x1 = x[[s.name for s in samples if getattr(s, trait) is 1]].apply(np.median, axis=1)
+            x2 = x[[s.name for s in samples if getattr(s, trait) is 0]].apply(np.median, axis=1)
         else:
-            x1 = x[[s.name for s in samples if trait in s.mutations]].apply(np.median, axis=1)
-            x2 = x[[s.name for s in samples if trait in s.mutations]].apply(np.median, axis=1)
+            x1 = x[[s.name for s in samples if getattr(s, trait)]].apply(np.median, axis=1)
+            x2 = x[[s.name for s in samples if not getattr(s, trait)]].apply(np.median, axis=1)
 
         # 2. get signature matrix
+        # here, bounds are set to (-20, 20) so that the extremes of the signature represent -20% or 120% of the signature
+        # this is done because the extreme values (0 and 100%) values correspond to the median value within each group,
+        # meaning that some samples are expected to surpass those values.
         sign = generate_signature_matrix(np.vstack([x1, x2]).T, n=101, bounds=(-20, 20))
 
         # 3. get signature value of each patient
@@ -2646,12 +2687,72 @@ def get_signatures(analysis):
                 trait_sigs.append(best_signature_matrix(array=x[name], matrix=sign))
         sigs[trait] = trait_sigs
 
-        # Plot distribution of signature values
-        sns.distplot(sigs.values(), bins=100, kde=False, ax=axis[i])
+    # Plot distribution of signature values
+    # sns.distplot(trait_sigs, bins=100, kde=False, ax=axis[i])
+    g = sns.FacetGrid(data=pd.melt(sigs), col="variable", col_wrap=4, sharey=False)
+    g.map(sns.distplot, "value")
     # Save fig
     output_pdf = os.path.join(
-        analysis.plots_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.trait_signatures.1001.svg")
+        analysis.plots_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.trait_signatures.101.svg")
+    plt.savefig(output_pdf, bbox_inches='tight')
+
+    # correlate signatures
+    sns.clustermap(sigs.corr())
+    output_pdf = os.path.join(
+        analysis.plots_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.trait_signatures.sigs_correlation.svg")
+    plt.savefig(output_pdf, bbox_inches='tight')
+
+    # correlate samples
+    sns.clustermap(sigs.T.corr())
+    output_pdf = os.path.join(
+        analysis.plots_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.trait_signatures.samples_correlation.svg")
+    plt.savefig(output_pdf, bbox_inches='tight')
+
+    # Plots of signature enrichment vs signature rank
+    fig, axis = plt.subplots(nrows=2, ncols=5, sharex=True, sharey=True, figsize=(20, 8))
+    axis = axis.flatten()
+    for i, trait in enumerate(traits):
+        d = sigs[trait].copy()
+        d.sort()
+
+        sns.distplot(
+            d, bins=50, vertical=True,
+            rug=True, hist=False, kde=False,
+            ax=axis[i])
+        axis[i].set_xlim((0, .05))
+        axis[i].set_ylim((-5, 105))
+
+        for tl in axis[i].get_xticklabels():
+            tl.set_color('blue')
+
+        ax2 = axis[i].twiny()
+        ax2.plot(
+            d.rank(method='first'),
+            d,
+            "-o",
+            color=sns.color_palette("colorblind")[1],
+            label="rank"
+        )
+        ax2.set_ylim((-5, 105))
+        ax2.set_xlim((-10, len(d) + 5))
+        # axis[i].set_title(trait)
+        for tl in ax2.get_xticklabels():
+            tl.set_color('green')
+
+    output_pdf = os.path.join(
+        analysis.plots_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.trait_signatures.rank_distribution.svg")
     fig.savefig(output_pdf, bbox_inches='tight')
+
+    # # PCA on signatures (experimental)
+    # from sklearn.decomposition import PCA
+    # pca = PCA()
+    # x_new = pca.fit_transform(sigs.T)
+
+    # # Variable space
+    # loadings = pd.DataFrame(pca.components_, columns=sigs.index, index=sigs.columns).T
+
+    # # sum vectors for each clinical variable, dependent on the direction of the features (positive or negatively associated)
+    # biplot(x=loadings, y=pd.DataFrame(x_new), samples=analysis.samples)
 
 
 class gaussian_kde(object):
@@ -2989,13 +3090,6 @@ def create_clinical_epigenomic_space(analysis, traits):
         return vectors.sum(axis=0)
 
     def plot_space(x, y, scale=1.0, axis=None):
-        def pairwise(iterable):
-            from itertools import tee, izip
-            "s -> (s0,s1), (s1,s2), (s2, s3), ..."
-            a, b = tee(iterable)
-            next(b, None)
-            return izip(a, b)
-
         standalone = True if axis is None else False
 
         # Z-score variables to get them into same space
@@ -3499,12 +3593,13 @@ def main():
 
     # TRAIT-SPECIFIC ANALYSIS (Figure 3)
     # all traits (~21)
-    trait_analysis(analysis, atac_seq_samples)
-    # Inspect which traits have good performance
     traits = ["IGHV", "CD38", "ZAP70", "treated", "primary_CLL", "ibrutinib", "chemo_treated", "target_treated"]
-    muts = ['del11', 'tri12', "del17p"]
+    muts = ['del11', 'tri12', "del17"]
     muts += ['TP53']  # mutations
     traits += muts
+    trait_analysis(analysis, atac_seq_samples, traits)
+    # Inspect which traits have good performance
+    traits = ["IGHV", "CD38", "ZAP70", "treated", "primary_CLL", "chemo_treated", "target_treated", "del11", "tri12", "del17"]
     # here I am removing traits which had poor classification performance or too few patients associated
     # because they exist in either only one patient
     # Join all regions in one dataframe
@@ -3513,6 +3608,8 @@ def main():
     # structurally, functionaly and in light of histone marks
     characterize_regions(analysis, traits)
     characterize_regions_chromatin(analysis, traits)
+    # Clinical trait signatures and enrichment of samples in them
+    get_signatures(analysis, traits)
 
     # MEDICAL EPIGENOMIC SPACE
     # Build it (biplot) + add survival
@@ -3527,7 +3624,7 @@ def main():
     # Compare go terms/LOLA results from regions
     # compare_go_terms(
     #     [1, 2],
-    #     ['data/mutation_peaks_cluster1/mutation_cluster1_regions.seq2pathway.csv', 'data/mutation_peaks_cluster2/mutation_cluster2_regions.seq2pathway.csv'],
+    #     ["data/mutation_peaks_cluster1/mutation_cluster1_regions.seq2pathway.csv', 'data/mutation_peaks_cluster2/mutation_cluster2_regions.seq2pathway.csv'],
     #     "results/plots/mutation_regions.goterm_enrichment.svg",
     #     p_value=0.05)
 
@@ -3553,8 +3650,8 @@ def main():
     # if args.generate:
     #     fields = [
     #         'sampleName', 'diagnosis_disease', 'diagnosis_date', 'collection_date', 'time_since_diagnosis',
-    #         'diagnosis_collection', "treatment_active", 'previous_treatment_date', 'time_since_treatment',
-    #         'treatment_type', 'treatment_response', 'relapse']
+    #         'diagnosis_collection', "under_treatment", 'previous_treatment_date', 'time_since_treatment',
+    #         'treatment_regimen', 'treatment_response', 'relapse']
     #     prj.sheet.asDataFrame()[fields].drop_duplicates().to_csv("clinical_annotation_digested.csv", index=False)
 
 
