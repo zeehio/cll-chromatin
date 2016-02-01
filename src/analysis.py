@@ -1376,47 +1376,37 @@ def samples_to_symbol(samples, method="unique"):
 
 def annotate_clinical_traits(samples):
     # Annotate traits
-    # Gender
-    t = [1 if s.patient_gender == "M" else 0 if s.patient_gender is not pd.np.nan else pd.np.nan for s in samples]
-    for i, s in enumerate(samples): s.gender = t[i]
-    # IGHV mutation status
-    t = [1 if s.igvh_mutation_status else 0 if s.igvh_mutation_status is not pd.np.nan else pd.np.nan for s in samples]
-    for i, s in enumerate(samples): s.IGHV = t[i]
-    # CD38 expression
-    t = [1 if s.CD38_positive else 0 if s.CD38_positive is not pd.np.nan else pd.np.nan for s in samples]
-    for i, s in enumerate(samples): s.CD38 = t[i]
-    # ZAP70 expression
-    t = [1 if s.ZAP70_positive else 0 if s.ZAP70_positive is not pd.np.nan else pd.np.nan for s in samples]
-    for i, s in enumerate(samples): s.ZAP70 = t[i]
-    # ZAP70 mono-allelic expression
-    t = [1 if s.ZAP70_monoallelic_methylation else 0 if s.ZAP70_monoallelic_methylation is not pd.np.nan else pd.np.nan for s in samples]
-    for i, s in enumerate(samples): s.ZAP70_monoallelic_methylation = t[i]
-    # Disease at Diagnosis - comparison in untreated samples
-    # Primary vs Secondary CLL (progressed from MBL and SLL)
-    t = [1 if s.diagnosis_disease == "CLL" else 0 if s.diagnosis_disease is not pd.np.nan and not s.under_treatment and s.timepoint == 1 is not pd.np.nan else pd.np.nan for s in samples]
-    for i, s in enumerate(samples): s.primary_CLL = t[i]
-    # Treatments: Under treatment
-    t = [1 if s.under_treatment else 0 if s.under_treatment is not pd.np.nan else pd.np.nan for s in samples]
-    for i, s in enumerate(samples): s.treated = t[i]
-    # Relapse
-    # "relapse", ("True", "False", rerun=True), # relapse or before relapse
-    t = [1 if s.relapse else 0 if s.relapse in [1, 0] is not pd.np.nan else pd.np.nan for s in samples]
-    for i, s in enumerate(samples): s.relapse = t[i]
-    # # Early vs Late
-    # # "progression", ("True", "False", rerun=True), # early vs late timepoint
-    # t = [1 if s.diagnosis_collection else 0 if type(s.diagnosis_collection) is bool is not pd.np.nan else pd.np.nan for s in samples]
-    # for i, s in enumerate(samples): s.early = t[i]
-
-    # Annotate samples which are under treament but with different types
     chemo_drugs = ["Chlor", "Chlor R", "B Of", "BR", "CHOPR"]  # Chemotherapy
     target_drugs = ["Alemtuz", "Ibrutinib"]  # targeted treatments
     muts = ["del13", "del11", "tri12", "del17"]  # chrom abnorms
     muts += ["SF3B1", "ATM", "NOTCH1", "BIRC3", "BCL2", "TP53", "MYD88", "CHD2", "NFKIE"]  # mutations
+    for s in samples:
+        # Gender
+        s.gender = 1 if s.patient_gender == "M" else 0 if s.patient_gender == "F" else pd.np.nan
+        # IGHV mutation status
+        s.IGHV = s.igvh_mutation_status
+        # CD38 expression
+        s.CD38 = s.CD38_positive
+        # ZAP70 expression
+        s.ZAP70 = s.ZAP70_positive
+        # ZAP70 mono-allelic expression
+        s.ZAP70_monoallelic_methylation = 1 if s.ZAP70_monoallelic_methylation == 1 else 0
+        # Disease at Diagnosis - comparison in untreated samples
+        # Primary vs Secondary CLL (progressed from MBL and SLL)
+        s.primary_CLL = 1 if s.diagnosis_disease == "CLL" else 0 if s.diagnosis_disease in ["MBL", "SLL"] else pd.np.nan
+        # Treatments: Under treatment
+        s.treated = s.under_treatment
+        # Relapse  - just for consistency reasons
+        s.relapse = s.relapse
+        # Early vs Late
+        #
+
+    # Annotate samples which are under treament but with different types
     for sample in samples:
-        sample.chemo_treated = True if sample.under_treatment and sample.treatment_regimen in chemo_drugs else False
-        sample.target_treated = True if sample.under_treatment and sample.treatment_regimen in target_drugs else False
+        sample.chemo_treated = pd.np.nan if not sample.under_treatment else 1 if sample.treatment_regimen in chemo_drugs else 0
+        sample.target_treated = pd.np.nan if not sample.under_treatment else 1 if sample.treatment_regimen in target_drugs else 0
         for mut in muts:
-            setattr(sample, mut, True if sample.mutations is not pd.np.nan and mut in sample.mutations else False)
+            setattr(sample, mut, 1 if sample.mutations is not pd.np.nan and mut in sample.mutations else 0)
 
     return samples
 
@@ -1444,7 +1434,7 @@ def annotate_disease_treatments(samples):
             # Get diagnosis date
             sample.diagnosis_date = string_to_date(sample.diagnosis_date)
             # Get diagnosis disease
-            sample.primary_CLL = True if sample.diagnosis_disease == "CLL" else False  # binary label useful for later
+            sample.primary_CLL = 1 if sample.diagnosis_disease == "CLL" else 0  # binary label useful for later
 
             # Get time since diagnosis
             sample.time_since_diagnosis = sample.collection_date - sample.diagnosis_date
@@ -2097,7 +2087,7 @@ def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
             analysis.data_dir,
             "trait_specific",
             "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
-        dataframe.to_csv(dataframe_file, sep="\t", index=False)
+        dataframe.to_csv(dataframe_file, index=False)
 
         # Save as bed
         bed_file = os.path.join(
@@ -2117,8 +2107,7 @@ def characterize_regions(analysis, traits):
             os.path.join(
                 analysis.data_dir,
                 "trait_specific",
-                "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait
-            ), sep="\t")
+                "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait))
 
         # ALL REGIONS
         # region's structure
@@ -2369,7 +2358,8 @@ def join_trait_specific_regions(analysis, traits):
             "trait_specific",
             "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
         try:
-            df = pd.read_csv(file_name, sep="\t")
+            df = pd.read_csv(file_name)
+            # assert df.shape == df.dropna().shape  # check there are no nans - in fact there can be (e.g. gene_name column)
             df['trait'] = trait
             features = features.append(df, ignore_index=True)
         except IOError:
@@ -2379,7 +2369,7 @@ def join_trait_specific_regions(analysis, traits):
     features['direction'] = features['change'].apply(lambda x: 1 if x > 0 else -1)
 
     # # Save whole dataframe as csv
-    features.to_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), sep="\t", index=False)
+    features.to_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), index=False)
 
 
 def characterize_regions_chromatin(analysis, traits):
@@ -2419,7 +2409,7 @@ def characterize_regions_chromatin(analysis, traits):
         return np.log2(((1 + a.values) / (1 + r.values))).mean(axis=1)
 
     # read in dataframe
-    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), sep="\t")
+    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"))
 
     # get intensity of chromatin marks
     # across all patients
@@ -2654,7 +2644,7 @@ def get_signatures(analysis, traits):
         axis.legend()
 
     # Read in openness values in regions associated with clinical traits
-    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), sep="\t")
+    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"))
 
     # Position each patient within the trait-specific chromatin signature
     samples = [s for s in analysis.samples if s.cell_line == "CLL" and s.library == "ATAC-seq"]
@@ -2686,6 +2676,9 @@ def get_signatures(analysis, traits):
             if name in x.columns:  # this is temporary
                 trait_sigs.append(best_signature_matrix(array=x[name], matrix=sign))
         sigs[trait] = trait_sigs
+
+    # Save clinical trait signatures for all samples
+    sigs.to_csv(os.path.join(analysis.data_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.trait_signatures.csv"), index=False)
 
     # Plot distribution of signature values
     # sns.distplot(trait_sigs, bins=100, kde=False, ax=axis[i])
@@ -3594,7 +3587,7 @@ def main():
     # TRAIT-SPECIFIC ANALYSIS (Figure 3)
     # all traits (~21)
     traits = ["IGHV", "CD38", "ZAP70", "treated", "primary_CLL", "ibrutinib", "chemo_treated", "target_treated"]
-    muts = ['del11', 'tri12', "del17"]
+    muts = ['del11', 'del13', 'tri12', "del17"]
     muts += ['TP53']  # mutations
     traits += muts
     trait_analysis(analysis, atac_seq_samples, traits)
