@@ -1328,7 +1328,7 @@ def samples_to_color(samples, trait="IGHV"):
         colors = list()
         for sample in samples:
             if vmin < getattr(sample, trait) < 100:
-                colors.append(m.to_rgba(getattr(s, trait)))
+                colors.append(m.to_rgba(getattr(sample, trait)))
             else:
                 colors.append('gray')
         return colors
@@ -1893,12 +1893,12 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
     # write all gene names to file
     universe_genes_file = os.path.join(output_dir, "%s_regions.universe.closest_genes.txt" % prefix)
     with open(universe_genes_file, 'w') as handle:
-        for gene in df['gene_name']:
+        for gene in df['gene_name'].dropna():
             handle.write(gene + "\n")
     # write gene names to file
     genes_file = os.path.join(output_dir, "%s_regions.closest_genes.txt" % prefix)
     with open(genes_file, 'w') as handle:
-        for gene in df['gene_name']:
+        for gene in df['gene_name'].dropna():
             handle.write(gene + "\n")
     output_file = os.path.join(output_dir, "%s_regions.goverlap.tsv" % prefix)
     # test enrichements of closest gene function: GO, KEGG, OMIM
@@ -1912,7 +1912,7 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
     fasta_file = os.path.join(output_dir, "%s_regions.fa" % prefix)
     bed_to_fasta(bed_file, fasta_file)
 
-    # meme_ame(fasta_file, meme_output)
+    meme_ame(fasta_file, meme_output)
 
 
 def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
@@ -2100,6 +2100,36 @@ def characterize_regions(analysis, traits, nmin=100):
     """
     Characterize structural-, functionally and in the chromatin regions trait-specific regions.
     """
+    def plot_enrichments(df):
+        """
+        Dot plot of enrichment in features (regions, pathways, signatures)
+        across sets of regions.
+        """
+        fig, axis = plt.subplots(1)
+
+        x_tick = dict()
+        y_tick = dict()
+        for i, trait in enumerate(df['trait'].unique()):
+            df2 = df[df['trait'] == trait]
+            for j, direction in enumerate(df2['direction'].unique()):
+                for y, index in enumerate(df2.index):
+                    # tick labels
+                    x = i + (j * 0.5)
+                    x_tick[x] = trait + " - direction %i" % direction
+                    y_tick[y] = df2.ix[index]["feature"]
+
+                    # caluclate dot size
+                    size = 50 ** df2.ix[index]["value"]
+                    # calculate dot color
+                    color = "red"
+                    axis.scatter(x, y, s=size, color=color)
+        plt.xticks(x_tick.keys(), x_tick.values(), rotation='vertical')
+        plt.yticks(y_tick.keys(), y_tick.values(), rotation='horizontal')
+        return fig, axis
+
+    structures = pd.DataFrame()
+    motifs = pd.DataFrame()
+
     for trait in traits:
         print(trait)
         # Load dataframe with trait-specific regions
@@ -2109,21 +2139,34 @@ def characterize_regions(analysis, traits, nmin=100):
                 "trait_specific",
                 "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait))
 
+        # Output of all plots/exports with be the same for the same for the same trait
+        output_dir = os.path.join(analysis.plots_dir, "trait_specific", "%s_regions" % trait)
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
         # ALL REGIONS
         # region's structure
-        characterize_regions_structure(df=dataframe, prefix=trait)
+        structure = characterize_regions_structure(df=dataframe, prefix=trait, plots_dir=output_dir)
+        structure["trait"] = trait
+        structure["direction"] = "all"
+        structures = structures.append(structure)
+
         # plot chromosome distribution of regions
         chrom_count = Counter(dataframe[['chrom', 'start', 'end']].chrom)
         chrom_count = np.array(sorted(chrom_count.items(), key=lambda x: x[1], reverse=True))
         fig, axis = plt.subplots(1, figsize=(10, 5))
         sns.barplot(chrom_count[:, 0], chrom_count[:, 1].astype(int), ax=axis)
-        fig.savefig(os.path.join(
-            analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.sites_location.svg" % trait), bbox_inches="tight")
+        fig.savefig(os.path.join(output_dir, "cll_peaks.%s_significant.classification.random_forest.loocv.sites_location.svg" % trait), bbox_inches="tight")
 
         # region's function
-        output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks" % trait)
         characterize_regions_function(df=dataframe, output_dir=output_dir, prefix=trait)
+
+        # regions's TF motifs
+        # parse meme-ame output
+        motif = pd.DataFrame(parse_ame(os.path.join(output_dir, "meme")), columns=['motifs', 'q_values'])
+        motif['trait'] = trait
+        motif['direction'] = "all"
+        motifs = motifs.append(motif)
 
         # GROUPS OF REGIONS
         # Region characterization of each cluster of regions
@@ -2132,113 +2175,88 @@ def characterize_regions(analysis, traits, nmin=100):
             df = dataframe[dataframe['direction'] == direction]
 
             # ignore groups of regions with less than nmin regions
-            if len(df) < nmin:
+            if df.shape[0] < nmin:
                 continue
 
             # output folder
-            outdir = os.path.join("%s_direction%i" % (trait, direction))
+            outdir = os.path.join(output_dir, "%s_direction%i" % (trait, direction))
             if not os.path.exists(outdir):
                 os.makedirs(outdir)
 
             # region's structure
-            regions = characterize_regions_structure(df=df, prefix="%s_direction%i" % (trait, direction), universe_df=analysis.coverage_qnorm_annotated)
-            regions['direction'] = direction
-
-            if i == 0:
-                df3 = regions
-            else:
-                df3 = df3.append(regions)
+            structure = characterize_regions_structure(df=df, prefix="%s_direction%i" % (trait, direction), universe_df=analysis.coverage_qnorm_annotated, plots_dir=outdir)
+            structure['trait'] = trait
+            structure['direction'] = direction
+            structures = structures.append(structure)
 
             # region's function
-            output_dir = os.path.join(analysis.data_dir, "trait_specific", "%s_peaks_direction%i" % (trait, direction))
-            characterize_regions_function(df=df, output_dir=output_dir, prefix="%s_direction%i" % (trait, direction))
+            characterize_regions_function(df=df, output_dir=outdir, prefix="%s_direction%i" % (trait, direction))
 
-            # # parse meme-ame output
-            # motifs = pd.DataFrame(parse_ame(os.path.join(output_dir, "meme")), columns=['motifs', 'q_values'])
-            # motifs['direction'] = direction
-            # if i == 0:
-            #     df2 = motifs
-            # else:
-            #     df2 = pd.concat([df2, motifs])
+            # parse meme-ame output
+            motif = pd.DataFrame(parse_ame(os.path.join(outdir, "meme")), columns=['motifs', 'q_values'])
+            motif['trait'] = trait
+            motif['direction'] = direction
+            motifs = motifs.append(motif)
 
-        # Plot region enrichment
-        df3['region'] = df3.index
-        df3 = df3.sort(['region'])
-        df3 = df3.replace(np.nan, 0)
+    # Save data
+    structures.to_csv(os.path.join(output_dir, "%s_regions.region_enrichment.csv" % trait), index=False)
+    motifs.to_csv(os.path.join(output_dir, "%s_regions.motif_enrichment.csv" % trait), index=False)
 
-        g = sns.FacetGrid(col="region", data=df3[df3['variable'] == 'genomic_region'], col_wrap=3, sharey=True)
-        g.map(sns.barplot, "direction", "value")
-        plt.savefig(os.path.join(
-            analysis.plots_dir,
-            "trait_specific", "%s_regions.region_enrichment.svg" % trait), bbox_inches="tight")
+    # # Plot structure characteristicsregion enrichment
+    # fig, axis = plot_enrichments(structures[structures['variable'] == 'genomic_region'])
+    # fig.savefig(os.path.join(output_dir, "%s_regions.region_enrichment.svg" % trait), bbox_inches="tight")
 
-        g = sns.FacetGrid(col="region", data=df3[df3['variable'] == 'chromatin_state'], col_wrap=3, sharey=True)
-        g.map(sns.barplot, "direction", "value")
-        plt.savefig(os.path.join(
-            analysis.plots_dir,
-            "trait_specific", "%s_regions.chromatin_state_enrichment.svg" % trait), bbox_inches="tight")
+    # fig, axis = plot_enrichments(structures[structures['variable'] == 'chromatin_state'])
+    # plt.savefig(os.path.join(output_dir, "%s_regions.chromatin_state_enrichment.svg" % trait), bbox_inches="tight")
 
-        # save data
-        df3.to_csv(os.path.join(
-            analysis.plots_dir,
-            "trait_specific", "%s_regions.region_enrichment.csv" % trait), index=False)
+    # # Plot motif enrichments
+    # motifs['q_values'] = -np.log10(np.array(motifs['q_values'], dtype=float))
+    # # get highest (worst) p-value from motifs of the same TF
+    # motifs = motifs.groupby(['motifs', 'direction']).aggregate(max).reset_index()
+    # # spread again for each direction
+    # motifs = motifs.pivot('motifs', 'direction', 'q_values')
+    # # replace nan with 0
+    # motifs = motifs.replace(np.nan, 0)
+    # # fix types
+    # for i in [1, 2]:
+    #     motifs[i] = motifs[i].astype(float)
 
-        # # Plot motif enrichments
-        # df2['q_values'] = -np.log10(np.array(df2['q_values'], dtype=float))
-        # # get highest (worst) p-value from motifs of the same TF
-        # df3 = df2.groupby(['motifs', 'direction']).aggregate(max).reset_index()
-        # # spread again for each direction
-        # df3 = df3.pivot('motifs', 'direction', 'q_values')
-        # # replace nan with 0
-        # df3 = df3.replace(np.nan, 0)
-        # # fix types
-        # for i in [1, 2]:
-        #     df3[i] = df3[i].astype(float)
+    # # sort
+    # df3 = df3.sort([1])
+    # # plot heatmap of p-values
+    # sns.clustermap(df3, z_score=1, figsize=(8, 24), linewidths=0, cmap=plt.cm.YlGn)
+    # plt.savefig(os.path.join(output_dir, "%s_regions.motif_enrichment.svg" % trait), bbox_inches="tight")
+    # plt.close("all")
 
-        # # sort
-        # df3 = df3.sort([1])
-        # # plot heatmap of p-values
-        # sns.clustermap(df3, z_score=1, figsize=(8, 24), linewidths=0, cmap=plt.cm.YlGn)
-        # plt.savefig(os.path.join(
-        #     analysis.plots_dir,
-        #     "trait_specific", "%s_regions.motif_enrichment.svg" % trait), bbox_inches="tight")
-        # plt.close("all")
+    # sns.clustermap(df3[(df3.icol(0) > 30) & (df3.icol(1) > 30)], cmap=plt.cm.YlGn)
+    # plt.savefig(os.path.join(output_dir, "%s_regions.motif_enrichment.highest.svg" % trait), bbox_inches="tight")
+    # plt.close("all")
 
-        # sns.clustermap(df3[(df3.icol(0) > 30) & (df3.icol(1) > 30)], cmap=plt.cm.YlGn)
-        # plt.savefig(os.path.join(
-        #     analysis.plots_dir,
-        #     "trait_specific", "%s_regions.motif_enrichment.highest.svg" % trait), bbox_inches="tight")
-        # plt.close("all")
+    # # save data
+    # df3.to_csv(os.path.join(output_dir, "%s_regions.motif_enrichment.csv" % trait), index=False)
 
-        # # save data
-        # df3.to_csv(os.path.join(
-        #     analysis.plots_dir,
-        #     "trait_specific", "%s_regions.motif_enrichment.csv" % trait), index=False)
+    # # get n_max most different motifs
+    # n_max = 25
+    # p_value = 3  # -log10
 
-        # # get n_max most different motifs
-        # n_max = 25
-        # p_value = 3  # -log10
+    # # filter p-values
+    # df4 = df3[(df3[1] > p_value) | (df3[2] > p_value)]
 
-        # # filter p-values
-        # df4 = df3[(df3[1] > p_value) | (df3[2] > p_value)]
+    # # floor n_max
+    # if len(df4) < n_max:
+    #     n_max = len(df4)
 
-        # # floor n_max
-        # if len(df4) < n_max:
-        #     n_max = len(df4)
+    # # get n most dissimilar features
+    # s = abs(df4[1] - df4[2])
+    # # sort by similarity
+    # s.sort(ascending=False)
+    # # get top
+    # index = s.irow(range(n_max)).index
 
-        # # get n most dissimilar features
-        # s = abs(df4[1] - df4[2])
-        # # sort by similarity
-        # s.sort(ascending=False)
-        # # get top
-        # index = s.irow(range(n_max)).index
-
-        # # plot matrix of clusters/terms with p_values
-        # sns.clustermap(df4.ix[index], col_cluster=False, cmap=plt.cm.YlGn)
-        # plt.savefig(os.path.join(
-        #     analysis.plots_dir,
-        #     "trait_specific", "%s_regions.motif_enrichment.difference.svg" % trait), bbox_inches="tight")
-        # plt.close("all")
+    # # plot matrix of clusters/terms with p_values
+    # sns.clustermap(df4.ix[index], col_cluster=False, cmap=plt.cm.YlGn)
+    # plt.savefig(os.path.join(output_dir, "%s_regions.motif_enrichment.difference.svg" % trait), bbox_inches="tight")
+    # plt.close("all")
 
 
 def classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, comparison):
@@ -3635,9 +3653,9 @@ def main():
 
     # TRAIT-SPECIFIC ANALYSIS (Figure 3)
     # all traits (~21)
-    traits = ["IGHV", "CD38", "ZAP70", "treated", "primary_CLL", "chemo_treated", "target_treated"]
+    traits = ["IGHV", "CD38", "ZAP70", "treated", "primary_CLL", "chemo_treated", "target_treated", "relapse"]
     muts = ["del11", "del13", "tri12", "del17"]
-    muts += ["TP53"]  # mutations
+    muts += ["TP53", "NOTCH1", "ATM", "SF3B1", "BIRC3", "BCL2", "NFKIE"]  # mutations
     traits += muts
     trait_analysis(analysis, atac_seq_samples, traits)
 
