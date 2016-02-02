@@ -25,7 +25,7 @@ import pysam
 import numpy as np
 import pandas as pd
 # import dask.dataframe as dd
-try:  # stupid error, importing it twice works
+try:  # stupid bug, importing it twice works
     from sklearn import cross_validation
 except AttributeError:
     from sklearn import cross_validation
@@ -1127,7 +1127,7 @@ class Analysis(object):
         df = pd.merge(df, self.clinical, left_on="sample_id", right_on="sample_id")
         mut_s = {"1.0": "red", "2.0": "black", "nan": "grey"}
         sex_s = {"F": "red", "M": "blue", "nan": "grey"}
-        muts = [self.clinical.loc[self.clinical['sample_id'] == sample.sample_id, "igvh_mutation_status"] for sample in self.samples]
+        muts = [self.clinical.loc[self.clinical['sample_id'] == sample.sample_id, "ighv_mutation_status"] for sample in self.samples]
         sex = [self.clinical.loc[self.clinical['sample_id'] == sample.sample_id, "patient_gender"] for sample in self.samples]
         mut_colors = [mut_s[str(x.get(x.index[0]))] if len(x.tolist()) > 0 else "grey" for x in muts]
         sex_colors = [sex_s[str(x.get(x.index[0]))] if len(x.tolist()) > 0 else "grey" for x in sex]
@@ -1258,78 +1258,39 @@ def name_to_sample_id(name):
     return name.split("_")[3]
 
 
-def samples_to_color(samples, method="mutation"):
-    # dependent on ighv status
-    if method == "mutation":
-        # This uses sns colorblind pallete
-        colors = list()
-        for sample in samples:
-            if sample.mutated is True:
-                colors.append(sns.color_palette("colorblind")[0])  # blue #0072b2
-            elif sample.mutated is False:
-                colors.append(sns.color_palette("colorblind")[2])  # vermillion #d55e00
-            elif sample.mutated is None:
-                if sample.cell_line == "CLL":
-                    colors.append('gray')
-                else:
-                    colors.append('black')
-        return colors
-    # dependent on ighv status
-    if method == "homology":
-        # This uses sns summer colormap
-        cmap = plt.get_cmap('summer')
-        # scale colormap to min and max ighv homology
-        norm = matplotlib.colors.Normalize(vmin=86, vmax=100)
-        m = cm.ScalarMappable(norm=norm, cmap=cmap)
-        colors = list()
-        for sample in samples:
-            if 86 < sample.ighv_homology < 100:
-                colors.append(m.to_rgba(sample.ighv_homology))
-            else:
-                if sample.cell_line == "CLL":
-                    colors.append('gray')
-                else:
-                    colors.append('black')
-                return colors
+def samples_to_color(samples, trait="IGHV"):
     # unique color per patient
-    elif method == "unique":
-        # per patient
-        patients = set(sample.patient_id for sample in samples)
+    if trait == "patient":
+        patients = set([sample.patient_id for sample in samples])
         color_dict = cm.Paired(np.linspace(0, 1, len(patients)))
         color_dict = dict(zip(patients, color_dict))
         return [color_dict[sample.patient_id] for sample in samples]
     # rainbow (unique color per sample)
-    elif method == "unique_sample":
+    elif trait == "unique_sample":
         return cm.Paired(np.linspace(0, 1, len(samples)))
-    elif method == "gender":
+        # gender
+    elif trait == "gender":
         colors = list()
         for sample in samples:
             if sample.patient_gender is "F":
                 colors.append('red')
             elif sample.patient_gender is "M":
                 colors.append('blue')
-            elif sample.patient_gender is None:
-                if sample.cell_line == "CLL":
-                    colors.append('gray')
-                else:
-                    colors.append('black')
+            else:
+                colors.append('gray')
         return colors
-    elif method == "treatment":
-        drugs = ['Alemtuz', "Ibrutinib"]
+    elif trait == "clinical_centre":
         colors = list()
         for sample in samples:
-            if sample.under_treatment is False and sample.relapse is False:
-                colors.append('peru')  # untreated samples
-            elif sample.under_treatment is True and sample.treatment_regimen not in drugs:
-                colors.append('black')  # chemo
-            elif sample.under_treatment is True and sample.treatment_regimen in drugs:
-                colors.append('green')  # antibodies
-            elif sample.under_treatment is True and sample.treatment_regimen == "":
-                colors.append('grey')  # no info
+            if sample.clinical_centre is "bournemouth":
+                colors.append(sns.color_palette("colorblind")[5])
+            elif sample.clinical_centre is "vienna":
+                colors.append(sns.color_palette("colorblind")[6])
             else:
-                colors.append('grey')  # no info
+                colors.append('gray')
         return colors
-    elif method == "disease":
+    # disease at diagnosis time
+    elif trait == "disease":
         colors = list()
         for sample in samples:
             if sample.diagnosis_disease == "CLL":
@@ -1341,8 +1302,90 @@ def samples_to_color(samples, method="mutation"):
             else:
                 colors.append('grey')
         return colors
+    # dependent on trait threshold
+    elif trait in ["IGHV", "CD38", "ZAP70"]:
+        # This uses sns colorblind pallete
+        colors = list()
+        for sample in samples:
+            if getattr(sample, trait) == 1:
+                colors.append(sns.color_palette("colorblind")[0])  # blue #0072b2
+            elif getattr(sample, trait) == 0:
+                colors.append(sns.color_palette("colorblind")[2])  # vermillion #d55e00
+            else:
+                colors.append('gray')
+        return colors
+    # IGHV homology color scale from min to max
+    if trait in ["ighv_homology", "CD38_cells_percentage", "ZAP70_cells_percentage"]:
+        if trait == "ighv_homology":
+            trait = "igvh_homology"
+        vmin = min([getattr(s, trait) for s in samples])
+        # This uses sns summer colormap
+        cmap = plt.get_cmap('summer')
+        # scale colormap to min and max ighv homology
+        norm = matplotlib.colors.Normalize(vmin=vmin, vmax=100)
+        m = cm.ScalarMappable(norm=norm, cmap=cmap)
+        # get colors acordingly
+        colors = list()
+        for sample in samples:
+            if vmin < getattr(sample, trait) < 100:
+                colors.append(m.to_rgba(getattr(s, trait)))
+            else:
+                colors.append('gray')
+        return colors
+    elif trait == "under_treatment":
+        colors = list()
+        for sample in samples:
+            if sample.under_treatment is False:
+                colors.append('green')  # untreated samples
+            elif sample.under_treatment is True:
+                colors.append('black')  # untreated samples
+            else:
+                colors.append('grey')  # no info
+        return colors
+    elif trait == "treatment_regimen":
+        colors = list()
+        for sample in samples:
+            if sample.under_treatment is False:
+                colors.append('peru')  # untreated samples
+            elif sample.under_treatment is True and sample.chemo_treated is True:
+                colors.append('black')  # chemo
+            elif sample.under_treatment is True and sample.target_treated is True:
+                colors.append('green')  # antibodies
+            else:
+                colors.append('grey')  # no info
+        return colors
+    elif trait in ["del11", "del13", "del17", "tri12"]:
+        colors = list()
+        for sample in samples:
+            if getattr(sample, trait):
+                colors.append('orange')
+            elif getattr(sample, trait):
+                colors.append('blue')
+            else:
+                colors.append('grey')  # no info
+        return colors
     else:
-        raise ValueError("Method %s is not valid" % method)
+        raise ValueError("trait %s is not valid" % trait)
+
+
+def all_sample_colors(samples, order=""):
+    return [
+        samples_to_color(samples, "patient"),
+        samples_to_color(samples, "clinical_centre"),
+        samples_to_color(samples, "gender"),
+        samples_to_color(samples, "disease"),
+        samples_to_color(samples, "IGHV"),
+        samples_to_color(samples, "ighv_homology"),
+        samples_to_color(samples, "CD38"),
+        samples_to_color(samples, "CD38_cells_percentage"),
+        samples_to_color(samples, "ZAP70"),
+        samples_to_color(samples, "ZAP70_cells_percentage"),
+        samples_to_color(samples, "under_treatment"),
+        samples_to_color(samples, "del17"),
+        samples_to_color(samples, "del13"),
+        samples_to_color(samples, "del11"),
+        samples_to_color(samples, "tri12")
+    ]
 
 
 def samples_to_symbol(samples, method="unique"):
@@ -1363,16 +1406,6 @@ def samples_to_symbol(samples, method="unique"):
     else:
         raise ValueError("Method %s is not valid" % method)
 
-# def all_sample_colors(samples, order=""):
-#     return [
-#         samples_to_color(samples, "mutation"),
-#         samples_to_color(samples, "homology"),
-#         # samples_to_color(samples, "treatment"),
-#         # samples_to_color(samples, "disease")
-#         # samples_to_color(samples, "unique"),
-#         samples_to_color(samples, "gender")
-#     ]
-
 
 def annotate_clinical_traits(samples):
     # Annotate traits
@@ -1384,7 +1417,7 @@ def annotate_clinical_traits(samples):
         # Gender
         s.gender = 1 if s.patient_gender == "M" else 0 if s.patient_gender == "F" else pd.np.nan
         # IGHV mutation status
-        s.IGHV = s.igvh_mutation_status
+        s.IGHV = s.ighv_mutation_status
         # CD38 expression
         s.CD38 = s.CD38_positive
         # ZAP70 expression
@@ -1403,8 +1436,12 @@ def annotate_clinical_traits(samples):
 
     # Annotate samples which are under treament but with different types
     for sample in samples:
-        sample.chemo_treated = pd.np.nan if not sample.under_treatment else 1 if sample.treatment_regimen in chemo_drugs else 0
-        sample.target_treated = pd.np.nan if not sample.under_treatment else 1 if sample.treatment_regimen in target_drugs else 0
+        if not sample.under_treatment:
+            sample.chemo_treated = pd.np.nan
+            sample.target_treated = pd.np.nan
+        else:
+            sample.chemo_treated = 1 if sample.treatment_regimen in chemo_drugs else 0
+            sample.target_treated = 1 if sample.treatment_regimen in target_drugs else 0
         for mut in muts:
             setattr(sample, mut, 1 if sample.mutations is not pd.np.nan and mut in sample.mutations else 0)
 
@@ -1461,7 +1498,7 @@ def annotate_samples(samples):
             "treatment_end_date", "relapse", "treatment_1_date", "treatment_1_regimen", "treatment_1_duration", "treatment_1_response",
             "treatment_2_date", "treatment_2_regimen", "treatment_2_duration", "treatment_2_response", "treatment_3_date", "treatment_3_regimen",
             "treatment_3_duration", "treatment_3_response", "treatment_4_date", "treatment_4_regimen", "treatment_4_response", "treatment_end_date.1",
-            "igvh_gene", "igvh_homology", "igvh_mutation_status", "CD38_cells_percentage", "CD38_positive", "CD38_measurement_date", "CD38_changed",
+            "ighv_gene", "ighv_homology", "ighv_mutation_status", "CD38_cells_percentage", "CD38_positive", "CD38_measurement_date", "CD38_changed",
             "ZAP70_cells_percentage", "ZAP70_positive", "ZAP70_monoallelic_methylation", "sample_collection_date", "storage_condition", "lymp_count",
             "mutations", "sample_shippment_batch", "sample_cell_number", "sample_experiment_name", "sample_processing_date", "sample_viability"
             "diagnosis_collection", "diagnosis_date", "diagnosis_disease", "time_since_treatment", "treatment_regimen",
@@ -2064,6 +2101,7 @@ def characterize_regions(analysis, traits, nmin=100):
     Characterize structural-, functionally and in the chromatin regions trait-specific regions.
     """
     for trait in traits:
+        print(trait)
         # Load dataframe with trait-specific regions
         dataframe = pd.read_csv(
             os.path.join(
@@ -2420,7 +2458,7 @@ def characterize_regions_chromatin(analysis, traits):
         # color samples according to mutation status
         palette = sns.color_palette("colorblind")
         trait_colors = {True: palette[1], False: palette[2]}
-        sample_colors = [trait_colors[s.igvh_mutation_status] if s.igvh_mutation_status is not pd.np.nan else "gray" for s in samples]
+        sample_colors = [trait_colors[s.ighv_mutation_status] if s.ighv_mutation_status is not pd.np.nan else "gray" for s in samples]
 
         # colormap for heatmap values
         cmap = sns.cubehelix_palette(8, start=.5, rot=-.75, as_cmap=True)
@@ -2587,9 +2625,10 @@ def pairwise(iterable):
 
 def get_signatures(analysis, traits):
     """
-    Assign samples to a trait-related signature
+    Assign samples along a trait-related signature.
+    Use signature values of samples to create 2D space of clinical features and samples.
     """
-    def biplot(x, y, samples):
+    def biplot(x, y, samples, paths=True):
         # Z-score variables to get them into same space
         xx = x.apply(lambda j: (j - j.mean()) / j.std(), axis=0)
         yy = y.apply(lambda j: (j - j.mean()) / j.std(), axis=0)
@@ -2605,42 +2644,46 @@ def get_signatures(analysis, traits):
         # Plot observations (samples)
         samples = pd.DataFrame([pd.Series(sample.__dict__) for sample in samples])
         for i in range(len(xx)):
-            axis.scatter(xx.ix[i][0], xx.ix[i][1], s=50, color=sample_colors[i], marker=sample_symbols[i], label=x.index[i])
+            axis.scatter(xx.ix[i][0], xx.ix[i][1], s=50, color=sample_colors[i], marker=sample_symbols[i])  # , label=x.index[i])
 
         # Plot variables (clinical features)
         for i, trait in enumerate(yy.index):
             axis.plot((0, yy.ix[trait][0]), (0, yy.ix[trait][1]), '-o', color=var_colors[i], label=x.columns[i])
+            # plt.quiver(0, yy.ix[trait][0], 0, yy.ix[trait][1], var_colors[i])
 
-        # # add dashed line between patient's timepoints
-        # for patient, indexes in samples.groupby("patient_id").groups.items():
-        #     for t1, t2 in pairwise(sorted(samples.ix[indexes]["timepoint"])):
-        #         tt1 = samples[(samples["timepoint"] == sorted([t1, t2])[0]) & (samples["patient_id"] == patient)].index
-        #         tt2 = samples[(samples["timepoint"] == sorted([t1, t2])[1]) & (samples["patient_id"] == patient)].index
-        #         if len(tt1) == 1 and len(tt2) == 1:  # this is a problem due to one patient has two timepoints with same number :grrrr:
-        #             axis.annotate(
-        #                 "",  # samples.ix[t1]["patient_id"],
-        #                 xy=(xx.ix[tt1][0].squeeze(), xx.ix[tt1][1].squeeze()), xycoords="data",
-        #                 xytext=(xx.ix[tt2][0].squeeze(), xx.ix[tt2][1].squeeze()), textcoords="data",
-        #                 arrowprops=dict(arrowstyle="fancy", color="0.5", shrinkB=5, connectionstyle="arc3,rad=0.3",),
-        #             )
+        if paths:
+            # add dashed line between patient's timepoints
+            for patient, indexes in samples.groupby("patient_id").groups.items():
+                for t1, t2 in pairwise(sorted(samples.ix[indexes]["timepoint"])):
+                    tt1 = samples[(samples["timepoint"] == sorted([t1, t2])[0]) & (samples["patient_id"] == patient)].index
+                    tt2 = samples[(samples["timepoint"] == sorted([t1, t2])[1]) & (samples["patient_id"] == patient)].index
+                    if len(tt1) == 1 and len(tt2) == 1:  # this is a problem due to one patient has two timepoints with same number :grrrr:
+                        axis.annotate(
+                            "",  # samples.ix[t1]["patient_id"],
+                            xy=(xx.ix[tt1].icol(0).squeeze(), xx.ix[tt1].icol(1).squeeze()), xycoords="data",
+                            xytext=(xx.ix[tt2].icol(0).squeeze(), xx.ix[tt2].icol(1).squeeze()), textcoords="data",
+                            arrowprops=dict(arrowstyle="fancy", color="0.5", shrinkB=5, connectionstyle="arc3,rad=0.3",))
         axis.legend()
+        output_pdf = os.path.join(
+            analysis.plots_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.trait_signatures.biplot.svg")
+        fig.savefig(output_pdf, bbox_inches='tight')
 
     # Read in openness values in regions associated with clinical traits
     features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"))
 
     # Position each patient within the trait-specific chromatin signature
     samples = [s for s in analysis.samples if s.cell_line == "CLL" and s.library == "ATAC-seq"]
-    muts = ['del11', 'tri12', "del17", 'TP53']
+    muts = ["del11", "del13", "tri12", "del17", "TP53"]
     sigs = pd.DataFrame(index=[s.name for s in samples])
-    for i, trait in enumerate(traits):
+    for trait in traits:
         print(trait)
 
         # Get trait-specific signature
         # 1. get median accessibility of each group
         x = features[features["trait"] == trait].drop_duplicates(['chrom', 'start', 'end'])
         if trait not in muts:
-            x1 = x[[s.name for s in samples if getattr(s, trait) is 1]].apply(np.median, axis=1)
-            x2 = x[[s.name for s in samples if getattr(s, trait) is 0]].apply(np.median, axis=1)
+            x1 = x[[s.name for s in samples if getattr(s, trait) == 1]].apply(np.median, axis=1)
+            x2 = x[[s.name for s in samples if getattr(s, trait) == 0]].apply(np.median, axis=1)
         else:
             x1 = x[[s.name for s in samples if getattr(s, trait)]].apply(np.median, axis=1)
             x2 = x[[s.name for s in samples if not getattr(s, trait)]].apply(np.median, axis=1)
@@ -2678,7 +2721,12 @@ def get_signatures(analysis, traits):
     plt.savefig(output_pdf, bbox_inches='tight')
 
     # correlate samples
-    sns.clustermap(sigs.T.corr())
+    sns.clustermap(
+        sigs.T.corr(),
+        # color axis with sample traits
+        row_colors=all_sample_colors(samples),
+        col_colors=all_sample_colors(samples),
+        figsize=(20, 20))
     output_pdf = os.path.join(
         analysis.plots_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.trait_signatures.samples_correlation.svg")
     plt.savefig(output_pdf, bbox_inches='tight')
@@ -2718,16 +2766,16 @@ def get_signatures(analysis, traits):
         analysis.plots_dir, "trait_specific", "cll_peaks.medical_epigenomics_space.trait_signatures.rank_distribution.svg")
     fig.savefig(output_pdf, bbox_inches='tight')
 
-    # # PCA on signatures (experimental)
-    # from sklearn.decomposition import PCA
-    # pca = PCA()
-    # x_new = pca.fit_transform(sigs.T)
+    # PCA-based biplot on signatures
+    from sklearn.decomposition import PCA
+    pca = PCA()
+    x_new = pca.fit_transform(sigs.T)
 
-    # # Variable space
-    # loadings = pd.DataFrame(pca.components_, columns=sigs.index, index=sigs.columns).T
+    # Variable space
+    loadings = pd.DataFrame(pca.components_, columns=sigs.index, index=sigs.columns).T
 
-    # # sum vectors for each clinical variable, dependent on the direction of the features (positive or negatively associated)
-    # biplot(x=loadings, y=pd.DataFrame(x_new), samples=analysis.samples)
+    # sum vectors for each clinical variable, dependent on the direction of the features (positive or negatively associated)
+    biplot(x=loadings, y=pd.DataFrame(x_new), samples=analysis.samples)
 
 
 class gaussian_kde(object):
@@ -3587,14 +3635,14 @@ def main():
 
     # TRAIT-SPECIFIC ANALYSIS (Figure 3)
     # all traits (~21)
-    traits = ["IGHV", "CD38", "ZAP70", "treated", "primary_CLL", "ibrutinib", "chemo_treated", "target_treated"]
-    muts = ['del11', 'del13', 'tri12', "del17"]
-    muts += ['TP53']  # mutations
+    traits = ["IGHV", "CD38", "ZAP70", "treated", "primary_CLL", "chemo_treated", "target_treated"]
+    muts = ["del11", "del13", "tri12", "del17"]
+    muts += ["TP53"]  # mutations
     traits += muts
     trait_analysis(analysis, atac_seq_samples, traits)
 
     # Inspect which traits have good performance
-    traits = ["IGHV", "CD38", "ZAP70", "treated", "primary_CLL", "chemo_treated", "target_treated", "del11", "tri12", "del17"]
+    traits = ["IGHV", "CD38", "ZAP70", "treated", "primary_CLL", "target_treated", "del11", "del13", "tri12", "del17"]
     # here I am removing traits which had poor classification performance or too few patients associated
     # because they exist in either only one patient
     # Join all regions in one dataframe
