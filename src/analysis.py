@@ -2182,7 +2182,6 @@ def characterize_regions(analysis, traits, nmin=100):
     """
     Characterize structural-, functionally and in the chromatin regions trait-specific regions.
     """
-
     all_chrom_counts = Counter(analysis.coverage_qnorm_annotated['chrom'])
 
     for trait in traits:
@@ -2244,7 +2243,9 @@ def characterize_regions(analysis, traits, nmin=100):
     lolas = pd.DataFrame()
     motifs = pd.DataFrame()
     gos = pd.DataFrame()
-    # paths = pd.DataFrame()
+    paths = pd.DataFrame()
+    diseases = pd.DataFrame()
+    gos2 = pd.DataFrame()
     for trait in traits:
         for direction in ["all", 1, -1]:
             print(trait, direction)
@@ -2252,7 +2253,7 @@ def characterize_regions(analysis, traits, nmin=100):
                 output_dir = os.path.join("results/plots", "trait_specific", "%s_regions" % trait)
             else:
                 output_dir = os.path.join("results/plots", "trait_specific", "%s_regions" % trait, "%s_direction%i" % (trait, direction))
-            # Gather structure
+            # # Gather structure
             results = "%s_regions.region_enrichment.csv" % trait if direction == "all" else "%s_direction%i_regions.region_enrichment.csv" % (trait, direction)
             structure = pd.read_csv(os.path.join(output_dir, results))
             structure["trait"] = trait
@@ -2279,12 +2280,26 @@ def characterize_regions(analysis, traits, nmin=100):
             go["direction"] = direction
             gos = gos.append(go)
 
-            # # Gather pathways
-            # results = "%s_regions.pathways.csv" % trait if direction == "all" else "%s_direction%i_regions.pathways.csv" % (trait, direction)
-            # path = pd.read_csv(os.path.join(output_dir, results), sep="\t")
-            # path["trait"] = trait
-            # path["direction"] = direction
-            # paths = paths.append(path)
+            # Gather pathways
+            results = "%s_regions.pathways.csv" % trait if direction == "all" else "%s_direction%i_regions.pathways.csv" % (trait, direction)
+            path = pd.read_csv(os.path.join(output_dir, results), sep="\t")
+            path["trait"] = trait
+            path["direction"] = direction
+            paths = paths.append(path)
+
+            # Gather diseases
+            results = "%s_regions.disease.csv" % trait if direction == "all" else "%s_direction%i_regions.disease.csv" % (trait, direction)
+            disease = pd.read_csv(os.path.join(output_dir, results), sep="\t")
+            disease["trait"] = trait
+            disease["direction"] = direction
+            diseases = diseases.append(disease)
+
+            # Gather goterms from kobas
+            results = "%s_regions.goterms.csv" % trait if direction == "all" else "%s_direction%i_regions.goterms.csv" % (trait, direction)
+            go = pd.read_csv(os.path.join(output_dir, results), sep="\t")
+            go["trait"] = trait
+            go["direction"] = direction
+            gos2 = gos2.append(go)
 
     # Save data
     output_dir = os.path.join("results/plots", "trait_specific")
@@ -2292,6 +2307,9 @@ def characterize_regions(analysis, traits, nmin=100):
     lolas.to_csv(os.path.join(output_dir, "trait_specific_regions.lola_enrichment.csv"), index=False)
     gos.to_csv(os.path.join(output_dir, "trait_specific_regions.goterm_enrichment.csv"), index=False)
     motifs.to_csv(os.path.join(output_dir, "trait_specific_regions.motif_enrichment.csv"), index=False)
+    paths.to_csv(os.path.join(output_dir, "trait_specific_regions.pathway_enrichment.csv"), index=False)
+    diseases.to_csv(os.path.join(output_dir, "trait_specific_regions.disease_enrichment.csv"), index=False)
+    gos2.to_csv(os.path.join(output_dir, "trait_specific_regions.goterm_enrichment-kobas.csv"), index=False)
 
     # Plot
     # Structure
@@ -2381,26 +2399,68 @@ def characterize_regions(analysis, traits, nmin=100):
     plt.savefig(os.path.join(output_dir, "trait_specific_regions.goterm_enrichment.direction.svg"))
     plt.close("all")
 
-    # # Pathways
-    # paths = paths.rename(columns={"Name": "feature", "FDR": "value"})
-    # paths = paths[["feature", "value", "trait", "direction"]]
-    # paths["direction"] = paths["direction"].astype(str)
-    # paths["value"] = -np.log10(paths["value"].astype(float))
-    # paths["trait"] = paths["trait"] + " - " + paths["direction"]
-    # paths = pd.melt(paths, ["feature", "trait", "direction"])
-    # # only genomic regions
-    # # plot only all peaks from trait
-    # matrix = pd.pivot_table(paths[paths['direction'] == "all"], values="value", index="feature", columns="trait")
-    # matrix_filtered = matrix[matrix.apply(lambda x: all([i > 0.05 for i in x]), axis=1)]
-    # sns.clustermap(matrix_filtered, standard_scale=1, figsize=(20, 20))
-    # plt.savefig(os.path.join(output_dir, "trait_specific_regions.pathway_enrichment.all.svg"))
-    # plt.close("all")
-    # # plot only two directions
-    # matrix = pd.pivot_table(paths[paths['direction'] != "all"], values="value", index="feature", columns="trait")
-    # matrix_filtered = matrix[matrix.apply(lambda x: all([i > 0.05 for i in x]), axis=1)]
-    # sns.clustermap(matrix_filtered, standard_scale=1, figsize=(20, 20))
-    # plt.savefig(os.path.join(output_dir, "trait_specific_regions.pathway_enrichment.direction.svg"))
-    # plt.close("all")
+    # Pathways
+    paths = paths.rename(columns={"#Term": "feature", "P-Value": "value"})
+    paths["feature"] = paths["Database"] + " - " + paths["feature"]
+    paths = paths[["feature", "value", "trait", "direction"]]
+    paths["direction"] = paths["direction"].astype(str)
+    paths["value"] = -np.log10(paths["value"].astype(float))
+    paths["trait"] = paths["trait"] + " - " + paths["direction"]
+    paths = pd.melt(paths, ["feature", "trait", "direction"])
+    # only genomic regions
+    # plot only all peaks from trait
+    matrix = pd.pivot_table(paths[paths['direction'] == "all"], values="value", index="feature", columns="trait")
+    sns.clustermap(matrix, standard_scale=1, figsize=(20, 20))
+    plt.savefig(os.path.join(output_dir, "trait_specific_regions.pathway_enrichment.all.svg"))
+    plt.close("all")
+    # plot only two directions
+    matrix = pd.pivot_table(paths[paths['direction'] != "all"], values="value", index="feature", columns="trait")
+    matrix_filtered = matrix[matrix.apply(lambda x: max(x) > 1.5, axis=1)]
+    sns.clustermap(matrix_filtered, standard_scale=1, figsize=(20, 20))
+    plt.savefig(os.path.join(output_dir, "trait_specific_regions.pathway_enrichment.all.filtered.svg"))
+    plt.close("all")
+
+    # Diseases
+    diseases = diseases.rename(columns={"#Term": "feature", "P-Value": "value"})
+    diseases["feature"] = diseases["Database"] + " - " + diseases["feature"]
+    diseases = diseases[["feature", "value", "trait", "direction"]]
+    diseases["direction"] = diseases["direction"].astype(str)
+    diseases["value"] = -np.log10(diseases["value"].astype(float))
+    diseases["trait"] = diseases["trait"] + " - " + diseases["direction"]
+    diseases = pd.melt(diseases, ["feature", "trait", "direction"])
+    # only genomic regions
+    # plot only all peaks from trait
+    matrix = pd.pivot_table(diseases[diseases['direction'] == "all"], values="value", index="feature", columns="trait")
+    sns.clustermap(matrix, standard_scale=1, figsize=(20, 20))
+    plt.savefig(os.path.join(output_dir, "trait_specific_regions.disease_enrichment.all.svg"))
+    plt.close("all")
+    # plot only two directions
+    matrix = pd.pivot_table(diseases[diseases['direction'] == "all"], values="value", index="feature", columns="trait")
+    matrix_filtered = matrix[matrix.apply(lambda x: max(x) > 1.5, axis=1)]
+    sns.clustermap(matrix_filtered, standard_scale=1, figsize=(20, 20))
+    plt.savefig(os.path.join(output_dir, "trait_specific_regions.disease_enrichment.all.fitered.svg"))
+    plt.close("all")
+
+    # Go terms 2
+    gos2 = gos2.rename(columns={"#Term": "feature", "P-Value": "value"})
+    gos2["feature"] = gos2["Database"] + " - " + gos2["feature"]
+    gos2 = gos2[["feature", "value", "trait", "direction"]]
+    gos2["direction"] = gos2["direction"].astype(str)
+    gos2["value"] = -np.log10(gos2["value"].astype(float))
+    gos2["trait"] = gos2["trait"] + " - " + gos2["direction"]
+    gos2 = pd.melt(gos2, ["feature", "trait", "direction"])
+    # only genomic regions
+    # plot only all peaks from trait
+    matrix = pd.pivot_table(gos2[gos2['direction'] == "all"], values="value", index="feature", columns="trait")
+    sns.clustermap(matrix, standard_scale=1, figsize=(20, 20))
+    plt.savefig(os.path.join(output_dir, "trait_specific_regions.goterms_enrichment-kobas.all.svg"))
+    plt.close("all")
+    # plot only two directions
+    matrix = pd.pivot_table(gos2[gos2['direction'] != "all"], values="value", index="feature", columns="trait")
+    matrix_filtered = matrix[matrix.apply(lambda x: max(x) > 1.5, axis=1)]
+    sns.clustermap(matrix_filtered, standard_scale=1, figsize=(20, 20))
+    plt.savefig(os.path.join(output_dir, "trait_specific_regions.goterms_enrichment-kobas.all.fitered.svg"))
+    plt.close("all")
 
 
 def export_matrices(analysis, sel_samples, labels, trait, validation=""):
