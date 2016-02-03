@@ -36,7 +36,7 @@ genomes:
   human: hg19
 
 transcriptomes:
-  human: hg19
+  human: hg19_cdna
 
 pipeline_config:
   # pipeline configuration files used in project.
