@@ -20,8 +20,7 @@ def macs2CallPeaks(treatmentBam, outputDir, sampleName, genome, controlBam=None,
         cmd = "macs2 callpeak -t {0}".format(treatmentBam)
         if controlBam is not None:
             cmd += " -c {0}".format(controlBam)
-        cmd += " --bw 200 -g {0} -n {1} --outdir {2}".format(sizes[genome], sampleName, outputDir)
-        # --fix-bimodal --extsize 180
+        cmd += " --fix-bimodal --extsize 180 --bw 200 -g {0} -n {1} --outdir {2}".format(sizes[genome], sampleName, outputDir)
     else:
         # Parameter setting for broad factors according to Nature Protocols (2012)
         # Vol.7 No.9 1728-1740 doi:10.1038/nprot.2012.101 Protocol (D) for H3K36me3
@@ -86,7 +85,7 @@ def rose_superenhancers(
     -r {} \\
     -o {} \\
     -g {} \\
-    -b {}""".format(
+    -b {} """.format(
         gff_file,
         ranking_bam,
         output_dir,
@@ -148,6 +147,7 @@ def call_superenhancers(sample, igg_sample):
     # prepare slurm job header
     cmd = tk.slurmHeader(
         sample.name + "_superenhancer_calling", os.path.join(output_dir, "slurm.log"),
+        time="7-12:00:00",
         cpusPerTask=8,
         queue="longq")
 

@@ -279,13 +279,12 @@ for accession in samples.values():
 
 
 # GWAS studies
-# gwas db dump
-os.system("wget -O gwas_catalog.tsv http://www.ebi.ac.uk/gwas/api/search/downloads/alternative")
-# gwas ontology
-os.system("wget http://www.ebi.ac.uk/fgpt/gwas/ontology/GWAS-EFO-Mappings201405.xlsx")
+# get GWAS catalog
+os.system("wget -O gwas_catalog.tsv http://www.ebi.ac.uk/gwas/api/search/downloads/alternative")  # gwas db dump
+os.system("wget http://www.ebi.ac.uk/fgpt/gwas/ontology/GWAS-EFO-Mappings201405.xlsx")  # gwas mapping/ontology
 
-# read in
-df = pd.read_csv("gwas_catalog.tsv", sep="\t")
+# read in catalog and mappings
+df = pd.read_csv("gwas_catalog.tsv", sep="\t")  # hg38!
 mapping = pd.read_excel("GWAS-EFO-Mappings201405.xlsx")
 
 # merge both
@@ -296,10 +295,14 @@ df3 = df2[['CHR_ID', 'CHR_POS', 'PUBMEDID', 'DISEASE/TRAIT', 'PARENT', 'SNPS', '
 df3.columns = ['chr', 'pos', 'pubmed_id', 'trait', 'ontology_group', 'snp', 'snp_strongest_allele', 'p_value', 'beta']
 df3.to_csv("gwas_catalog.csv", index=False)
 
-# Filter
+# filter on p-value
 df4 = df3[df3['p_value'] < 5e-8]
 
-# Export bed file for each ontology group
+if not os.path.exists("regions"):
+    os.makedirs("regions")
+
+# export bed file for each ontology group
+regionset_index = pd.DataFrame()
 for group in df4['ontology_group'].unique():
     df5 = df4[df4['ontology_group'] == group]
     df5 = df5[['chr', 'pos']]
@@ -314,4 +317,11 @@ for group in df4['ontology_group'].unique():
 
     # write bed file
     group = re.sub(" ", "_", group).lower()
-    df5.drop_duplicates().to_csv("gwas_catalog.%s.bed" % group, sep="\t", header=False, index=False)
+    df5.drop_duplicates().to_csv("regions/gwas_catalog.%s.bed" % group, sep="\t", header=False, index=False)
+
+    # save in regionset index
+    regionset_index = regionset_index.append(pd.Series(["Human", "SNPs in gwas catalog - %s" % group, "GWAS catalog", "gwas_catalog.%s.bed" % group]), ignore_index=True)
+
+# save regionset index
+regionset_index.columns = ["species", "description", "dataSource", "filename"]
+regionset_index.to_csv("index.txt", sep="\t", index=False)
