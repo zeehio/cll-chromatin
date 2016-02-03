@@ -1523,6 +1523,319 @@ def annotate_samples(samples):
     return annotate_clinical_traits(annotate_disease_treatments(new_samples))
 
 
+def pca_r(x, colors, output_pdf):
+    import rpy2.robjects as robj
+    import pandas.rpy.common as com
+
+    # save csvs for pca
+    pd.DataFrame(x).T.to_csv('pca_file.csv', index=False)
+    pd.Series(colors).to_csv('colors.csv', index=False)
+
+    result = com.convert_robj(robj.r("""
+    df = read.csv('pca_file.csv')
+
+    colors = read.csv('colors.csv', header=FALSE)
+
+    df.pca <- prcomp(df,
+                     center = TRUE,
+                     scale. = TRUE)
+    return(df.pca)
+    """))
+    x = result['x']
+    variance = result['sdev']
+
+    # plot PC1 vs PC2
+    fig, axis = plt.subplots(nrows=1, ncols=2)
+    fig.set_figheight(10)
+    fig.set_figwidth(25)
+
+    # 1vs2 components
+    for i in range(1, x.shape[0] + 1):
+        axis[0].scatter(
+            x.loc[i, 'PC1'], x.loc[i, 'PC2'],
+            color=colors[i - 1],
+            s=50
+        )
+    axis[0].set_xlabel("PC1 - {0}% variance".format(variance[0]))
+    axis[0].set_ylabel("PC2 - {0}% variance".format(variance[1]))
+
+    # plot PC1 vs PC3
+    for i in range(1, x.shape[0] + 1):
+        axis[1].scatter(
+            x.loc[i, 'PC1'], x.loc[i, 'PC3'],
+            color=colors[i - 1],
+            s=50
+        )
+    axis[1].set_xlabel("PC1 - {0}% variance".format(variance[0]))
+    axis[1].set_ylabel("PC3 - {0}% variance".format(variance[2]))
+
+    fig.savefig(output_pdf, bbox_inches='tight')
+
+
+def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
+    """
+    Use a machine learning approach for sample classification based on known sample attributes.
+    Extract features most important to separate samples and investigate those.
+    """
+    print("Trait:%s" % trait)
+    print("%i samples with trait annotated" % len(sel_samples))
+    print(Counter(labels))
+
+    dataframe_file = os.path.join(
+        analysis.data_dir,
+        "trait_specific",
+        "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
+    if os.path.exists(dataframe_file) and not rerun:  # Load up
+        dataframe = pd.read_csv(dataframe_file, sep="\t")
+    else:  # Run analysis
+        # Get all CLL ATAC-seq samples for validation
+        all_samples = [s for s in analysis.samples if s.cell_line == "CLL" and s.library == "ATAC-seq"]
+
+        # Get colors depending on this feature label (trait) (True == green; False == redish)
+        palette = sns.color_palette("colorblind")
+        trait_colors = [palette[1] if l else palette[2] for l in labels]
+        all_samples_colors = [trait_colors[sel_samples.index(s)] if s in sel_samples else "gray" for s in all_samples]
+        cmap = sns.cubehelix_palette(8, start=.5, rot=-.75, as_cmap=True)  # for later usage in heatmaps
+
+        # BINARY CLASSIFICATION ON ALL CLL OPEN CHROMATIN REGIONS
+        # get features and labels
+        X = normalize(analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]].T)
+        y = np.array(labels)
+
+        loo = cross_validation.LeaveOneOut(len(X))
+
+        for i, (train_index, test_index) in enumerate(loo):
+            # Remove samples from the same patient that we are predicting during training
+            # get current patient_id
+            _pid = [s.patient_id for s in sel_samples][test_index]
+            # get indexes of samples from current patient
+            _p_indexes = [index for index, s in enumerate(sel_samples) if s.patient_id == _pid]
+            # remove indexes from training
+            train_index = np.delete(train_index, _p_indexes)
+            train_index = np.delete(train_index, _p_indexes)
+
+            # Slice accordingly
+            X_train, X_test = X[train_index], X[test_index]
+            y_train, y_test = y[train_index], y[test_index]
+
+            # Train, predict
+            classifier = RandomForestClassifier(n_estimators=100, n_jobs=-1)
+            y_score = classifier.fit(X_train, y_train).predict_proba(X_test)
+
+            if i == 0:
+                y_all_test = y_test
+                y_all_scores = y_score
+                importance = classifier.feature_importances_
+            else:
+                y_all_test = np.vstack([y_all_test, y_test])
+                y_all_scores = np.vstack([y_all_scores, y_score])
+                importance = np.vstack([importance, classifier.feature_importances_])
+
+        # Metrics
+        binary_labels = [0 if x == classifier.classes_[0] else 1 for x in y_all_test]
+        binary_scores = [0 if x > 0.5 else 1 for x in y_all_scores[:, 0]]
+        # Specificity (TN / N)
+        tn = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 1) and (binary_scores[i] == 1)])
+        n = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 1])
+        TNR = tn / float(n)
+        # Sensitivity (TP / P)
+        tp = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 0) and (binary_scores[i] == 0)])
+        p = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 0])
+        TPR = tp / float(p)
+        # FPR (FP / P)
+        fn = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 0) and (binary_scores[i] == 1)])
+        p = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 0])
+        FPR = fn / float(p)
+        # FNR (FN / P)
+        fn = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 1) and (binary_scores[i] == 0)])
+        p = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 1])
+        FNR = fn / float(p)
+
+        # Compute ROC curve and ROC area for each class
+        fpr, tpr, _ = roc_curve(y_all_test, y_all_scores[:, 1], pos_label=1)
+        roc_auc = auc(fpr, tpr, reorder=True)
+        # Compute Precision-Recall and average precision
+        precision, recall, _ = precision_recall_curve(y_all_test, y_all_scores[:, 1], pos_label=1)
+        binary_labels = [0 if x == classifier.classes_[0] else 1 for x in y_all_test]
+        aps = average_precision_score(binary_labels, y_all_scores[:, 1])
+
+        # Plot ROC and PRC curves
+        fig, axis = plt.subplots(1, 2, figsize=(12, 5))
+        axis[0].plot(fpr, tpr, label='ROC (AUC = {0:0.2f}; TNR = {1:0.2f}; TPR = {2:0.2f})'.format(roc_auc, TNR, TPR))
+        axis[1].plot(recall, precision, label='PRC (AUC = {0:0.2f})'.format(aps))
+        axis[0].plot((0, 1), (0, 1), '--', color='gray')
+        axis[0].set_xlim([-0.05, 1.0])
+        axis[0].set_ylim([0.0, 1.05])
+        axis[0].set_xlabel('False Positive Rate')
+        axis[0].set_ylabel('True Positive Rate')
+        axis[0].legend(loc="lower right")
+        axis[1].set_xlim([-0.05, 1.0])
+        axis[1].set_ylim([0.0, 1.05])
+        axis[1].set_xlabel('Recall')
+        axis[1].set_ylabel('Precision')
+        axis[1].legend(loc="lower right")
+        # plot specificity (tpr) and sensitivity (1-tnr)
+        axis[0].plot(1 - TNR, TPR, 'o', color='gray')  # , s=50)
+        fig.savefig(os.path.join(
+            analysis.plots_dir,
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.ROC_PRC.svg" % trait), bbox_inches="tight")
+
+        # Display training and prediction of pre-labeled samples of most informative features:
+        # average feature importance across iterations
+        mean_importance = importance.mean(axis=0)
+
+        # visualize feature importance
+        fig, axis = plt.subplots(1)
+        sns.distplot(mean_importance, ax=axis)
+        fig.savefig(os.path.join(
+            analysis.plots_dir,
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.mean_importance.svg" % trait), bbox_inches="tight")
+        plt.close("all")
+
+        # SEE VALUES OF ALL SAMPLES IN IMPORTANT FEATURES
+        # Display most informative features for ALL samples:
+        matrix = analysis.coverage_qnorm_annotated[[s.name for s in all_samples]]
+        # get important features
+        x = matrix.loc[[i for i, j in enumerate(mean_importance > 1e-4) if j == True], :]  # get features on the tail of the importance distribution
+
+        # Add info
+        dataframe = analysis.coverage_qnorm_annotated.loc[x.index, :]
+        # add difference of standardized openness between positive and negative groups used in classification
+        df2 = dataframe[[s.name for s in sel_samples]].apply(lambda j: (j - j.min()) / (j.max() - j.min()), axis=0)
+        dataframe["change"] = df2.icol([i for i, l in enumerate(labels) if l == 1]).mean(axis=1) - df2.icol([i for i, l in enumerate(labels) if l == 0]).mean(axis=1)
+        # add direction of chromatin feature association with trait
+        dataframe['direction'] = dataframe['change'].apply(lambda x: 1 if x > 0 else -1)
+        # add feature importance
+        dataframe["importance"] = mean_importance[x.index]
+
+        # Save whole dataframe as csv
+        dataframe_file = os.path.join(
+            analysis.data_dir,
+            "trait_specific",
+            "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
+        dataframe.to_csv(dataframe_file, index=False)
+
+        # Save as bed
+        bed_file = os.path.join(
+            analysis.data_dir,
+            "trait_specific",
+            "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % trait)
+        dataframe[["chrom", "start", "end"]].to_csv(bed_file, sep="\t", header=False, index=False)
+
+        # sample correlation dendrogram
+        sns.clustermap(
+            x.corr(),
+            col_colors=all_samples_colors,  # all_sample_colors(all_samples),
+            row_colors=all_samples_colors)
+        plt.savefig(os.path.join(
+            analysis.plots_dir,
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_correlation.svg" % trait), bbox_inches="tight")
+        plt.close("all")
+
+        # pca on these regions
+        pca_r(x, all_samples_colors, os.path.join(
+            analysis.plots_dir,
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_labels.svg" % trait))
+
+        # colors of the direction each region is associated to
+        region_colors = dict(zip([1, -1], sns.color_palette("colorblind")[1:3]))
+        colors = [region_colors[c] for c in dataframe['direction']]
+        sns.clustermap(
+            x,
+            cmap=cmap,
+            standard_scale=0,
+            col_colors=all_samples_colors,
+            row_colors=colors,
+            yticklabels=False)
+        plt.savefig(os.path.join(
+            analysis.plots_dir,
+            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sites_labels.svg" % trait), bbox_inches="tight")
+        plt.close("all")
+
+
+def classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, comparison):
+    """
+    Use a machine learning approach for sample classification based on known sample attributes.
+    Extract features most important to separate samples and investigate those.
+    """
+    print("Trait:%s" % comparison)
+    print("Train:")
+    print("%i samples with trait annotated" % len(train_samples))
+    print(Counter(train_labels))
+    print("Validation:")
+    print("%i samples with trait annotated" % len(val_samples))
+    print(Counter(val_labels))
+
+    # ALL CLL OPEN CHROMATIN REGIONS
+    matrix = pd.DataFrame(
+        normalize(
+            analysis.coverage_qnorm_annotated[[s.name for s in analysis.samples if s.library == "ATAC-seq"]]
+        ),
+        columns=[[s.name for s in analysis.samples if s.library == "ATAC-seq"]])
+    matrix_train = matrix[[s.name for s in train_samples]]
+    matrix_val = matrix[[s.name for s in val_samples]]
+
+    # BINARY CLASSIFICATION
+    # get features and train_labels
+    X_train = matrix_train.T
+    y_train = np.array(train_labels)
+    X_val = matrix_val.T
+    y_val = np.array(val_labels)
+
+    # Train, predict
+    classifier = RandomForestClassifier(n_estimators=100, n_jobs=-1)
+    y_score = classifier.fit(X_train, y_train).predict_proba(X_val)
+
+    # Metrics
+    binary_labels = [0 if x == classifier.classes_[0] else 1 for x in y_val]
+    binary_scores = [0 if x > 0.5 else 1 for x in y_score[:, 0]]
+    # Specificity (TN / N)
+    tn = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 1) and (binary_scores[i] == 1)])
+    n = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 1])
+    TNR = tn / float(n)
+    # Sensitivity (TP / P)
+    tp = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 0) and (binary_scores[i] == 0)])
+    p = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 0])
+    TPR = tp / float(p)
+    # FPR (FP / P)
+    fn = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 0) and (binary_scores[i] == 1)])
+    p = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 0])
+    FPR = fn / float(p)
+    # FNR (FN / P)
+    fn = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 1) and (binary_scores[i] == 0)])
+    p = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 1])
+    FNR = fn / float(p)
+
+    # Compute ROC curve and ROC area for each class
+    fpr, tpr, _ = roc_curve(y_val, y_score[:, 1], pos_label=1)
+    roc_auc = auc(fpr, tpr, reorder=True)
+    # Compute Precision-Recall and average precision
+    precision, recall, _ = precision_recall_curve(y_val, y_score[:, 1], pos_label=1)
+    binary_labels = [0 if x == classifier.classes_[0] else 1 for x in y_val]
+    aps = average_precision_score(binary_labels, y_score[:, 1])
+
+    # Plot ROC and PRC curves
+    fig, axis = plt.subplots(1, 2, figsize=(12, 5))
+    axis[0].plot(fpr, tpr, label='ROC (AUC = {0:0.2f}; TNR = {1:0.2f}; TPR = {2:0.2f})'.format(roc_auc, TNR, TPR))
+    axis[1].plot(recall, precision, label='PRC (AUC = {0:0.2f})'.format(aps))
+    axis[0].plot((0, 1), (0, 1), '--', color='gray')
+    axis[0].set_xlim([-0.05, 1.0])
+    axis[0].set_ylim([0.0, 1.05])
+    axis[0].set_xlabel('False Positive Rate')
+    axis[0].set_ylabel('True Positive Rate')
+    axis[0].legend(loc="lower right")
+    axis[1].set_xlim([-0.05, 1.0])
+    axis[1].set_ylim([0.0, 1.05])
+    axis[1].set_xlabel('Recall')
+    axis[1].set_ylabel('Precision')
+    axis[1].legend(loc="lower right")
+    # plot specificity (tpr) and sensitivity (1-tnr)
+    axis[0].plot(1 - TNR, TPR, 'o', color='gray')  # , s=50)
+    fig.savefig(os.path.join(
+        analysis.plots_dir,
+        "trait_specific", "cll_peaks.%s_significant.classification_validation.random_forest.loocv.ROC_PRC.svg" % comparison), bbox_inches="tight")
+
+
 def state_enrichment_overlap(n=100):
     cll_peaks = "~/cll_peaks.bed"
     all_states = "all_states_all_lines.bed"
@@ -1599,55 +1912,6 @@ def state_enrichment_overlap(n=100):
 def bed_to_fasta(bed_file, fasta_file):
     cmd = "bedtools getfasta -fi ~/resources/genomes/hg19/hg19.fa -bed {0} -fo {1}".format(bed_file, fasta_file)
     os.system(cmd)
-
-
-def pca_r(x, colors, output_pdf):
-    import rpy2.robjects as robj
-    import pandas.rpy.common as com
-
-    # save csvs for pca
-    pd.DataFrame(x).T.to_csv('pca_file.csv', index=False)
-    pd.Series(colors).to_csv('colors.csv', index=False)
-
-    result = com.convert_robj(robj.r("""
-    df = read.csv('pca_file.csv')
-
-    colors = read.csv('colors.csv', header=FALSE)
-
-    df.pca <- prcomp(df,
-                     center = TRUE,
-                     scale. = TRUE)
-    return(df.pca)
-    """))
-    x = result['x']
-    variance = result['sdev']
-
-    # plot PC1 vs PC2
-    fig, axis = plt.subplots(nrows=1, ncols=2)
-    fig.set_figheight(10)
-    fig.set_figwidth(25)
-
-    # 1vs2 components
-    for i in range(1, x.shape[0] + 1):
-        axis[0].scatter(
-            x.loc[i, 'PC1'], x.loc[i, 'PC2'],
-            color=colors[i - 1],
-            s=50
-        )
-    axis[0].set_xlabel("PC1 - {0}% variance".format(variance[0]))
-    axis[0].set_ylabel("PC2 - {0}% variance".format(variance[1]))
-
-    # plot PC1 vs PC3
-    for i in range(1, x.shape[0] + 1):
-        axis[1].scatter(
-            x.loc[i, 'PC1'], x.loc[i, 'PC3'],
-            color=colors[i - 1],
-            s=50
-        )
-    axis[1].set_xlabel("PC1 - {0}% variance".format(variance[0]))
-    axis[1].set_ylabel("PC3 - {0}% variance".format(variance[2]))
-
-    fig.savefig(output_pdf, bbox_inches='tight')
 
 
 def lola(bed_files, universe_file, output_folder):
@@ -1914,187 +2178,6 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
     meme_ame(fasta_file, meme_output)
 
 
-def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
-    """
-    Use a machine learning approach for sample classification based on known sample attributes.
-    Extract features most important to separate samples and investigate those.
-    """
-    print("Trait:%s" % trait)
-    print("%i samples with trait annotated" % len(sel_samples))
-    print(Counter(labels))
-
-    dataframe_file = os.path.join(
-        analysis.data_dir,
-        "trait_specific",
-        "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
-    if os.path.exists(dataframe_file) and not rerun:  # Load up
-        dataframe = pd.read_csv(dataframe_file, sep="\t")
-    else:  # Run analysis
-        # Get all CLL ATAC-seq samples for validation
-        all_samples = [s for s in analysis.samples if s.cell_line == "CLL" and s.library == "ATAC-seq"]
-
-        # Get colors depending on this feature label (trait) (True == green; False == redish)
-        palette = sns.color_palette("colorblind")
-        trait_colors = [palette[1] if l else palette[2] for l in labels]
-        all_samples_colors = [trait_colors[sel_samples.index(s)] if s in sel_samples else "gray" for s in all_samples]
-        cmap = sns.cubehelix_palette(8, start=.5, rot=-.75, as_cmap=True)  # for later usage in heatmaps
-
-        # BINARY CLASSIFICATION ON ALL CLL OPEN CHROMATIN REGIONS
-        # get features and labels
-        X = normalize(analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]].T)
-        y = np.array(labels)
-
-        loo = cross_validation.LeaveOneOut(len(X))
-
-        for i, (train_index, test_index) in enumerate(loo):
-            # Remove samples from the same patient that we are predicting during training
-            # get current patient_id
-            _pid = [s.patient_id for s in sel_samples][test_index]
-            # get indexes of samples from current patient
-            _p_indexes = [index for index, s in enumerate(sel_samples) if s.patient_id == _pid]
-            # remove indexes from training
-            train_index = np.delete(train_index, _p_indexes)
-            train_index = np.delete(train_index, _p_indexes)
-
-            # Slice accordingly
-            X_train, X_test = X[train_index], X[test_index]
-            y_train, y_test = y[train_index], y[test_index]
-
-            # Train, predict
-            classifier = RandomForestClassifier(n_estimators=100, n_jobs=-1)
-            y_score = classifier.fit(X_train, y_train).predict_proba(X_test)
-
-            if i == 0:
-                y_all_test = y_test
-                y_all_scores = y_score
-                importance = classifier.feature_importances_
-            else:
-                y_all_test = np.vstack([y_all_test, y_test])
-                y_all_scores = np.vstack([y_all_scores, y_score])
-                importance = np.vstack([importance, classifier.feature_importances_])
-
-        # Metrics
-        binary_labels = [0 if x == classifier.classes_[0] else 1 for x in y_all_test]
-        binary_scores = [0 if x > 0.5 else 1 for x in y_all_scores[:, 0]]
-        # Specificity (TN / N)
-        tn = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 1) and (binary_scores[i] == 1)])
-        n = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 1])
-        TNR = tn / float(n)
-        # Sensitivity (TP / P)
-        tp = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 0) and (binary_scores[i] == 0)])
-        p = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 0])
-        TPR = tp / float(p)
-        # FPR (FP / P)
-        fn = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 0) and (binary_scores[i] == 1)])
-        p = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 0])
-        FPR = fn / float(p)
-        # FNR (FN / P)
-        fn = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 1) and (binary_scores[i] == 0)])
-        p = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 1])
-        FNR = fn / float(p)
-
-        # Compute ROC curve and ROC area for each class
-        fpr, tpr, _ = roc_curve(y_all_test, y_all_scores[:, 1], pos_label=1)
-        roc_auc = auc(fpr, tpr, reorder=True)
-        # Compute Precision-Recall and average precision
-        precision, recall, _ = precision_recall_curve(y_all_test, y_all_scores[:, 1], pos_label=1)
-        binary_labels = [0 if x == classifier.classes_[0] else 1 for x in y_all_test]
-        aps = average_precision_score(binary_labels, y_all_scores[:, 1])
-
-        # Plot ROC and PRC curves
-        fig, axis = plt.subplots(1, 2, figsize=(12, 5))
-        axis[0].plot(fpr, tpr, label='ROC (AUC = {0:0.2f}; TNR = {1:0.2f}; TPR = {2:0.2f})'.format(roc_auc, TNR, TPR))
-        axis[1].plot(recall, precision, label='PRC (AUC = {0:0.2f})'.format(aps))
-        axis[0].plot((0, 1), (0, 1), '--', color='gray')
-        axis[0].set_xlim([-0.05, 1.0])
-        axis[0].set_ylim([0.0, 1.05])
-        axis[0].set_xlabel('False Positive Rate')
-        axis[0].set_ylabel('True Positive Rate')
-        axis[0].legend(loc="lower right")
-        axis[1].set_xlim([-0.05, 1.0])
-        axis[1].set_ylim([0.0, 1.05])
-        axis[1].set_xlabel('Recall')
-        axis[1].set_ylabel('Precision')
-        axis[1].legend(loc="lower right")
-        # plot specificity (tpr) and sensitivity (1-tnr)
-        axis[0].plot(1 - TNR, TPR, 'o', color='gray')  # , s=50)
-        fig.savefig(os.path.join(
-            analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.ROC_PRC.svg" % trait), bbox_inches="tight")
-
-        # Display training and prediction of pre-labeled samples of most informative features:
-        # average feature importance across iterations
-        mean_importance = importance.mean(axis=0)
-
-        # visualize feature importance
-        fig, axis = plt.subplots(1)
-        sns.distplot(mean_importance, ax=axis)
-        fig.savefig(os.path.join(
-            analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.mean_importance.svg" % trait), bbox_inches="tight")
-        plt.close("all")
-
-        # SEE VALUES OF ALL SAMPLES IN IMPORTANT FEATURES
-        # Display most informative features for ALL samples:
-        matrix = analysis.coverage_qnorm_annotated[[s.name for s in all_samples]]
-        # get important features
-        x = matrix.loc[[i for i, j in enumerate(mean_importance > 1e-4) if j == True], :]  # get features on the tail of the importance distribution
-
-        # Add info
-        dataframe = analysis.coverage_qnorm_annotated.loc[x.index, :]
-        # add difference of standardized openness between positive and negative groups used in classification
-        df2 = dataframe[[s.name for s in sel_samples]].apply(lambda j: (j - j.min()) / (j.max() - j.min()), axis=0)
-        dataframe["change"] = df2.icol([i for i, l in enumerate(labels) if l == 1]).mean(axis=1) - df2.icol([i for i, l in enumerate(labels) if l == 0]).mean(axis=1)
-        # add direction of chromatin feature association with trait
-        dataframe['direction'] = dataframe['change'].apply(lambda x: 1 if x > 0 else -1)
-        # add feature importance
-        dataframe["importance"] = mean_importance[x.index]
-
-        # Save whole dataframe as csv
-        dataframe_file = os.path.join(
-            analysis.data_dir,
-            "trait_specific",
-            "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
-        dataframe.to_csv(dataframe_file, index=False)
-
-        # Save as bed
-        bed_file = os.path.join(
-            analysis.data_dir,
-            "trait_specific",
-            "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % trait)
-        dataframe[["chrom", "start", "end"]].to_csv(bed_file, sep="\t", header=False, index=False)
-
-        # sample correlation dendrogram
-        sns.clustermap(
-            x.corr(),
-            col_colors=all_samples_colors,  # all_sample_colors(all_samples),
-            row_colors=all_samples_colors)
-        plt.savefig(os.path.join(
-            analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_correlation.svg" % trait), bbox_inches="tight")
-        plt.close("all")
-
-        # pca on these regions
-        pca_r(x, all_samples_colors, os.path.join(
-            analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_labels.svg" % trait))
-
-        # colors of the direction each region is associated to
-        region_colors = dict(zip([1, -1], sns.color_palette("colorblind")[1:3]))
-        colors = [region_colors[c] for c in dataframe['direction']]
-        sns.clustermap(
-            x,
-            cmap=cmap,
-            standard_scale=0,
-            col_colors=all_samples_colors,
-            row_colors=colors,
-            yticklabels=False)
-        plt.savefig(os.path.join(
-            analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sites_labels.svg" % trait), bbox_inches="tight")
-        plt.close("all")
-
-
 def characterize_regions(analysis, traits, nmin=100):
     """
     Characterize structural-, functionally and in the chromatin regions trait-specific regions.
@@ -2318,89 +2401,6 @@ def characterize_regions(analysis, traits, nmin=100):
     # sns.clustermap(matrix_filtered, standard_scale=1, figsize=(20, 20))
     # plt.savefig(os.path.join(output_dir, "trait_specific_regions.pathway_enrichment.direction.svg"))
     # plt.close("all")
-
-
-def classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, comparison):
-    """
-    Use a machine learning approach for sample classification based on known sample attributes.
-    Extract features most important to separate samples and investigate those.
-    """
-    print("Trait:%s" % comparison)
-    print("Train:")
-    print("%i samples with trait annotated" % len(train_samples))
-    print(Counter(train_labels))
-    print("Validation:")
-    print("%i samples with trait annotated" % len(val_samples))
-    print(Counter(val_labels))
-
-    # ALL CLL OPEN CHROMATIN REGIONS
-    matrix = pd.DataFrame(
-        normalize(
-            analysis.coverage_qnorm_annotated[[s.name for s in analysis.samples if s.library == "ATAC-seq"]]
-        ),
-        columns=[[s.name for s in analysis.samples if s.library == "ATAC-seq"]])
-    matrix_train = matrix[[s.name for s in train_samples]]
-    matrix_val = matrix[[s.name for s in val_samples]]
-
-    # BINARY CLASSIFICATION
-    # get features and train_labels
-    X_train = matrix_train.T
-    y_train = np.array(train_labels)
-    X_val = matrix_val.T
-    y_val = np.array(val_labels)
-
-    # Train, predict
-    classifier = RandomForestClassifier(n_estimators=100, n_jobs=-1)
-    y_score = classifier.fit(X_train, y_train).predict_proba(X_val)
-
-    # Metrics
-    binary_labels = [0 if x == classifier.classes_[0] else 1 for x in y_val]
-    binary_scores = [0 if x > 0.5 else 1 for x in y_score[:, 0]]
-    # Specificity (TN / N)
-    tn = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 1) and (binary_scores[i] == 1)])
-    n = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 1])
-    TNR = tn / float(n)
-    # Sensitivity (TP / P)
-    tp = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 0) and (binary_scores[i] == 0)])
-    p = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 0])
-    TPR = tp / float(p)
-    # FPR (FP / P)
-    fn = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 0) and (binary_scores[i] == 1)])
-    p = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 0])
-    FPR = fn / float(p)
-    # FNR (FN / P)
-    fn = len([1 for i in range(len(binary_scores)) if (binary_labels[i] == 1) and (binary_scores[i] == 0)])
-    p = len([1 for i in range(len(binary_scores)) if binary_labels[i] == 1])
-    FNR = fn / float(p)
-
-    # Compute ROC curve and ROC area for each class
-    fpr, tpr, _ = roc_curve(y_val, y_score[:, 1], pos_label=1)
-    roc_auc = auc(fpr, tpr, reorder=True)
-    # Compute Precision-Recall and average precision
-    precision, recall, _ = precision_recall_curve(y_val, y_score[:, 1], pos_label=1)
-    binary_labels = [0 if x == classifier.classes_[0] else 1 for x in y_val]
-    aps = average_precision_score(binary_labels, y_score[:, 1])
-
-    # Plot ROC and PRC curves
-    fig, axis = plt.subplots(1, 2, figsize=(12, 5))
-    axis[0].plot(fpr, tpr, label='ROC (AUC = {0:0.2f}; TNR = {1:0.2f}; TPR = {2:0.2f})'.format(roc_auc, TNR, TPR))
-    axis[1].plot(recall, precision, label='PRC (AUC = {0:0.2f})'.format(aps))
-    axis[0].plot((0, 1), (0, 1), '--', color='gray')
-    axis[0].set_xlim([-0.05, 1.0])
-    axis[0].set_ylim([0.0, 1.05])
-    axis[0].set_xlabel('False Positive Rate')
-    axis[0].set_ylabel('True Positive Rate')
-    axis[0].legend(loc="lower right")
-    axis[1].set_xlim([-0.05, 1.0])
-    axis[1].set_ylim([0.0, 1.05])
-    axis[1].set_xlabel('Recall')
-    axis[1].set_ylabel('Precision')
-    axis[1].legend(loc="lower right")
-    # plot specificity (tpr) and sensitivity (1-tnr)
-    axis[0].plot(1 - TNR, TPR, 'o', color='gray')  # , s=50)
-    fig.savefig(os.path.join(
-        analysis.plots_dir,
-        "trait_specific", "cll_peaks.%s_significant.classification_validation.random_forest.loocv.ROC_PRC.svg" % comparison), bbox_inches="tight")
 
 
 def export_matrices(analysis, sel_samples, labels, trait, validation=""):
