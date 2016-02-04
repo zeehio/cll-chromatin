@@ -33,12 +33,19 @@ matplotlib.rc("font", serif="Helvetica Neue")
 matplotlib.rc("text", usetex="false")
 
 
-def survival_plot(clinical, fitter, fitter_name, feature, time, axis=None):
+def life_duration(x, kind="diagnosis_date"):
+    if x["patient_death_date"] is pd.NaT:
+        return x["patient_last_checkup_date"] - x[kind]
+    else:
+        return x["patient_death_date"] - x[kind]
+
+
+def survival_plot(clinical, fitter, fitter_name, feature, axis=None):
     """
     Plot survival/hazard of all patients regardless of trait and dependent of trait.
     """
-    # all time (duration of patient following) regardless of trait
-    T = [i.days / float(30) for i in clinical[time]]
+    # duration of life
+    T = [i.days / 30. for i in clinical["duration"]]
     # events:
     # True for observed event (death);
     # else False (this includes death not observed; death by other causes)
@@ -105,21 +112,26 @@ def survival_plot(clinical, fitter, fitter_name, feature, time, axis=None):
     axis.set_ylabel(fitter_name)
     sns.despine()
     if save:
-        fig.savefig(os.path.join(plots_dir, "%s_%s_since_%s.svg" % (feature, fitter_name, time)), bbox_inches="tight")
+        fig.savefig(os.path.join(plots_dir, "%s_%s.svg" % (feature, fitter_name)), bbox_inches="tight")
 
 
-def test_model(model, clinical2):
-    X = patsy.dmatrix(model + " -1", clinical2, return_type="dataframe").reset_index(drop=True)
+def test_model(model, fitter_name, df):
+    X = patsy.dmatrix(model + " -1", df, return_type="dataframe").reset_index(drop=True)
     if X.empty:
         return [None for _ in range(1, 11)]
-    X["T"] = [i.days / float(30) for i in clinical2["duration_following"].ix[X.index]]
-    X["E"] = [True if i is not pd.NaT else False for i in clinical2["patient_death_date"].ix[X.index]]
+    X["T"] = [i.days / 30. for i in df["duration"].ix[X.index]]
+    X["E"] = [True if i is not pd.NaT else False for i in df["patient_death_date"].ix[X.index]]
 
-    r = list()
+    scores = list()
     for penalty in range(1, 11):
-        aaf = AalenAdditiveFitter(coef_penalizer=penalty, fit_intercept=True)
-        r.append((penalty, k_fold_cross_validation(aaf, X, "T", event_col="E", k=10)))  # append = penalty, score
-    return r
+        if fitter_name == "aalen":
+            fitter = AalenAdditiveFitter(coef_penalizer=penalty, fit_intercept=True)
+        else:
+            fitter = CoxPHFitter(penalizer=penalty * 0.1)
+        score = k_fold_cross_validation(fitter, X, "T", event_col="E", k=10)
+        if score > 0:
+            scores.append((penalty, score))  # append = penalty, score
+    return scores
 
 
 # plots output dir
@@ -158,7 +170,7 @@ for mutation in mutations:
 
 # Get one record per patient
 cols = [
-    "patient_birth_date", "patient_death_date", "sample_collection_date",
+    "patient_id", "patient_birth_date", "patient_death_date", "sample_collection_date",
     "diagnosis_date", "patient_last_checkup_date", "treatment_date"] + ["treatment_%i_date" % i for i in range(1, 5)]
 clinical = clinical[cols + traits + chrom_abrs + mutations].drop_duplicates()
 
@@ -169,8 +181,7 @@ clinical = clinical[~clinical["patient_birth_date"].isnull()]
 clinical = clinical[~clinical["diagnosis_date"].isnull()]
 
 
-# Lifelines analysis
-# Get duration of patient observation
+# Get duration of patient life or up to time of censorship
 # but first, let"s replace missing "patient_last_checkup_date" with last date of treatment, death or collection
 cols = ["patient_death_date", "sample_collection_date", "diagnosis_date"] + ["treatment_%i_date" % i for i in range(1, 5)]
 subs = clinical[cols].apply(lambda x: max(x.dropna()), axis=1).groupby(clinical.index).max()
@@ -180,23 +191,21 @@ for i in no_checkup.index:
     if subs[i] is not pd.NaT:
         clinical.loc[i, "patient_last_checkup_date"] = subs[i]
 
-clinical["duration_following"] = clinical["patient_last_checkup_date"] - clinical["diagnosis_date"]
-clinical["duration_life"] = clinical["patient_last_checkup_date"] - clinical["patient_birth_date"]
+clinical["duration"] = clinical.apply(life_duration, axis=1)
 
 
-# For time since birth and time since diagnosis
-times = {
-    # "birth": "duration_life",
-    "diagnosis": "duration_following"}
+#
 
+
+# Survival analysis
+# For time since diagnosis
 features = traits + chrom_abrs + mutations
 
 # Survival of each clinical feature
 fig, axis = plt.subplots(3, 7, figsize=(50, 20))
 axis = axis.flatten()
-time = "duration_following"
+time = "duration"
 for i, feature in enumerate(features):
-    print(feature)
     survival_plot(clinical, KaplanMeierFitter(), "survival", feature, time, axis=axis[i])
 fig.savefig(os.path.join(plots_dir, "all_traits.survival.svg"), bbox_inches="tight")
 
@@ -204,186 +213,130 @@ fig.savefig(os.path.join(plots_dir, "all_traits.survival.svg"), bbox_inches="tig
 # Hazard of each clinical feature
 fig, axis = plt.subplots(3, 7, figsize=(50, 20))
 axis = axis.flatten()
-time = "duration_following"
+time = "duration"
 for i, feature in enumerate(features):
-    print(feature)
     survival_plot(clinical, NelsonAalenFitter(nelson_aalen_smoothing=False), "hazard", feature, time, axis=axis[i])
 fig.savefig(os.path.join(plots_dir, "all_traits.hazard.svg"), bbox_inches="tight")
-
-
-# Regression using Aalen's additive model
-features = traits + chrom_abrs + mutations
-[features.pop(features.index(i)) for i in [
-    "ZAP70_monoallelic_methylation", "diagnosis_stage_rai",
-    "TP53", "SF3B1", "ATM", "NOTCH1", "BIRC3", "BCL2", "MYD88", "CHD2", "NFKIE"]]
-combinations = [" + ".join(j) for i in range(1, len(features) + 1) for j in itertools.combinations(features, i)]
-
-# Test all models
-clinical2 = clinical.reset_index(drop=True)
-performances = Parallel(n_jobs=-1, verbose=5)(delayed(test_model)(model, clinical2) for model in combinations)
-
-validated = dict(zip(
-    [re.sub(r" \+ ", "-", c) for c in combinations],
-    sum(performances, []))
-)
-# filter out None (from models witough necessary info)
-validated = {model: scores for model, scores in validated.items() if scores is not None}
-
-# model concordance distribution
-fig, axis = plt.subplots(3, sharex=False, sharey=False, figsize=(15, 8))
-sns.distplot([np.mean(x[1]) for x in validated.values()], ax=axis[0])
-# number of elements in model
-axis[1].scatter([len(x.split("-")) for x in validated.keys()], [np.mean(x[1]) for x in validated.values()])
-# penalty per model
-axis[2].scatter([x[0] for x in validated.values()], [np.mean(x[1]) for x in validated.values()])
-axis[0].set_xlabel("Mean model concordance")
-axis[0].set_ylabel("Density")
-axis[1].set_xlabel("Number of model terms")
-axis[1].set_ylabel("Mean concordance")
-axis[2].set_xlabel("Co-variate penalty")
-axis[2].set_ylabel("Mean concordance")
-fig.savefig(os.path.join(plots_dir, "model_selection_performance.svg"), bbox_inches="tight")
-
-# sort by performance
-best_models = sorted(validated.items(), key=lambda x: np.mean(x[1][1]))
-
-# Plot 5 best models
-fig, axis = plt.subplots(2, 5, sharex=False, sharey=False, figsize=(40, 15))
-for m in range(1, 6):
-    # get best model
-    model = re.sub("-", " + ", best_models[-m][0])
-    penalty = best_models[-m][1][0]
-
-    # regress with best model
-    X = patsy.dmatrix(model + " -1", clinical, return_type="dataframe")
-    X["T"] = [i.days / float(30) for i in clinical["duration_following"].ix[X.index]]
-    X["E"] = [True if i is not pd.NaT else False for i in clinical["patient_death_date"].ix[X.index]]
-
-    aaf = AalenAdditiveFitter(coef_penalizer=penalty, fit_intercept=True)
-    aaf.fit(X, "T", event_col="E")
-    aaf.predict_survival_function(X).plot(ax=axis[0][m - 1], legend=False)
-    aaf.predict_cumulative_hazard(X).plot(ax=axis[1][m - 1], legend=False)
-    axis[0][m - 1].set_title(best_models[-m][0])
-    axis[1][2].set_xlabel("Time since diagnosis")
-    axis[0][0].set_ylabel("Survival")
-    axis[1][0].set_ylabel("Hazard")
-    # [i[m - 1].legend_.remove() for i in axis]
-fig.savefig(os.path.join(plots_dir, "best_5models_predictions_all_patients.svg"), bbox_inches="tight")
-
-# get best model
-model = re.sub("-", " + ", best_models[-1][0])
-# model = "patient_gender + ighv_mutation_status + ZAP70_positive + del11"
-penalty = best_models[-1][1][0]
-# penalty = 4
-
-# regress with best model
-X = patsy.dmatrix(model + " -1", clinical, return_type="dataframe")
-X["T"] = [i.days / float(30) for i in clinical["duration_following"].ix[X.index]]
-X["E"] = [True if i is not pd.NaT else False for i in clinical["patient_death_date"].ix[X.index]]
-
-aaf = AalenAdditiveFitter(coef_penalizer=penalty, fit_intercept=True)
-aaf.fit(X, "T", event_col="E")
-
-# predict survival and hazard for all patients
-fig, axis = plt.subplots(2, sharex=True, sharey=False)
-aaf.predict_survival_function(X).plot(ax=axis[0], legend=False)
-aaf.predict_cumulative_hazard(X).plot(ax=axis[1], legend=False)
-axis[0].set_title("Best model - prediction for all patients")
-axis[1].set_xlabel("Time since diagnosis")
-axis[0].set_ylabel("Survival")
-axis[1].set_ylabel("Hazard")
-fig.savefig(os.path.join(plots_dir, "best_model_predictions_all_patients.svg"), bbox_inches="tight")
-
-
-# Predict survival probability and hazard of each sample
-# at the time of sample collection
-# based on best model
-
-survival = aaf.predict_survival_function(X)
-hazard = aaf.predict_cumulative_hazard(X)
-
-clinical["duration_collection"] = clinical["sample_collection_date"] - clinical["diagnosis_date"]
-
-s = list()
-h = list()
-for i in clinical.index:
-    if i in survival.columns:
-        t = clinical.ix[i]["duration_collection"]
-        if t is not pd.NaT:
-            s.append(np.interp(t.days / float(30), survival.index, survival[i]))
-            h.append(np.interp(t.days / float(30), hazard.index, hazard[i]))
-            continue
-    s.append(np.nan)
-    h.append(np.nan)
-
-clinical["predicted_survival"] = s
-clinical["predicted_hazard"] = h
-
-# investigate
-fig, axis = plt.subplots(2)
-axis[0].scatter(
-    clinical["duration_collection"].astype("timedelta64[M]"),
-    clinical["predicted_survival"])
-axis[1].scatter(
-    clinical["duration_collection"].astype("timedelta64[M]"),
-    clinical["predicted_hazard"])
-fig.savefig(os.path.join(plots_dir, "predicted_at_collection_time.svg"), bbox_inches="tight")
-
-# export
-clinical[["patient_id", "sample_id", "predicted_survival", "predicted_hazard", "duration_collection"]].to_csv(
-    os.path.join("data", "survival_hazard_predictions.csv"),
-    index=False
-)
-
-# Regression on probability of survival, time-to-first-treatment, time-to-death
-# first, get earlier date of treatment for each patient
-cols = ["treatment_%i_date" % i for i in range(1, 5)]
-clinical["first_treament_date"] = clinical[cols].apply(lambda x: min(x.dropna()) if not x.dropna().empty else np.nan, axis=1)
-clinical["time_to_treatment"] = clinical["first_treament_date"] - clinical["diagnosis_date"]
-
-# first, get earlier date of treatment for each patient
-clinical["time_to_death"] = clinical["patient_death_date"] - clinical["sample_collection_date"]
-
-# plot distribution
-sns.distplot(pd.Series([i.days / 30. if i is not pd.NaT else pd.np.nan for i in clinical.time_to_treatment]).dropna(), bins=50)
-sns.distplot(pd.Series([i.days / 30. if i is not pd.NaT else pd.np.nan for i in clinical.time_to_death]).dropna(), bins=50)
-
-clinical[["patient_id", "sample_id", "predicted_survival", "predicted_hazard", "duration_collection", "time_to_treatment"]].to_csv(
-    os.path.join("data", "survival_hazard_predictions_time2treatment.csv"),
-    index=False
-)
 
 
 #
 
 
-# Regression using Cox's additive hazard model
+# Survival Regression
+# exclude some traits
+# due to being either rare or heavily assymetric between cohorts
 features = traits + chrom_abrs + mutations
 [features.pop(features.index(i)) for i in [
-    "patient_gender", "diagnosis_disease", "diagnosis_stage_binet",
-    "ZAP70_monoallelic_methylation", "diagnosis_stage_rai",
-    "TP53",
-    "SF3B1", "ATM", "NOTCH1", "BIRC3", "BCL2", "MYD88", "CHD2", "NFKIE"]]
+    "patient_gender",
+    "diagnosis_disease",
+    "diagnosis_stage_binet",
+    "diagnosis_stage_rai",
+    "ZAP70_monoallelic_methylation",
+    "TP53", "del17", "SF3B1", "ATM", "NOTCH1", "BIRC3", "BCL2", "MYD88", "CHD2", "NFKIE"]]
+combinations = [" + ".join(j) for i in range(1, len(features) + 1) for j in itertools.combinations(features, i)]
 
-# features = ["ighv_mutation_status", "CD38_positive", "ZAP70_positive", "del13"]
-# regress with complex model
-X = patsy.dmatrix(" + ".join(features) + " -1", clinical, return_type="dataframe")
-X["T"] = [i.days / float(30) for i in clinical["duration_following"].ix[X.index]]
-X["E"] = [1 if i is not pd.NaT else 0 for i in clinical["patient_death_date"].ix[X.index]]
-for col in X.columns:
-    X[col] = X[col]# + (1. / 10000000000)
-cf = CoxPHFitter()
-cf.fit(X, "T", event_col="E")
+# Model selection
+clinical2 = clinical.reset_index(drop=True)
+fitters = ["aalen", "cox"]
+for fitter_name in fitters:
+    print(fitter_name)
+    # Test all models
+    performances = Parallel(n_jobs=-1, verbose=5)(delayed(test_model)(model, fitter_name, clinical2) for model in combinations)
+    print("Done with cross-validation for model selection")
 
-# check coeficients
-cf.print_summary()
+    # bit of post processing
+    scores = pd.DataFrame(dict(zip(
+        [re.sub(r" \+ ", "-", c) for c in combinations],
+        sum(performances, []))
+    )).T
+    scores = scores.apply(lambda x: pd.Series(x[1]), axis=1)
+    scores['penalty'] = scores[0]
 
-# predict survival and hazard for all patients
-fig, axis = plt.subplots(2, sharex=True, sharey=False)
-cf.predict_survival_function(X).plot(ax=axis[0], legend=False)
-cf.predict_cumulative_hazard(X).plot(ax=axis[1], legend=False)
-axis[0].set_title("Best model - prediction for all patients")
-axis[1].set_xlabel("Time since diagnosis")
-axis[0].set_ylabel("Survival")
-axis[1].set_ylabel("Hazard")
-fig.savefig(os.path.join(plots_dir, "best_model_predictions_all_patients.svg"), bbox_inches="tight")
+    # mean  performance across folds
+    scores['mean'] = scores[range(10)].apply(np.mean, axis=1)
+    # model names
+    scores = scores.reset_index()
+    scores = scores.rename(columns={"index": "name"})
+    # number of traits
+    scores['traits'] = scores["name"].apply(lambda x: len(x.split("-")))
+
+    # model concordance distribution
+    fig, axis = plt.subplots(3, sharex=False, sharey=False, figsize=(15, 8))
+    sns.distplot(scores["mean"], rug=True, ax=axis[0])
+    # number of elements in model
+    axis[1].scatter(scores["traits"], scores["mean"])
+    # penalty per model
+    axis[2].scatter(scores["penalty"], scores["mean"])
+    axis[0].set_xlabel("Mean model concordance")
+    axis[0].set_ylabel("Density")
+    axis[1].set_xlabel("Number of model terms")
+    axis[1].set_ylabel("Mean concordance")
+    axis[2].set_xlabel("Co-variate penalty")
+    axis[2].set_ylabel("Mean concordance")
+    fig.savefig(os.path.join(plots_dir, "%s_model_selection_performance.svg" % fitter_name), bbox_inches="tight")
+
+    # Sort models by performance
+    best_models = scores.sort("mean")
+    index_order = np.argsort(scores["mean"]).tolist()[-1]
+
+    # Get 5 best models,
+    # plot survival and hazard predictions
+    fig, axis = plt.subplots(2, 5, sharex=False, sharey=False, figsize=(40, 15))
+    fig2, axis2 = plt.subplots(5, sharex=False, sharey=True, figsize=(20, 15))
+    # save
+    predictions = pd.DataFrame()
+    for m in range(1, 6):
+        # get best model
+        model = re.sub("-", " + ", best_models.ix[index_order[-m]]["name"])
+        penalty = best_models.ix[index_order[-m]]["penalty"]
+
+        # regress with best model
+        X = patsy.dmatrix(model + " -1", clinical, return_type="dataframe")
+        X["T"] = [i.days / 30. for i in clinical["duration"].ix[X.index]]
+        X["E"] = [True if i is not pd.NaT else False for i in clinical["patient_death_date"].ix[X.index]]
+
+        # Fit
+        if fitter_name == "aalen":
+            fitter = AalenAdditiveFitter(coef_penalizer=penalty, fit_intercept=True)
+        elif fitter_name == "cox":
+            fitter = CoxPHFitter(penalizer=penalty * 0.1)
+        fitter.fit(X, "T", event_col="E")
+
+        # Predict hazard, survival
+        survival = fitter.predict_survival_function(X)
+        survival["type"] = "survival"
+        hazard = fitter.predict_cumulative_hazard(X)
+        hazard["type"] = "hazard"
+
+        # ...save
+        for df in [survival, hazard]:
+            df["model"] = model
+            df["fitter"] = fitter_name
+        predictions = predictions.append(survival)
+
+        # ...and plot
+        survival.plot(ax=axis[0][m - 1], legend=False)
+        hazard.plot(ax=axis[1][m - 1], legend=False)
+        axis[0][m - 1].set_title(model)
+        axis[1][2].set_xlabel("Time since diagnosis")
+        axis[0][0].set_ylabel("Survival")
+        axis[1][0].set_ylabel("Hazard")
+        # [i[m - 1].legend_.remove() for i in axis]
+
+        # Hazard proportion of each trait
+        if fitter_name == "cox":
+            haz = fitter.hazards_.T.reset_index()
+            haz = haz.sort('coef')
+            sns.barplot("index", "coef", data=haz, ax=axis2[m])
+            axis2[m].set_xlabel("Trait")
+            axis2[m].set_ylabel("Hazard")
+
+    #  save figures
+    fig.savefig(os.path.join(plots_dir, "%s_model_best_5models_predictions_all_patients.svg" % fitter_name), bbox_inches="tight")
+    fig2.savefig(os.path.join(plots_dir, "%s_model_hazard_per_trait.svg" % fitter_name), bbox_inches="tight")
+
+    # save predictions
+    predictions.columns = clinical.ix[predictions.columns]['patient_id']
+    predictions = predictions.reset_index()
+    predictions = predictions.rename(columns={"index": "time"})
+    predictions.to_csv(os.path.join("data", "survival_hazard_predictions.csv"), index=False)
