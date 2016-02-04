@@ -819,6 +819,119 @@ class Analysis(object):
                 handle.writelines("\n".join(genes.tolist()))
 
     def correlate_expression(self):
+        """
+        Investigate degree of correlation between accessibility and gene expression using several approaches.
+        """
+        from scipy.stats import kendalltau
+
+        def bin_distance(x):
+            ranges = [range(i * 1000, (i * 1000) + 1000) for i in range(100)]
+            j = 0
+            d = x["distance"]
+            for r in ranges:
+                if d in r:
+                    return j
+                j += 1
+            return len(ranges)
+
+        # Get RNA
+        # get samples with matched ATAC-seq and RNA-seq
+        atac_ids = [s.sample_id for s in self.samples if s.library == "ATAC-seq"]
+        rna_ids = [s.sample_id for s in self.samples if s.library == "RNA-seq"]
+        atac_samples = [s for s in self.samples if s.library == "ATAC-seq"]
+        rna_samples = [s for s in self.samples if s.library == "RNA-seq"]
+
+        expression_matrix = pd.DataFrame()
+        for sample in rna_samples:
+            # read in counts
+            expr = pd.read_csv(os.path.join(sample.paths.root_dir, "bowtie1_hg19_cdna", "bitSeq", sample.name + ".counts"))
+            # append
+            expression_matrix = expression_matrix.append(expr)
+        # add ensembl id as index
+        expression_matrix.index = expression_matrix["geneid"]
+        expression_matrix = expression_matrix.drop("geneid")
+        # average across all samples
+        expression_matrix["median"] = expression_matrix.apply(np.median, axis=1)
+        # log expression
+        expression_matrix = np.log2(1 + expression_matrix)
+
+        # save expression matrix
+        expression_matrix.to_csv(os.path.join(self.data_dir, "cll_expression_matrix.csv"))
+
+        # Get openness
+        openness = self.coverage_qnorm_annotated[self.coverage_qnorm_annotated["chrom"].str.contains("chr[^X|Y]")]
+        # get closest gene info with ensembl ids
+        g = pd.read_csv(os.path.join(self.data_dir, "cll_peaks.gene_annotation.csv"))
+        openness = pd.merge(openness, g)
+        # add ensembl id as index
+        openness.index = openness["ensembl_gene_id"]
+
+        # Make dataframe of matched accessibility and expression per patient sample including distance
+        matched = pd.DataFrame()
+        for sample_id in set(atac_ids).intersection(set(rna_ids)):
+            a = openness[[s.name for s in atac_samples if s.sample_id == sample_id] + ["distance"]]
+            r = expression_matrix[[s.name for s in rna_samples if s.sample_id == sample_id]]
+            df = pd.concat([a, r], axis=1)
+            df["sample_id"] = sample_id
+            matched.append(df)
+        matched.columns = ["atac", "rna", "distance"]
+        # Put gene-element pairs in bins dependent on distance
+        matched["distance_bin"] = matched.apply(bin_distance, axis=1)
+
+        # Brute force
+        # all genes with associated elements vs median of all patients
+        x = openness[[s.name for s in atac_samples]].apply(np.median, axis=1)
+        y = expression_matrix["median"]
+        sns.jointplot(x, y, kind="scatter", s=3, linewidth=1, alpha=.3)
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.scatter.svg"), bbox_inches="tight")
+        sns.jointplot(x, y, kind="kde")
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.kde.svg"), bbox_inches="tight")
+        sns.jointplot(x, y, kind="hex", stat_func=kendalltau, color="#4CB391")
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.hex.svg"), bbox_inches="tight")
+
+        # Brute force, patient-specific
+        # all genes with associated elements within each matched patient
+        sns.jointplot(matched["atac"], matched["rna"], kind="scatter", s=3, linewidth=1, alpha=.3)
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.scatter.svg"), bbox_inches="tight")
+        sns.jointplot(matched["atac"], matched["rna"], kind="kde")
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.kde.svg"), bbox_inches="tight")
+
+        # Promoters only, patient-specific
+        # only promoters with associated elements within each matched patient
+        # get only genes within 5kb
+        proms = matched[matched["distance"] < 2500]
+        sns.jointplot(proms["atac"], proms["rna"], kind="scatter", s=3, linewidth=1, alpha=.3)
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter.scatter.svg"), bbox_inches="tight")
+        sns.jointplot(proms["atac"], proms["rna"], kind="kde")
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter.kde.svg"), bbox_inches="tight")
+
+        # Distal elemnts only, patient-specific
+        # only promoters with associated elements within each matched patient
+        # get only genes within 5kb
+        distal = matched[matched["distance"] > 2500]
+        sns.jointplot(distal["atac"], distal["rna"], kind="scatter", s=3, linewidth=1, alpha=.3)
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distal.scatter.svg"), bbox_inches="tight")
+        sns.jointplot(distal["atac"], distal["rna"], kind="kde")
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distal.kde.svg"), bbox_inches="tight")
+
+        # Promoters only vs distal elements only, patient-specific
+        # only promoters and only distal elements with associated elements within each matched patient
+        fig, axis = plt.subplots(2)
+        sns.jointplot(proms["atac"], proms["rna"], kind="kde", ax=axis[0])
+        sns.jointplot(distal["atac"], distal["rna"], kind="kde", ax=axis[1])
+        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter_vs_distal.kde.svg"), bbox_inches="tight")
+
+        # Promoters only vs distal elements only, patient-specific, distance dependent
+        # only promoters and only distal elements with associated elements within each matched patient
+        bins = matched["distance_bin"].unique()
+        fig, axis = plt.subplots(len(bins))
+
+        for i, ax in enumerate(axis):
+            subset = matched["distance_bins" == bins[i]]
+            sns.jointplot(subset["atac"], subset["rna"], kind="kde", ax=ax)
+            plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distance_dependent.kde.svg"), bbox_inches="tight")
+
+    def correlate_expression_spanish_cohort(self):
         # get expression
         expression_matrix = pd.read_csv(os.path.join("data", "CLL.geneReadcount.txt"), sep=" ")
         expression_matrix.index = expression_matrix['geneid']
@@ -1315,8 +1428,6 @@ def samples_to_color(samples, trait="IGHV"):
         return colors
     # IGHV homology color scale from min to max
     if trait in ["ighv_homology", "CD38_cells_percentage", "ZAP70_cells_percentage"]:
-        if trait == "ighv_homology":
-            trait = "igvh_homology"
         vmin = min([getattr(s, trait) for s in samples])
         # This uses sns summer colormap
         cmap = plt.get_cmap('summer')
@@ -2465,18 +2576,18 @@ def characterize_regions(analysis, traits, nmin=100):
 
 def export_matrices(analysis, sel_samples, labels, trait, validation=""):
     """
-    Use a machine learning approach for sample classification based on known sample attributes.
-    Extract features most important to separate samples and investigate those.
+    Save matrices used for classification.
     """
     print("Trait:%s" % trait)
     print("%i samples with trait annotated" % len(sel_samples))
     print(Counter(labels))
 
-    # BINARY CLASSIFICATION ON ALL CLL OPEN CHROMATIN REGIONS
-    # get features and labels
+    # normalize
     X = pd.DataFrame(normalize(analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]].T), index=[s.name for s in sel_samples])
+    # add labels
     X['target'] = labels
 
+    # write out with sample name
     outfile_file = "/home/arendeiro/cll-ml/ml_matrix.%s.%scsv" % (trait, validation)
     X.T.to_csv(outfile_file, index=True)
 
@@ -2491,7 +2602,7 @@ def trait_analysis(analysis, samples, traits):
             # cross-validated classification
             sel_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan]
             labels = np.array([getattr(s, trait) for s in sel_samples])
-            classify_samples(analysis, sel_samples, labels, trait, rerun=True)
+            #classify_samples(analysis, sel_samples, labels, trait, rerun=True)
             export_matrices(analysis, sel_samples, labels, trait)
 
             # classification with independent validation
@@ -2500,14 +2611,14 @@ def trait_analysis(analysis, samples, traits):
                 train_labels = np.array([getattr(s, trait) for s in train_samples])
                 val_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan and s.hospital == "AKH"]
                 val_labels = np.array([getattr(s, trait) for s in val_samples])
-                classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, trait)
+                #classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, trait)
                 export_matrices(analysis, val_samples, val_labels, trait, validation="validation.")
 
         # for ibrutinib, train only on AKH samples
         else:
             sel_samples = [s for s in samples if s.hospital == "AKH"]
             labels = np.array([1 if s.under_treatment else 0 for s in sel_samples])
-            classify_samples(analysis, sel_samples, labels, trait, rerun=True)
+            #classify_samples(analysis, sel_samples, labels, trait, rerun=True)
             export_matrices(analysis, sel_samples, labels, trait)
 
 
@@ -3556,9 +3667,9 @@ def main():
     prj.samples = annotate_samples(prj.samples)
 
     # Start analysis object
-    # only with ATAC-seq samples that passed QC
+    # only with samples that passed QC
     samples_to_exclude = ["CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19", "CLL_ATAC-seq_AKH13_M3152_ATAC40s21_hg19"]
-    samples = [sample for sample in prj.samples if sample.cell_line == "CLL" and sample.name not in samples_to_exclude]
+    samples = [sample for sample in prj.samples if sample.name not in samples_to_exclude]
 
     # Start analysis object
     analysis = Analysis(
@@ -3570,7 +3681,7 @@ def main():
     # pair analysis and Project
     analysis.prj = prj
 
-    atac_seq_samples = [sample for sample in analysis.samples if sample.cell_line == "CLL" and sample.library == "ATAC-seq"]
+    atac_seq_samples = [sample for sample in analysis.samples if sample.library == "ATAC-seq"]
 
     # GET CONSENSUS PEAK SET, ANNOTATE IT, PLOT FEATURES
     if args.generate:
@@ -3627,6 +3738,8 @@ def main():
     analysis.plot_sample_correlations()
     # Observe exponential fit to the coeficient of variation
     analysis.plot_qv2_fit()
+    # Correlate with expression
+    analysis.correlate_expression()
 
     # INTER-PATIENT VARIATION (Figure 2)
     # cross-cohort variation at gene level
