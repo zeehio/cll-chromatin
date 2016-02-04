@@ -823,6 +823,7 @@ class Analysis(object):
         Investigate degree of correlation between accessibility and gene expression using several approaches.
         """
         from scipy.stats import kendalltau
+        from scipy.stats import pearsonr
 
         def bin_distance(x):
             ranges = [range(i * 1000, (i * 1000) + 1000) for i in range(100)]
@@ -882,37 +883,46 @@ class Analysis(object):
         # all genes with associated elements vs median of all patients
         x = openness[[s.name for s in atac_samples]].apply(np.median, axis=1)
         y = expression_matrix["median"]
-        sns.jointplot(x, y, kind="scatter", s=3, linewidth=1, alpha=.3)
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.scatter.svg"), bbox_inches="tight")
-        sns.jointplot(x, y, kind="kde")
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.kde.svg"), bbox_inches="tight")
-        sns.jointplot(x, y, kind="hex", stat_func=kendalltau, color="#4CB391")
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.hex.svg"), bbox_inches="tight")
+        fig, axis = plt.subplots(1)
+        sns.jointplot(x, y, kind="scatter", s=3, linewidth=1, alpha=.3, ax=axis)
+        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.scatter.svg"), bbox_inches="tight")
+        fig, axis = plt.subplots(1)
+        sns.jointplot(x, y, kind="kde", ax=axis)
+        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.kde.svg"), bbox_inches="tight")
+        fig, axis = plt.subplots(1)
+        sns.jointplot(x, y, kind="hex", stat_func=kendalltau, color="#4CB391", ax=axis)
+        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.hex.svg"), bbox_inches="tight")
 
         # Brute force, patient-specific
         # all genes with associated elements within each matched patient
-        sns.jointplot(matched["atac"], matched["rna"], kind="scatter", s=3, linewidth=1, alpha=.3)
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.scatter.svg"), bbox_inches="tight")
-        sns.jointplot(matched["atac"], matched["rna"], kind="kde")
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.kde.svg"), bbox_inches="tight")
+        fig, axis = plt.subplots(1)
+        sns.jointplot(matched["atac"], matched["rna"], kind="scatter", s=3, linewidth=1, alpha=.3, ax=axis)
+        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.scatter.svg"), bbox_inches="tight")
+        fig, axis = plt.subplots(1)
+        sns.jointplot(matched["atac"], matched["rna"], kind="kde", ax=axis)
+        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.kde.svg"), bbox_inches="tight")
 
         # Promoters only, patient-specific
         # only promoters with associated elements within each matched patient
         # get only genes within 5kb
         proms = matched[matched["distance"] < 2500]
-        sns.jointplot(proms["atac"], proms["rna"], kind="scatter", s=3, linewidth=1, alpha=.3)
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter.scatter.svg"), bbox_inches="tight")
-        sns.jointplot(proms["atac"], proms["rna"], kind="kde")
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter.kde.svg"), bbox_inches="tight")
+        fig, axis = plt.subplots(1)
+        sns.jointplot(proms["atac"], proms["rna"], kind="scatter", s=3, linewidth=1, alpha=.3, ax=axis)
+        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter.scatter.svg"), bbox_inches="tight")
+        fig, axis = plt.subplots(1)
+        sns.jointplot(proms["atac"], proms["rna"], kind="kde", ax=axis)
+        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter.kde.svg"), bbox_inches="tight")
 
         # Distal elemnts only, patient-specific
         # only promoters with associated elements within each matched patient
         # get only genes within 5kb
         distal = matched[matched["distance"] > 2500]
-        sns.jointplot(distal["atac"], distal["rna"], kind="scatter", s=3, linewidth=1, alpha=.3)
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distal.scatter.svg"), bbox_inches="tight")
-        sns.jointplot(distal["atac"], distal["rna"], kind="kde")
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distal.kde.svg"), bbox_inches="tight")
+        fig, axis = plt.subplots(1)
+        sns.jointplot(distal["atac"], distal["rna"], kind="scatter", s=3, linewidth=1, alpha=.3, ax=axis)
+        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distal.scatter.svg"), bbox_inches="tight")
+        fig, axis = plt.subplots(1)
+        sns.jointplot(distal["atac"], distal["rna"], kind="kde", ax=axis)
+        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distal.kde.svg"), bbox_inches="tight")
 
         # Promoters only vs distal elements only, patient-specific
         # only promoters and only distal elements with associated elements within each matched patient
@@ -926,10 +936,20 @@ class Analysis(object):
         bins = matched["distance_bin"].unique()
         fig, axis = plt.subplots(len(bins))
 
+        cor = dict()
         for i, ax in enumerate(axis):
             subset = matched["distance_bins" == bins[i]]
             sns.jointplot(subset["atac"], subset["rna"], kind="kde", ax=ax)
-            plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distance_dependent.kde.svg"), bbox_inches="tight")
+
+            # add correlation
+            cor[i] = pearsonr(subset["atac"], subset["rna"])
+        # save several subplots
+        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distance_dependent.kde.svg"), bbox_inches="tight")
+
+        # plot correlation vs distance
+        fig, axis = plt.subplots(1)
+        sns.barplot(cor.keys(), cor.values(), ax=axis)
+        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.correlation_distance.svg"), bbox_inches="tight")
 
     def correlate_expression_spanish_cohort(self):
         # get expression
