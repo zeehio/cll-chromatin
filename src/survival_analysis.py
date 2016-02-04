@@ -206,7 +206,7 @@ fig, axis = plt.subplots(3, 7, figsize=(50, 20))
 axis = axis.flatten()
 time = "duration"
 for i, feature in enumerate(features):
-    survival_plot(clinical, KaplanMeierFitter(), "survival", feature, time, axis=axis[i])
+    survival_plot(clinical, KaplanMeierFitter(), "survival", feature, axis=axis[i])
 fig.savefig(os.path.join(plots_dir, "all_traits.survival.svg"), bbox_inches="tight")
 
 
@@ -215,7 +215,7 @@ fig, axis = plt.subplots(3, 7, figsize=(50, 20))
 axis = axis.flatten()
 time = "duration"
 for i, feature in enumerate(features):
-    survival_plot(clinical, NelsonAalenFitter(nelson_aalen_smoothing=False), "hazard", feature, time, axis=axis[i])
+    survival_plot(clinical, NelsonAalenFitter(nelson_aalen_smoothing=False), "hazard", feature, axis=axis[i])
 fig.savefig(os.path.join(plots_dir, "all_traits.hazard.svg"), bbox_inches="tight")
 
 
@@ -238,6 +238,7 @@ combinations = [" + ".join(j) for i in range(1, len(features) + 1) for j in iter
 # Model selection
 clinical2 = clinical.reset_index(drop=True)
 fitters = ["aalen", "cox"]
+predictions = pd.DataFrame()
 for fitter_name in fitters:
     print(fitter_name)
     # Test all models
@@ -277,14 +278,12 @@ for fitter_name in fitters:
 
     # Sort models by performance
     best_models = scores.sort("mean")
-    index_order = np.argsort(scores["mean"]).tolist()[-1]
+    index_order = np.argsort(best_models["mean"]).index.tolist()
 
     # Get 5 best models,
     # plot survival and hazard predictions
     fig, axis = plt.subplots(2, 5, sharex=False, sharey=False, figsize=(40, 15))
     fig2, axis2 = plt.subplots(5, sharex=False, sharey=True, figsize=(20, 15))
-    # save
-    predictions = pd.DataFrame()
     for m in range(1, 6):
         # get best model
         model = re.sub("-", " + ", best_models.ix[index_order[-m]]["name"])
@@ -327,16 +326,16 @@ for fitter_name in fitters:
         if fitter_name == "cox":
             haz = fitter.hazards_.T.reset_index()
             haz = haz.sort('coef')
-            sns.barplot("index", "coef", data=haz, ax=axis2[m])
-            axis2[m].set_xlabel("Trait")
-            axis2[m].set_ylabel("Hazard")
+            sns.barplot("index", "coef", data=haz, ax=axis2[m - 1])
+            axis2[m - 1].set_xlabel("Trait")
+            axis2[m - 1].set_ylabel("Hazard")
 
     #  save figures
     fig.savefig(os.path.join(plots_dir, "%s_model_best_5models_predictions_all_patients.svg" % fitter_name), bbox_inches="tight")
     fig2.savefig(os.path.join(plots_dir, "%s_model_hazard_per_trait.svg" % fitter_name), bbox_inches="tight")
 
-    # save predictions
-    predictions.columns = clinical.ix[predictions.columns]['patient_id']
-    predictions = predictions.reset_index()
-    predictions = predictions.rename(columns={"index": "time"})
-    predictions.to_csv(os.path.join("data", "survival_hazard_predictions.csv"), index=False)
+# save predictions
+predictions.columns = clinical.ix[predictions.columns]['patient_id']
+predictions = predictions.reset_index()
+predictions = predictions.rename(columns={"index": "time"})
+predictions.to_csv(os.path.join("data", "survival_hazard_predictions.csv"), index=False)
