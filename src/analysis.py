@@ -822,6 +822,7 @@ class Analysis(object):
         """
         Investigate degree of correlation between accessibility and gene expression using several approaches.
         """
+        import itertools
         from scipy.stats import kendalltau
         from scipy.stats import pearsonr
 
@@ -835,6 +836,10 @@ class Analysis(object):
                 j += 1
             return len(ranges)
 
+        def hexbin(x, y, color, **kwargs):
+            cmap = sns.light_palette(color, as_cmap=True)
+            plt.hexbin(x, y, gridsize=15, cmap=cmap, **kwargs)
+
         # Get RNA
         # get samples with matched ATAC-seq and RNA-seq
         atac_ids = [s.sample_id for s in self.samples if s.library == "ATAC-seq"]
@@ -842,22 +847,60 @@ class Analysis(object):
         atac_samples = [s for s in self.samples if s.library == "ATAC-seq"]
         rna_samples = [s for s in self.samples if s.library == "RNA-seq"]
 
-        expression_matrix = pd.DataFrame()
+        # get transcript/gene ids
+        expression = pd.read_csv(
+            os.path.join(rna_samples[0].paths.sample_root, "bowtie1_hg19_cdna", "bitSeq", rna_samples[0].name + ".tr"),
+            sep=" ", skiprows=1, header=None)[[0, 1]]
+
+        names = list()
         for sample in rna_samples:
+            if not os.path.exists(os.path.join(sample.paths.sample_root, "bowtie1_hg19_cdna", "bitSeq", sample.name + ".counts")):
+                continue
             # read in counts
-            expr = pd.read_csv(os.path.join(sample.paths.root_dir, "bowtie1_hg19_cdna", "bitSeq", sample.name + ".counts"))
+            expr = pd.read_csv(
+                os.path.join(sample.paths.sample_root, "bowtie1_hg19_cdna", "bitSeq", sample.name + ".counts"),
+                skiprows=1, header=None, names=[sample.name])
             # append
-            expression_matrix = expression_matrix.append(expr)
-        # add ensembl id as index
-        expression_matrix.index = expression_matrix["geneid"]
-        expression_matrix = expression_matrix.drop("geneid")
-        # average across all samples
-        expression_matrix["median"] = expression_matrix.apply(np.median, axis=1)
+            expression = pd.concat([expression, expr], ignore_index=True, axis=1)
+            names.append(sample.name)
+        expression.columns = ["ensembl_gene_id", "ensembl_transcript_id"] + names
+
+        # get gene-level quantification by having transcript with highest value
+        expression_genes = expression.groupby("ensembl_gene_id").apply(max)
+
         # log expression
-        expression_matrix = np.log2(1 + expression_matrix)
+        expression_genes = np.log2(expression_genes.drop(["ensembl_gene_id", "ensembl_transcript_id"], axis=1))
+
+        # average across all samples
+        expression_genes["median"] = expression_genes.apply(np.median, axis=1)
 
         # save expression matrix
-        expression_matrix.to_csv(os.path.join(self.data_dir, "cll_expression_matrix.csv"))
+        expression_genes.to_csv(os.path.join(self.data_dir, "cll_expression_matrix.log2.csv"))
+        expression_genes = pd.read_csv(os.path.join(self.data_dir, "cll_expression_matrix.log2.csv"))
+
+        # Explore expression
+        fig, axis = plt.subplots(1)
+        sns.distplot(expression_genes['median'] ** 2, bins=100, ax=axis)
+        fig.savefig(os.path.join(self.plots_dir, "expression_all_samples.median.svg"), bbox_inches="tight")
+
+        # a few samples vs samples
+        fig, axis = plt.subplots(2, 2)
+        axis = axis.flatten()
+        for i in range(4):
+            axis[i].scatter(
+                expression_genes[expression_genes.columns[i]],
+                expression_genes[expression_genes.columns[i + 1]])
+        fig.savefig(os.path.join(self.plots_dir, "expression_samples_vs_samples.median.svg"), bbox_inches="tight")
+
+        # By IGHV group
+        fig, axis = plt.subplots(3, figsize=(10, 30))
+        for i, (group1, group2) in enumerate(itertools.combinations(["uCLL", "iCLL", "mCLL"], 2)):
+            m1 = expression_genes[[s.name for s in rna_samples if (s.ighv_group == group1) and (s.name in names)]].apply(np.median, axis=1)
+            m2 = expression_genes[[s.name for s in rna_samples if (s.ighv_group == group2) and (s.name in names)]].apply(np.median, axis=1)
+            axis[i].scatter(m1, m2)
+            axis[i].set_xlabel(group1 + " - %i samples" % len(m1.shape[1]))
+            axis[i].set_ylabel(group2 + " - %i samples" % len(m2.shape[1]))
+        fig.savefig(os.path.join(self.plots_dir, "expression_ighv-groups.median.svg"), bbox_inches="tight")
 
         # Get openness
         openness = self.coverage_qnorm_annotated[self.coverage_qnorm_annotated["chrom"].str.contains("chr[^X|Y]")]
@@ -871,64 +914,70 @@ class Analysis(object):
         matched = pd.DataFrame()
         for sample_id in set(atac_ids).intersection(set(rna_ids)):
             a = openness[[s.name for s in atac_samples if s.sample_id == sample_id] + ["distance"]]
-            r = expression_matrix[[s.name for s in rna_samples if s.sample_id == sample_id]]
-            df = pd.concat([a, r], axis=1)
+            a.columns = ["atac", "distance"]
+            r = expression_genes[[s.name for s in rna_samples if (s.sample_id == sample_id) and (s.name in names)]]
+            if r.shape[1] != 1:
+                continue
+            r.columns = ["rna"]
+
+            # join both
+            df = a.join(r).dropna()
             df["sample_id"] = sample_id
-            matched.append(df)
-        matched.columns = ["atac", "rna", "distance"]
+            matched = matched.append(df)
         # Put gene-element pairs in bins dependent on distance
         matched["distance_bin"] = matched.apply(bin_distance, axis=1)
 
+        # filtering
+        matched[
+            (matched["atac"] > 2) &
+            (matched["rna"] > 2.5)
+        ]
+
         # Brute force
         # all genes with associated elements vs median of all patients
-        x = openness[[s.name for s in atac_samples]].apply(np.median, axis=1)
-        y = expression_matrix["median"]
-        fig, axis = plt.subplots(1)
-        sns.jointplot(x, y, kind="scatter", s=3, linewidth=1, alpha=.3, ax=axis)
-        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.scatter.svg"), bbox_inches="tight")
-        fig, axis = plt.subplots(1)
-        sns.jointplot(x, y, kind="kde", ax=axis)
-        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.kde.svg"), bbox_inches="tight")
-        fig, axis = plt.subplots(1)
-        sns.jointplot(x, y, kind="hex", stat_func=kendalltau, color="#4CB391", ax=axis)
-        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.hex.svg"), bbox_inches="tight")
+        x = matched[['atac', 'sample_id']].groupby(level=0)['atac'].apply(np.median)
+        y = matched[['rna', 'sample_id']].groupby(level=0)['rna'].apply(np.median)
+        sns.jointplot(x, y, kind="scatter", s=3, linewidth=1, alpha=.3)
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.scatter.svg"), bbox_inches="tight")
+        sns.jointplot(x, y, kind="kde", n_levels=30)
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.kde.svg"), bbox_inches="tight")
+        sns.jointplot(x, y, kind="hex", stat_func=kendalltau, color="#4CB391")
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.hex.svg"), bbox_inches="tight")
 
         # Brute force, patient-specific
         # all genes with associated elements within each matched patient
-        fig, axis = plt.subplots(1)
-        sns.jointplot(matched["atac"], matched["rna"], kind="scatter", s=3, linewidth=1, alpha=.3, ax=axis)
-        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.scatter.svg"), bbox_inches="tight")
-        fig, axis = plt.subplots(1)
-        sns.jointplot(matched["atac"], matched["rna"], kind="kde", ax=axis)
-        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.kde.svg"), bbox_inches="tight")
+        sns.jointplot(matched["atac"], matched["rna"], kind="scatter", s=3, linewidth=1, alpha=.3)
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.scatter.svg"), bbox_inches="tight")
+
+        # plotted individually
+        g = sns.FacetGrid(matched, col="sample_id", col_wrap=3)
+        g.map(sns.kdeplot, "atac", "rna")
+        plt.savefig(os.path.join(self.plots_dir, "norm_counts.mean.per_genomic_region.distplot.svg"), bbox_inches="tight")
+        plt.close()
 
         # Promoters only, patient-specific
         # only promoters with associated elements within each matched patient
         # get only genes within 5kb
         proms = matched[matched["distance"] < 2500]
-        fig, axis = plt.subplots(1)
-        sns.jointplot(proms["atac"], proms["rna"], kind="scatter", s=3, linewidth=1, alpha=.3, ax=axis)
-        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter.scatter.svg"), bbox_inches="tight")
-        fig, axis = plt.subplots(1)
-        sns.jointplot(proms["atac"], proms["rna"], kind="kde", ax=axis)
-        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter.kde.svg"), bbox_inches="tight")
+        sns.jointplot(proms["atac"], proms["rna"], kind="scatter", s=3, linewidth=1, alpha=.3)
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter.scatter.svg"), bbox_inches="tight")
+        sns.jointplot(proms["atac"], proms["rna"], kind="kde")
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter.kde.svg"), bbox_inches="tight")
 
         # Distal elemnts only, patient-specific
         # only promoters with associated elements within each matched patient
         # get only genes within 5kb
         distal = matched[matched["distance"] > 2500]
-        fig, axis = plt.subplots(1)
-        sns.jointplot(distal["atac"], distal["rna"], kind="scatter", s=3, linewidth=1, alpha=.3, ax=axis)
-        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distal.scatter.svg"), bbox_inches="tight")
-        fig, axis = plt.subplots(1)
-        sns.jointplot(distal["atac"], distal["rna"], kind="kde", ax=axis)
-        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distal.kde.svg"), bbox_inches="tight")
+        sns.jointplot(distal["atac"], distal["rna"], kind="scatter", s=3, linewidth=1, alpha=.3)
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distal.scatter.svg"), bbox_inches="tight")
+        sns.jointplot(distal["atac"], distal["rna"], kind="kde")
+        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distal.kde.svg"), bbox_inches="tight")
 
         # Promoters only vs distal elements only, patient-specific
         # only promoters and only distal elements with associated elements within each matched patient
         fig, axis = plt.subplots(2)
-        sns.jointplot(proms["atac"], proms["rna"], kind="kde", ax=axis[0])
-        sns.jointplot(distal["atac"], distal["rna"], kind="kde", ax=axis[1])
+        axis[0].scatter(proms["atac"], proms["rna"])
+        axis[1].scatter(distal["atac"], distal["rna"])
         fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter_vs_distal.kde.svg"), bbox_inches="tight")
 
         # Promoters only vs distal elements only, patient-specific, distance dependent
@@ -936,10 +985,15 @@ class Analysis(object):
         bins = matched["distance_bin"].unique()
         fig, axis = plt.subplots(len(bins))
 
+        ranges = dict(zip(range(100), [(i * 1000, (i * 1000) + 1000) for i in range(100)]))
         cor = dict()
-        for i, ax in enumerate(axis):
-            subset = matched["distance_bins" == bins[i]]
-            sns.jointplot(subset["atac"], subset["rna"], kind="kde", ax=ax)
+        for i in range(100):
+            subset = matched[
+                (ranges[i][0] < matched["distance"]) &
+                (ranges[i][1] < matched["distance"])
+            ]
+
+            # sns.jointplot(subset["atac"], subset["rna"], kind="kde", ax=ax)
 
             # add correlation
             cor[i] = pearsonr(subset["atac"], subset["rna"])
@@ -947,8 +1001,9 @@ class Analysis(object):
         fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distance_dependent.kde.svg"), bbox_inches="tight")
 
         # plot correlation vs distance
-        fig, axis = plt.subplots(1)
-        sns.barplot(cor.keys(), cor.values(), ax=axis)
+        fig, axis = plt.subplots(2)
+        axis[0].plot(cor.keys(), [j[0] for j in cor.values()])
+        axis[1].plot(cor.keys(), -np.log10([j[1] for j in cor.values()]))
         fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.correlation_distance.svg"), bbox_inches="tight")
 
     def correlate_expression_spanish_cohort(self):
@@ -2622,7 +2677,7 @@ def trait_analysis(analysis, samples, traits):
             # cross-validated classification
             sel_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan]
             labels = np.array([getattr(s, trait) for s in sel_samples])
-            #classify_samples(analysis, sel_samples, labels, trait, rerun=True)
+            classify_samples(analysis, sel_samples, labels, trait, rerun=True)
             export_matrices(analysis, sel_samples, labels, trait)
 
             # classification with independent validation
@@ -2631,14 +2686,14 @@ def trait_analysis(analysis, samples, traits):
                 train_labels = np.array([getattr(s, trait) for s in train_samples])
                 val_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan and s.hospital == "AKH"]
                 val_labels = np.array([getattr(s, trait) for s in val_samples])
-                #classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, trait)
+                classification_validation(analysis, train_samples, train_labels, val_samples, val_labels, trait)
                 export_matrices(analysis, val_samples, val_labels, trait, validation="validation.")
 
         # for ibrutinib, train only on AKH samples
         else:
             sel_samples = [s for s in samples if s.hospital == "AKH"]
             labels = np.array([1 if s.under_treatment else 0 for s in sel_samples])
-            #classify_samples(analysis, sel_samples, labels, trait, rerun=True)
+            classify_samples(analysis, sel_samples, labels, trait, rerun=True)
             export_matrices(analysis, sel_samples, labels, trait)
 
 
@@ -2886,11 +2941,11 @@ def best_signature_matrix(array, matrix):
 
 
 def pairwise(iterable):
-            from itertools import tee, izip
-            "s -> (s0,s1), (s1,s2), (s2, s3), ..."
-            a, b = tee(iterable)
-            next(b, None)
-            return izip(a, b)
+    from itertools import tee, izip
+    "s -> (s0,s1), (s1,s2), (s2, s3), ..."
+    a, b = tee(iterable)
+    next(b, None)
+    return izip(a, b)
 
 
 def get_signatures(analysis, traits):
