@@ -927,6 +927,10 @@ class Analysis(object):
         # Put gene-element pairs in bins dependent on distance
         matched["distance_bin"] = matched.apply(bin_distance, axis=1)
 
+        # save
+        matched.drop("ensembl_gene_id", axis=1).to_csv(os.path.join(self.data_dir, "cll_expression_accessibility_matrix.csv"))
+        matched = pd.read_csv(os.path.join(self.data_dir, "cll_expression_accessibility_matrix.csv"))
+
         # filtering
         matched[
             (matched["atac"] > 2) &
@@ -2717,7 +2721,7 @@ def join_trait_specific_regions(analysis, traits):
     features.to_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), index=False)
 
 
-def characterize_regions_chromatin(analysis, traits):
+def characterize_regions_chromatin(analysis, traits, extend=False):
     """
     For each trait-associated region, get ratios of active/repressed and poised/repressed chromatin,
     across all patients or groups of patients with same IGHV mutation status.
@@ -2725,6 +2729,61 @@ def characterize_regions_chromatin(analysis, traits):
     Visualize histone mark ratios dependent on the positive- or negative-association of regions with
     accessibility signal.
     """
+    def coverage_around(sites, samples, diameter=1000):
+        sites2 = sites.slop(b=diameter, genome="hg19")
+        sites_str = [str(i.chrom) + ":" + str(i.start) + "-" + str(i.stop) for i in sites2]
+        # count, create dataframe
+        coverage = pd.DataFrame(
+            map(
+                lambda x:
+                    pd.Series(x),
+                    parmap.map(
+                        count_reads_in_intervals,
+                        [sample.filtered for sample in samples],
+                        sites_str,
+                        parallel=True
+                    )
+            ),
+            index=[sample.name for sample in samples]
+        ).T
+
+        # Add interval description to df
+        # get original strings of intervals (before slop)
+        original_sites_str = [str(i.chrom) + ":" + str(i.start) + "-" + str(i.stop) for i in sites]
+        # get indexes of intervals which we got coverage from
+        original_sites_str_covered = [original_sites_str[i] for i, s in enumerate(coverage.index) if s in sites_str]
+        assert len(original_sites_str_covered) == len(coverage.index)
+        ints = map(
+            lambda x: (
+                x.split(":")[0],
+                x.split(":")[1].split("-")[0],
+                x.split(":")[1].split("-")[1]
+            ),
+            original_sites_str_covered
+        )
+        coverage["chrom"] = [x[0] for x in ints]
+        coverage["start"] = [int(x[1]) for x in ints]
+        coverage["end"] = [int(x[2]) for x in ints]
+
+        # save to disk
+        coverage.to_csv(os.path.join("data", "cll_peaks.raw_coverage.histmods.%i_extended.tsv" % diameter), sep="\t", index=True)
+        # coverage = pd.read_csv(os.path.join("data", "cll_peaks.raw_coverage.histmods.%i_extended.tsv" % diameter), sep="\t", index_col=0)
+
+        # normalize and log2
+        to_norm = coverage.iloc[:, :len(samples)]
+        coverage_qnorm = pd.DataFrame(
+            normalize_quantiles_r(np.array(to_norm)),
+            index=to_norm.index,
+            columns=to_norm.columns
+        )
+        # Log2 transform
+        coverage_qnorm = np.log2(1 + coverage_qnorm)
+
+        coverage_qnorm = coverage_qnorm.join(coverage[['chrom', 'start', 'end']])
+        coverage_qnorm.to_csv(os.path.join("data", "cll_peaks.raw_coverage.histmods.%i_extended.qnorm.log2.tsv"), sep="\t", index=False)
+
+        return coverage_qnorm
+
     def get_intensities(df, subset, mark):
         samples = [s for s in analysis.samples if s.library == "ChIPmentation"]
         # subset samples according to requested group (all, uCLL, iCLL or mCLL)
@@ -2753,8 +2812,28 @@ def characterize_regions_chromatin(analysis, traits):
             r = df[[s.name for s in samples if s.ip == "H3K27me3"]]
         return np.log2(((1 + a.values) / (1 + r.values))).mean(axis=1)
 
-    # read in dataframe
+    # samples
+    samples = analysis.samples
+    # read in dataframe with counts over CLL ATAC-seq peaks
     features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"))
+    if extend:
+        # alternatively, replace ChIPmentation counts with new read count around peaks (e.g. 1kb)
+        chip_samples = [s for s in analysis.samples if s.library == "ChIPmentation"]
+        sites = pybedtools.BedTool(os.path.join(analysis.data_dir, "cll_peaks.bed"))
+        features_extended = coverage_around(sites, chip_samples, diameter=1000)
+        for sample in chip_samples:
+            features[sample.name] = features_extended[sample.name].ix[features.index].reset_index(drop=True)
+
+        # or
+        # to_norm = features[features.columns[features.columns.str.contains("CLL")]]
+        # to_append = features[features.columns[~features.columns.str.contains("CLL")]]
+        # features.columns[features.columns.str.contains("CLL")]
+        # n = pd.DataFrame(
+        #     normalize_quantiles_r(np.array(to_norm)),
+        #     index=to_norm.index,
+        #     columns=to_norm.columns
+        # )
+        # features_extended = pd.concat([to_append, n], axis=1)
 
     # get intensity of chromatin marks
     # across all patients
@@ -2769,7 +2848,17 @@ def characterize_regions_chromatin(analysis, traits):
             features["%s_ratio_%s" % (group, ratio)] = calculate_ratio(features, group, ratio)
 
     # save dataframe with intensities/ratios of chromatin marks per peak
-    features.to_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.histone_intensities_ratios.csv"), index=False)
+    features.to_csv(os.path.join(
+        analysis.data_dir,
+        "trait_specific",
+        "cll.trait-specific_regions.%shistone_intensities_ratios.csv" % ("extended." if extend else "")), index=False)
+
+    # extend = True
+    # traits = ['IGHV']
+    # features = pd.read_csv(os.path.join(
+    #     analysis.data_dir,
+    #     "trait_specific",
+    #     "cll.trait-specific_regions.%shistone_intensities_ratios.csv" % "extended." if extend else ""))
 
     # Heatmap accessibility and histone marks
     # for each trait make heatmap with chroamtin marks in each
@@ -2795,7 +2884,8 @@ def characterize_regions_chromatin(analysis, traits):
             standard_scale=0,
             col_colors=sample_colors,
             yticklabels=False)
-        plt.savefig("/home/arendeiro/ighv_atac.svg", bbox_inches="tight")
+        plt.savefig(os.path.join(analysis.plots_dir, "trait_specific", "%s.%sclustermap.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
+        plt.close("all")
 
         # order rows by ATAC-seq dendrogram
         chrom = df[df.columns[df.columns.str.contains("intensity")]]
@@ -2805,25 +2895,25 @@ def characterize_regions_chromatin(analysis, traits):
         # order columns by histone mark
         chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: x.split("_")[2])]
         sns.heatmap(chrom, yticklabels=False)
-        plt.savefig("/home/arendeiro/ighv_histones.ordered_mark.svg", bbox_inches="tight")
+        plt.savefig(os.path.join(analysis.plots_dir, "trait_specific", "%s_histones.%sordered_mark.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
 
         # order columns by group
         chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: (x.split("_")[0], x.split("_")[2]))]
         sns.heatmap(chrom, yticklabels=False)
-        plt.savefig("/home/arendeiro/ighv_histones.ordered_group.svg", bbox_inches="tight")
+        plt.savefig(os.path.join(analysis.plots_dir, "trait_specific", "%s_histones.%sordered_group.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
 
         # Z-scored, order columns by histone mark
         chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: x.split("_")[2])]
         sns.heatmap(chrom.apply(lambda x: (x - x.mean()) / x.std(), axis=0), yticklabels=False)
-        plt.savefig("/home/arendeiro/ighv_histones.ordered_mark.zscore_rows.svg", bbox_inches="tight")
+        plt.savefig(os.path.join(analysis.plots_dir, "trait_specific", "%s_histones.%sordered_mark.zscore_rows.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
 
         # Z-scored, order columns by group
         chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: (x.split("_")[0], x.split("_")[2]))]
         sns.heatmap(chrom.apply(lambda x: (x - x.mean()) / x.std(), axis=0), yticklabels=False)
-        plt.savefig("/home/arendeiro/ighv_histones.ordered_group.zscore_rows.svg", bbox_inches="tight")
+        plt.savefig(os.path.join(analysis.plots_dir, "trait_specific", "%s_histones.%sordered_group.zscore_rows.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
 
     # Plot values
@@ -2850,21 +2940,21 @@ def characterize_regions_chromatin(analysis, traits):
         g.map(sns.violinplot, "mark", "intensity", split=True)
         sns.despine()
         plt.savefig(os.path.join(
-            analysis.plots_dir, "trait_specific", "cll.trait-specific_regions.chromatin_intensity.%s.mark_centric.svg" % trait),
+            analysis.plots_dir, "trait_specific", "cll.%s-specific_regions.chromatin_intensity.%smark_centric.svg" % (trait, "extended." if extend else "")),
             bbox_inches='tight')
 
         g = sns.FacetGrid(p, col="group", row="mark", legend_out=True, margin_titles=True)
         g.map(sns.violinplot, "direction", "intensity", split=True, order=[-1, 1])
         sns.despine()
         plt.savefig(os.path.join(
-            analysis.plots_dir, "trait_specific", "cll.trait-specific_regions.chromatin_intensity.%s.direction_centric.svg" % trait),
+            analysis.plots_dir, "trait_specific", "cll.%s-specific_regions.chromatin_intensity.%sdirection_centric.svg" % (trait, "extended." if extend else "")),
             bbox_inches='tight')
 
         g = sns.FacetGrid(p, row="mark", col="direction", legend_out=True, margin_titles=True)
         g.map(sns.violinplot, "group", "intensity", split=True, order=["uCLL", "iCLL", "mCLL"])
         sns.despine()
         plt.savefig(os.path.join(
-            analysis.plots_dir, "trait_specific", "cll.trait-specific_regions.chromatin_intensity.%s.group_centric.svg" % trait),
+            analysis.plots_dir, "trait_specific", "cll.%s-specific_regions.chromatin_intensity.%sgroup_centric.svg" % (trait, "extended." if extend else "")),
             bbox_inches='tight')
 
     # Plot ratios
@@ -2890,21 +2980,21 @@ def characterize_regions_chromatin(analysis, traits):
         g.map(sns.violinplot, "type", "ratio", split=True)
         sns.despine()
         plt.savefig(os.path.join(
-            analysis.plots_dir, "trait_specific", "cll.trait-specific_regions.chromatin_ratios.%s.mark_centric.svg" % trait),
+            analysis.plots_dir, "trait_specific", "cll.%s-specific_regions.chromatin_ratios.%smark_centric.svg" % (trait, "extended." if extend else "")),
             bbox_inches='tight')
 
         g = sns.FacetGrid(p, col="group", row="type", legend_out=True)
         g.map(sns.violinplot, "direction", "ratio", split=True)
         sns.despine()
         plt.savefig(os.path.join(
-            analysis.plots_dir, "trait_specific", "cll.trait-specific_regions.chromatin_ratios.%s.direction_centric.svg" % trait),
+            analysis.plots_dir, "trait_specific", "cll.%s-specific_regions.chromatin_ratios.%sdirection_centric.svg" % (trait, "extended." if extend else "")),
             bbox_inches='tight')
 
         g = sns.FacetGrid(p, row="type", col="direction", legend_out=True, margin_titles=True)
         g.map(sns.violinplot, "group", "ratio", split=True, order=["uCLL", "iCLL", "mCLL"])
         sns.despine()
         plt.savefig(os.path.join(
-            analysis.plots_dir, "trait_specific", "cll.trait-specific_regions.chromatin_ratios.%s.group_centric.svg" % trait),
+            analysis.plots_dir, "trait_specific", "cll.%s-specific_regions.chromatin_ratios.%sgroup_centric.svg" % (trait, "extended." if extend else "")),
             bbox_inches='tight')
 
 
@@ -3841,7 +3931,7 @@ def main():
     # characterize trait-specific regions
     # structurally, functionaly and in light of histone marks
     characterize_regions(analysis, traits)
-    characterize_regions_chromatin(analysis, traits)
+    characterize_regions_chromatin(analysis, traits, extend=False)
 
     # Clinical trait signatures and enrichment of samples in them
     get_signatures(analysis, traits)
