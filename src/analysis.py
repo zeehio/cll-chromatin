@@ -56,6 +56,19 @@ def pickle_me(function):
     return wrapper
 
 
+def copy(obj):
+    def copy(self):
+        """
+        Copy self to a new object.
+        """
+        from copy import deepcopy
+
+        return deepcopy(self)
+    obj.copy = copy
+    return obj
+
+
+@copy
 class Analysis(object):
     """
     Class to hold functions and data from analysis.
@@ -452,7 +465,7 @@ class Analysis(object):
 
         # genes of interest
         # read list in
-        sel_genes = pd.read_csv(os.path.join("metadata", "bcell_cll_genelist.tsv"), sep="\t")
+        sel_genes = pd.read_csv(os.path.join("metadata", "gene_lists", "bcell_cll_genelist.tsv"), sep="\t")
         sel_genes = OrderedDict(zip(sel_genes["gene_name"], sel_genes["ensembl_gene_id"]))
 
         # get distance to gene and ensembl gene id annotation in whole matrix
@@ -474,19 +487,67 @@ class Analysis(object):
         # Figure 2a - variability
         # 81 genes on top of all genes
         genes_str = "|".join(sel_genes.values())
-        p_values = promoters[promoters['ensembl_gene_id'].str.contains(genes_str)]['variance']
-        e_values = enhancers[enhancers['ensembl_gene_id'].str.contains(genes_str)]['variance']
+        cll_p = promoters[promoters['ensembl_gene_id'].str.contains(genes_str)]
+        cll_e = enhancers[enhancers['ensembl_gene_id'].str.contains(genes_str)]
+
+        # random subset of genes
+        n = 1000
+        r_p_values = list()
+        for i in range(n):
+            r_p = promoters.ix[np.random.choice(promoters.index, len(cll_p), replace=False)]
+            # r_e = enhancers.ix[np.random.choice(enhancers.index, len(cll_e), replace=False)]
+            # plt.scatter(r_p["mean"], r_p["variance"], alpha=0.3)
+            r_p_values.append(ks_2samp(r_p['variance'], cll_p["variance"])[1])
+
+        # random subset of genes with similar number of reg elements
+        elements_per_gene = df.groupby("ensembl_gene_id").apply(len)
+        cll_elements_per_gene = elements_per_gene.ix[cll_p["ensembl_gene_id"]]
+
+        # now chose one gene with the same number of elements
+        n = 1000
+        rm_p_values = list()
+        for i in range(n):
+            genes = list()
+            for gene in cll_elements_per_gene:
+                genes.append(np.random.choice(elements_per_gene[elements_per_gene == gene].index, 1, replace=False)[0])
+            rm_p = promoters[promoters["ensembl_gene_id"].str.contains("|".join(genes))]
+            rm_p_values.append(ks_2samp(rm_p['variance'], cll_p["variance"])[1])
+
+        # random subset of genes with similar mean accessibility
+
+        # housekeeping genes
+        hk_genes = pd.read_csv(os.path.join("metadata", "gene_lists", "housekeeping_genes.tsv"), sep="\t")
+        hk_genes = OrderedDict(zip(hk_genes["gene_name"], hk_genes["ensembl_gene_id"]))
+        genes_str = "|".join(hk_genes.values())
+        hk_p = promoters[promoters['ensembl_gene_id'].str.contains(genes_str)]
+        hk_e = enhancers[enhancers['ensembl_gene_id'].str.contains(genes_str)]
+
+        # test
+        ks_2samp(promoters['variance'], cll_p["variance"])[1]
+        ks_2samp(hk_p['variance'], cll_p["variance"])[1]
+        ks_2samp(r_p['variance'], cll_p["variance"])[1]
+        ks_2samp(rm_p['variance'], cll_p["variance"])[1]
+
+        # plot
+        plt.scatter(promoters["mean"], promoters["variance"], alpha=0.3, color="b")
+        plt.scatter(hk_p["mean"], hk_p["variance"], alpha=1, color="g")
+        plt.scatter(cll_p["mean"], cll_p["variance"], alpha=1, color="r")
+
+        sns.jointplot(promoters["mean"], promoters["variance"])
+        sns.jointplot(cll_p["mean"], cll_p["variance"])
+        sns.jointplot(r_p["mean"], r_p["variance"])
+        sns.jointplot(hk_p["mean"], hk_p["variance"])
 
         fig, axis = plt.subplots(2, sharex=True, sharey=True)
         sns.distplot(np.log2(1 + promoters['variance']), ax=axis[0], bins=100)
         sns.distplot(np.log2(1 + enhancers['variance']), ax=axis[1], bins=100)
-        sns.distplot(np.log2(1 + p_values), ax=axis[0], rug=True, bins=20)
-        sns.distplot(np.log2(1 + e_values), ax=axis[1], rug=True, bins=20)
+        sns.distplot(np.log2(1 + cll_p), ax=axis[0], rug=True, bins=20)
+        sns.distplot(np.log2(1 + cll_e), ax=axis[1], rug=True, bins=20)
         fig.savefig("prom-enh.variance.log2.svg", bbox_inches="tight")
 
         # test difference in distributions
-        D, p = ks_2samp(promoters['variance'], p_values)
-        D, p = ks_2samp(enhancers['variance'], e_values)
+        D, p = ks_2samp(promoters['variance'], cll_p["variance"])
+        D, p = ks_2samp(enhancers['variance'], cll_e["variance"])
 
         # Plot distributions of amplitude (fold_change)
         fig, axis = plt.subplots(1, figsize=(15, 10))
@@ -2004,11 +2065,32 @@ def classification_random(analysis, sel_samples, labels, trait, n=100):
         axis[1].plot(recall, precision, alpha=0.3)
         metrics.append([fpr, tpr, roc_auc, TNR, TPR, recall, precision, aps])
 
-    axis[0].plot(fpr, tpr)
-    label = 'ROC (AUC = {0:0.2f}; TNR = {1:0.2f}; TPR = {2:0.2f})'.format(roc_auc, TNR, TPR)
-    label = 'PRC (AUC = {0:0.2f})'.format(aps)
+    # calculate mean metrics
+    # values
+    auc_m = np.median([x[2] for x in metrics])
+    TNR_m = np.median([x[3] for x in metrics])
+    TPR_m = np.median([x[4] for x in metrics])
+    APS_m = np.median([x[-1] for x in metrics])
+    # rates
+    # here we are going to interpolate values between points in the ROC curves
+    # across all iterations in a range (e.g. 0-100)
+    fpr_m = list()
+    tpr_m = list()
+    recall_m = list()
+    precision_m = list()
+    for i in np.array(range(101)) / 100.:
+        fpr_m.append(np.median([np.interp(i, x[0], np.array(range(len(x[0]))) / float(len(x[0]))) for x in metrics]))
+        tpr_m.append(np.median([np.interp(i, x[1], np.array(range(len(x[1]))) / float(len(x[1]))) for x in metrics]))
+        recall_m.append(np.median([np.interp(i, x[5], np.array(range(len(x[5]))) / float(len(x[5]))) for x in metrics]))
+        precision_m.append(np.median([np.interp(i, x[6], np.array(range(len(x[6]))) / float(len(x[6]))) for x in metrics]))
 
-    axis[0].plot((0, 1), (0, 1), '--', color='gray')
+    fig, axis = plt.subplots(1, 2, figsize=(12, 5))
+
+    # plot mean curves
+    axis[0].plot(fpr_m, tpr_m, label='ROC (median AUC = {0:0.2f}; median TNR = {1:0.2f}; median TPR = {2:0.2f})'.format(auc_m, TNR_m, TPR_m), color="black")
+    axis[1].plot(recall_m, precision_m, label='PRC (median AUC = {0:0.2f})'.format(APS_m), color="black")
+
+    # other stylistics
     axis[0].set_xlim([-0.05, 1.0])
     axis[0].set_ylim([0.0, 1.05])
     axis[0].set_xlabel('False Positive Rate')
@@ -2019,11 +2101,9 @@ def classification_random(analysis, sel_samples, labels, trait, n=100):
     axis[1].set_xlabel('Recall')
     axis[1].set_ylabel('Precision')
     axis[1].legend(loc="lower right")
-    # plot specificity (tpr) and sensitivity (1-tnr)
-    axis[0].plot(1 - TNR, TPR, 'o', color='gray')  # , s=50)
     fig.savefig(os.path.join(
         analysis.plots_dir,
-        "trait_specific", "cll_peaks.%s-random_significant.classification.random_forest.loocv.ROC_PRC.svg" % trait), bbox_inches="tight")
+        "trait_specific", "cll_peaks.%s-random2_significant.classification.random_forest.loocv.ROC_PRC.svg" % trait), bbox_inches="tight")
 
 
 def state_enrichment_overlap(n=100):
@@ -2701,7 +2781,10 @@ def trait_analysis(analysis, samples, traits):
             export_matrices(analysis, sel_samples, labels, trait)
 
     # random classifiers
-    trait = "IGHV_random"
+    trait = "IGHV"
+    sel_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan]
+    labels = np.array([getattr(s, trait) for s in sel_samples])
+    classification_random(analysis, sel_samples, labels, trait, n=100)
 
 
 def join_trait_specific_regions(analysis, traits):
