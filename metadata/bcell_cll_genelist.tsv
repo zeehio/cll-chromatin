@@ -1,0 +1,82 @@
+gene_name	ensembl_gene_id	class	alternative_name
+CD19	ENSG00000177455	main B cell surface markers
+CD21	ENSG00000117322	main B cell surface markers
+CD22	ENSG00000012124	main B cell surface markers
+FCGR2B	ENSG00000072694	main B cell surface markers	CD32
+CD20	ENSG00000156738	other B cell surface markers
+CD24	ENSG00000272398	other B cell surface markers
+CD38	ENSG00000004468	other B cell surface markers
+CD72	ENSG00000137101	other B cell surface markers
+CD74	ENSG00000019582	other B cell surface markers
+CD79A	ENSG00000105369	other B cell surface markers
+CD79B	ENSG00000007312	other B cell surface markers
+CD83	ENSG00000112149	other B cell surface markers
+CD86	ENSG00000114013	other B cell surface markers
+SYK	ENSG00000165025	signal transduction
+LYN	ENSG00000254087	signal transduction
+BTK	ENSG00000010671	signal transduction
+BLNK	ENSG00000095585	signal transduction
+BLK	ENSG00000136573	signal transduction
+NOTCH1	ENSG00000148400	signaling important for B cells
+NFKB1	ENSG00000109320	signaling important for B cells
+AKT1	ENSG00000142208	downstream of BCR signaling / proliferation
+AIMP2	ENSG00000106305	downstream of BCR signaling / proliferation	p38
+mTOR	ENSG00000198793	downstream of BCR signaling / proliferation
+ERK1	ENSG00000102882	downstream of BCR signaling / proliferation
+PIK3CA	ENSG00000121879	downstream of BCR signaling / proliferation
+MYC	ENSG00000136997
+MYCN	ENSG00000134323
+EBF1	ENSG00000164330	transcriptional regulators
+PAX5	ENSG00000196092	transcriptional regulators
+POU2AF1	ENSG00000110777	transcriptional regulators
+SPIB	ENSG00000269404	transcriptional regulators
+SPI1	ENSG00000066336	transcriptional regulators
+IRF4	ENSG00000137265	transcriptional regulators
+IRF8	ENSG00000140968	transcriptional regulators
+CEBPB	ENSG00000172216	transcriptional regulators
+BCL6	ENSG00000113916	transcriptional regulators
+ZAP70	ENSG00000115085	CLL relevant
+IL2	ENSG00000109471	CLL relevant
+FBXW7	ENSG00000109670	CLL mutated genes: notch pathway
+SPEN	ENSMUSG00000040761	CLL mutated genes: notch pathway
+CREBBP	ENSG00000005339	CLL mutated genes: notch pathway
+TLR2	ENSG00000137462	CLL mutated genes: b cell signaling
+BCOR	ENSG00000183337	CLL mutated genes: b cell signaling
+KLHL6	ENSG00000172578	CLL mutated genes: b cell signaling
+IKZF3	ENSG00000161405	CLL mutated genes: b cell signaling
+ATM	ENSG00000149311	CLL mutated genes: dna repair
+ATR	ENSG00000175054	CLL mutated genes: dna repair
+POT1	ENSG00000128513	CLL mutated genes: dna repair
+TP53	ENSG00000141510	CLL mutated genes: dna repair
+ARID1A	ENSG00000117713	CLL mutated genes: chromatin
+SETD1A	ENSG00000099381	CLL mutated genes: chromatin
+HIST1H1B	ENSG00000168298	CLL mutated genes: chromatin
+ZMYM3	ENSG00000147130	CLL mutated genes: chromatin
+SETD2	ENSG00000181555	CLL mutated genes: chromatin
+KMT2D	ENSG00000167548	CLL mutated genes: chromatin	 MLL2
+CHD2	ENSG00000173575	CLL mutated genes: chromatin
+SYNE1	ENSG00000234577	CLL mutated genes: chromatin
+ASXL1	ENSG00000171456	CLL mutated genes: chromatin
+PTPN11	ENSG00000179295	CLL mutated genes: cell cycle
+KRAS	ENSG00000133703	CLL mutated genes: cell cycle
+NRAS	ENSG00000213281	CLL mutated genes: cell cycle
+BRAF	ENSG00000157764	CLL mutated genes: cell cycle
+CDKN1B	ENSG00000111276	CLL mutated genes: cell cycle
+CDKN2A	ENSG00000147889	CLL mutated genes: cell cycle
+CCND2	ENSG00000118971	CLL mutated genes: cell cycle
+BAX	ENSG00000087088	CLL mutated genes: apoptosis
+ANKHD1	ENSG00000254996	CLL mutated genes: apoptosis
+MGA	ENSG00000174197	CLL mutated genes: rna metabolism
+CNOT3	ENSG00000088038	CLL mutated genes: rna metabolism
+MED12	ENSG00000184634	CLL mutated genes: rna metabolism
+NXF1	ENSG00000162231	CLL mutated genes: rna metabolism
+ZNF292	ENSG00000188994	CLL mutated genes: rna metabolism
+SF3B1	ENSG00000115524	CLL mutated genes: rna metabolism
+DDX3X	ENSG00000215301	CLL mutated genes: rna metabolism
+XPO1	ENSG00000082898	CLL mutated genes: rna metabolism
+TRAF3	ENSG00000131323	CLL mutated genes: rna metabolism
+BIRC3	ENSG00000023445	CLL mutated genes: rna metabolism
+NFKB2	ENSG00000077150	CLL mutated genes: rna metabolism
+EGR2	ENSG00000122877	CLL mutated genes: rna metabolism
+NFKBIE	ENSG00000146232	CLL mutated genes: rna metabolism
+NKAP	ENSG00000101882	CLL mutated genes: rna metabolism

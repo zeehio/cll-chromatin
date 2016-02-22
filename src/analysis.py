@@ -451,113 +451,9 @@ class Analysis(object):
         sns.set(style="white", palette="pastel", color_codes=True)
 
         # genes of interest
-        sel_genes = OrderedDict({
-            # main B cell surface markers
-            "CD19": "ENSG00000177455",
-            "CD21": "ENSG00000117322",
-            "CD22": "ENSG00000012124",
-            "FCGR2B": "ENSG00000072694",  # CD32
-
-            # other B cell surface markers
-            "CD20": "ENSG00000156738",
-            "CD24": "ENSG00000272398",
-            "CD38": "ENSG00000004468",
-            "CD72": "ENSG00000137101",
-            "CD74": "ENSG00000019582",  # MHC2
-            "CD79A": "ENSG00000105369",
-            "CD79B": "ENSG00000007312",
-            "CD83": "ENSG00000112149",
-            "CD86": "ENSG00000114013",
-
-            # signal transduction molecules
-            "SYK": "ENSG00000165025",
-            "LYN": "ENSG00000254087",
-            "BTK": "ENSG00000010671",
-            "BLNK": "ENSG00000095585",
-            "BLK": "ENSG00000136573",
-
-            # signaling important for B cells
-            "NOTCH1": "ENSG00000148400",
-            "NFKB1": "ENSG00000109320",
-
-            # downstream of BCR signaling / proliferation
-            "AKT1": "ENSG00000142208",
-            "AIMP2": "ENSG00000106305",  # p38
-            "mTOR": "ENSG00000198793",
-            "ERK1": "ENSG00000102882",
-            "PIK3CA": "ENSG00000121879",
-
-            #
-            "MYC": "ENSG00000136997",
-            "MYCN": "ENSG00000134323",
-
-            # transcriptional regulators
-            "EBF1": "ENSG00000164330",
-            "PAX5": "ENSG00000196092",
-            "POU2AF1": "ENSG00000110777",
-            "SPIB": "ENSG00000269404",
-            "SPI1": "ENSG00000066336",
-            "IRF4": "ENSG00000137265",
-            "IRF8": "ENSG00000140968",
-            "CEBPB": "ENSG00000172216",
-            "BCL6": "ENSG00000113916",
-
-            # others
-            "ZAP70": "ENSG00000115085",
-            "IL2": "ENSG00000109471",
-
-            # CLL mutated genes
-            # notch pathway
-            "FBXW7": "ENSG00000109670",
-            "SPEN": "ENSMUSG00000040761",
-            "CREBBP": "ENSG00000005339",
-            # b cell signaling
-            "TLR2": "ENSG00000137462",
-            "BCOR": "ENSG00000183337",
-            "KLHL6": "ENSG00000172578",
-            "IKZF3": "ENSG00000161405",
-            # dna repair
-            "ATM": "ENSG00000149311",
-            "ATR": "ENSG00000175054",
-            "POT1": "ENSG00000128513",
-            "TP53": "ENSG00000141510",
-            # chromatin
-            "ARID1A": "ENSG00000117713",
-            "SETD1A": "ENSG00000099381",
-            "HIST1H1B": "ENSG00000168298",
-            "ZMYM3": "ENSG00000147130",
-            "SETD2": "ENSG00000181555",
-            "KMT2D": "ENSG00000167548",  # MLL2
-            "CHD2": "ENSG00000173575",
-            "SYNE1": "ENSG00000234577",
-            "ASXL1": "ENSG00000171456",
-            # cell cycle
-            "PTPN11": "ENSG00000179295",
-            "KRAS": "ENSG00000133703",
-            "NRAS": "ENSG00000213281",
-            "BRAF": "ENSG00000157764",
-            "CDKN1B": "ENSG00000111276",
-            "CDKN2A": "ENSG00000147889",
-            "CCND2": "ENSG00000118971",
-            # apoptosis
-            "BAX": "ENSG00000087088",
-            "ANKHD1": "ENSG00000254996 ",
-            # rna metabolism
-            "MGA": "ENSG00000174197",
-            "CNOT3": "ENSG00000088038 ",
-            "MED12": "ENSG00000184634 ",
-            "NXF1": "ENSG00000162231 ",
-            "ZNF292": "ENSG00000188994",
-            "SF3B1": "ENSG00000115524",
-            "DDX3X": "ENSG00000215301",
-            "XPO1": "ENSG00000082898",
-            "TRAF3": "ENSG00000131323",
-            "BIRC3": "ENSG00000023445",
-            "NFKB2": "ENSG00000077150 ",
-            "EGR2": "ENSG00000122877 ",
-            "NFKBIE": "ENSG00000146232",
-            "NKAP": "ENSG00000101882",
-        })
+        # read list in
+        sel_genes = pd.read_csv(os.path.join("metadata", "bcell_cll_genelist.tsv"), sep="\t")
+        sel_genes = OrderedDict(zip(sel_genes["gene_name"], sel_genes["ensembl_gene_id"]))
 
         # get distance to gene and ensembl gene id annotation in whole matrix
         df = pd.merge(self.coverage_qnorm_annotated, self.gene_annotation, on=['chrom', 'start', 'end', 'gene_name'])
@@ -2026,6 +1922,110 @@ def classification_validation(analysis, train_samples, train_labels, val_samples
         "trait_specific", "cll_peaks.%s_significant.classification_validation.random_forest.loocv.ROC_PRC.svg" % comparison), bbox_inches="tight")
 
 
+def classification_random(analysis, sel_samples, labels, trait, n=100):
+    """
+    Use a machine learning approach for sample classification based on known sample attributes.
+    Extract features most important to separate samples and investigate those.
+    """
+    print("Trait:%s" % trait)
+    print("%i samples with trait annotated" % len(sel_samples))
+    print(Counter(labels))
+
+    # BINARY CLASSIFICATION ON ALL CLL OPEN CHROMATIN REGIONS
+    # get features and labels
+    X = normalize(analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]].T)
+
+    fig, axis = plt.subplots(1, 2, figsize=(12, 5))
+    metrics = list()
+    for i in range(n):
+        # randomize labels
+        y = np.array(np.random.permutation(labels))
+
+        loo = cross_validation.LeaveOneOut(len(X))
+
+        for j, (train_index, test_index) in enumerate(loo):
+            print(i, j)
+            # Remove samples from the same patient that we are predicting during training
+            # get current patient_id
+            _pid = [s.patient_id for s in sel_samples][test_index]
+            # get indexes of samples from current patient
+            _p_indexes = [index for index, s in enumerate(sel_samples) if s.patient_id == _pid]
+            # remove indexes from training
+            train_index = np.delete(train_index, _p_indexes)
+            train_index = np.delete(train_index, _p_indexes)
+
+            # Slice accordingly
+            X_train, X_test = X[train_index], X[test_index]
+            y_train, y_test = y[train_index], y[test_index]
+
+            # Train, predict
+            classifier = RandomForestClassifier(n_estimators=100, n_jobs=-1)
+            y_score = classifier.fit(X_train, y_train).predict_proba(X_test)
+
+            if j == 0:
+                y_all_test = y_test
+                y_all_scores = y_score
+                importance = classifier.feature_importances_
+            else:
+                y_all_test = np.vstack([y_all_test, y_test])
+                y_all_scores = np.vstack([y_all_scores, y_score])
+                importance = np.vstack([importance, classifier.feature_importances_])
+
+        # Metrics
+        binary_labels = [0 if x == classifier.classes_[0] else 1 for x in y_all_test]
+        binary_scores = [0 if x > 0.5 else 1 for x in y_all_scores[:, 0]]
+        # Specificity (TN / N)
+        tn = len([1 for k in range(len(binary_scores)) if (binary_labels[k] == 1) and (binary_scores[k] == 1)])
+        n = len([1 for k in range(len(binary_scores)) if binary_labels[k] == 1])
+        TNR = tn / float(n)
+        # Sensitivity (TP / P)
+        tp = len([1 for k in range(len(binary_scores)) if (binary_labels[k] == 0) and (binary_scores[k] == 0)])
+        p = len([1 for k in range(len(binary_scores)) if binary_labels[k] == 0])
+        TPR = tp / float(p)
+        # FPR (FP / P)
+        fn = len([1 for k in range(len(binary_scores)) if (binary_labels[k] == 0) and (binary_scores[k] == 1)])
+        p = len([1 for k in range(len(binary_scores)) if binary_labels[k] == 0])
+        FPR = fn / float(p)
+        # FNR (FN / P)
+        fn = len([1 for k in range(len(binary_scores)) if (binary_labels[k] == 1) and (binary_scores[k] == 0)])
+        p = len([1 for k in range(len(binary_scores)) if binary_labels[k] == 1])
+        FNR = fn / float(p)
+
+        # Compute ROC curve and ROC area for each class
+        fpr, tpr, _ = roc_curve(y_all_test, y_all_scores[:, 1], pos_label=1)
+        roc_auc = auc(fpr, tpr, reorder=True)
+        # Compute Precision-Recall and average precision
+        precision, recall, _ = precision_recall_curve(y_all_test, y_all_scores[:, 1], pos_label=1)
+        binary_labels = [0 if x == classifier.classes_[0] else 1 for x in y_all_test]
+        aps = average_precision_score(binary_labels, y_all_scores[:, 1])
+
+        # Plot ROC and PRC curves
+        axis[0].plot(fpr, tpr, alpha=0.3)
+        axis[1].plot(recall, precision, alpha=0.3)
+        metrics.append([fpr, tpr, roc_auc, TNR, TPR, recall, precision, aps])
+
+    axis[0].plot(fpr, tpr)
+    label = 'ROC (AUC = {0:0.2f}; TNR = {1:0.2f}; TPR = {2:0.2f})'.format(roc_auc, TNR, TPR)
+    label = 'PRC (AUC = {0:0.2f})'.format(aps)
+
+    axis[0].plot((0, 1), (0, 1), '--', color='gray')
+    axis[0].set_xlim([-0.05, 1.0])
+    axis[0].set_ylim([0.0, 1.05])
+    axis[0].set_xlabel('False Positive Rate')
+    axis[0].set_ylabel('True Positive Rate')
+    axis[0].legend(loc="lower right")
+    axis[1].set_xlim([-0.05, 1.0])
+    axis[1].set_ylim([0.0, 1.05])
+    axis[1].set_xlabel('Recall')
+    axis[1].set_ylabel('Precision')
+    axis[1].legend(loc="lower right")
+    # plot specificity (tpr) and sensitivity (1-tnr)
+    axis[0].plot(1 - TNR, TPR, 'o', color='gray')  # , s=50)
+    fig.savefig(os.path.join(
+        analysis.plots_dir,
+        "trait_specific", "cll_peaks.%s-random_significant.classification.random_forest.loocv.ROC_PRC.svg" % trait), bbox_inches="tight")
+
+
 def state_enrichment_overlap(n=100):
     cll_peaks = "~/cll_peaks.bed"
     all_states = "all_states_all_lines.bed"
@@ -2699,6 +2699,9 @@ def trait_analysis(analysis, samples, traits):
             labels = np.array([1 if s.under_treatment else 0 for s in sel_samples])
             classify_samples(analysis, sel_samples, labels, trait, rerun=True)
             export_matrices(analysis, sel_samples, labels, trait)
+
+    # random classifiers
+    trait = "IGHV_random"
 
 
 def join_trait_specific_regions(analysis, traits):
