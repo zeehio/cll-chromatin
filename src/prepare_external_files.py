@@ -363,3 +363,8 @@ cmd = bowtie2Map(
     genomeIndex="/data/groups/lab_bock/shared/resources/genomes/hg19/indexed_bowtie2/hg19",
     maxInsert=2000, cpus=24)
 os.system(cmd)
+
+
+# CpG islands
+os.system("wget http://hgdownload.cse.ucsc.edu/goldenpath/hg19/database/cpgIslandExt.txt.gz")
+os.system("cut -f 2,3,4 cpgIslandExt.txt > cpgIsland.hg19.bed")
