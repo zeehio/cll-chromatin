@@ -581,6 +581,65 @@ class Analysis(object):
         sns.violinplot(data=boxplot_data, x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
         fig.savefig(os.path.join("results", "plots", "relevant_genes.full.violinplot.funcorder.svg"), bbox_inches='tight')
 
+        # Inspect influence of CpG Islands
+        # divide promoters and enhancers in CGI/non-CGI containing
+        # intersect with CGI data
+        cgi = pybedtools.BedTool("data/external/cpgIsland.hg19.bed")
+        peaks_cgi = self.sites.intersect(cgi).to_dataframe()
+
+        # split into CGI/non-CGI
+        promoters_cgi = promoters.reset_index().merge(peaks_cgi, on=["chrom", "start", "end"], how="inner").set_index('index')
+        promoters_non_cgi = promoters.ix[~promoters.index.isin(promoters_cgi.index)]
+        enhancers_cgi = enhancers.reset_index().merge(peaks_cgi, on=["chrom", "start", "end"], how="inner").set_index('index')
+        enhancers_non_cgi = enhancers.ix[~enhancers.index.isin(enhancers_cgi.index)]
+
+        # plot
+        fig, axis = plt.subplots(2)
+        p = ks_2samp(promoters_non_cgi['variance'], promoters_cgi["variance"])[1]
+        # sns.distplot(np.log2(1 + promoters["variance"]), bins=50, ax=axis[0])
+        sns.distplot(np.log2(1 + promoters_non_cgi["variance"]), bins=50, ax=axis[0], label="non_CGI")
+        sns.distplot(np.log2(1 + promoters_cgi["variance"]), bins=50, ax=axis[0], label="CGI\np-value: {:.2e}".format(p))
+        # sns.distplot(np.log2(1 + enhancers["variance"]), bins=50, ax=axis[1])
+        p = ks_2samp(enhancers_non_cgi['variance'], enhancers_cgi["variance"])[1]
+        sns.distplot(np.log2(1 + enhancers_non_cgi["variance"]), bins=50, ax=axis[1], label="non_CGI")
+        sns.distplot(np.log2(1 + enhancers_cgi["variance"]), bins=50, ax=axis[1], label="CGI\np-value: {:.2e}".format(p))
+        axis[0].set_title("promoters")
+        axis[1].set_title("distal elements")
+        axis[0].set_xlabel("")
+        axis[1].set_xlabel("log2(1 + variance)")
+        axis[0].legend()
+        axis[1].legend()
+        fig.savefig("prom-enh.cgislands.variance.log2.svg", bbox_inches="tight")
+
+        # Now compare ALL vs CLL split into CGI/non-CGI
+        genes_str = "|".join(sel_genes.values())
+        cll_p = promoters[promoters['ensembl_gene_id'].str.contains(genes_str)]
+        cll_e = enhancers[enhancers['ensembl_gene_id'].str.contains(genes_str)]
+
+        cll_p_cgi = cll_p.reset_index().merge(peaks_cgi, on=["chrom", "start", "end"], how="inner").set_index('index')
+        cll_p_non_cgi = cll_p.ix[~cll_p.index.isin(cll_p_cgi.index)]
+        cll_e_cgi = cll_e.reset_index().merge(peaks_cgi, on=["chrom", "start", "end"], how="inner").set_index('index')
+        cll_e_non_cgi = cll_e.ix[~cll_e.index.isin(cll_e_cgi.index)]
+
+        # plot
+        fig, axis = plt.subplots(2)
+        sns.distplot(np.log2(1 + promoters_non_cgi["variance"]), bins=50, ax=axis[0], label="non_CGI")
+        sns.distplot(np.log2(1 + promoters_cgi["variance"]), bins=50, ax=axis[0], label="CGI")
+        sns.distplot(np.log2(1 + cll_p_non_cgi["variance"]), bins=20, ax=axis[0], label="non_CGI CLL")
+        sns.distplot(np.log2(1 + cll_p_cgi["variance"]), bins=20, ax=axis[0], label="CGI CLL")
+
+        sns.distplot(np.log2(1 + enhancers_non_cgi["variance"]), bins=50, ax=axis[1], label="non_CGI")
+        sns.distplot(np.log2(1 + enhancers_cgi["variance"]), bins=50, ax=axis[1], label="CGI")
+        sns.distplot(np.log2(1 + cll_e_non_cgi["variance"]), bins=20, ax=axis[1], label="non_CGI CLL")
+        sns.distplot(np.log2(1 + cll_e_cgi["variance"]), bins=20, ax=axis[1], label="CGI CLL")
+        axis[0].set_title("promoters")
+        axis[1].set_title("distal elements")
+        axis[0].set_xlabel("")
+        axis[1].set_xlabel("log2(1 + variance)")
+        axis[0].legend()
+        axis[1].legend()
+        fig.savefig("prom-enh.cll-specfic.cgislands.variance.log2.svg", bbox_inches="tight")
+
     def inspect_variability(self, samples):
         """
         Investigate variability within sample groups.

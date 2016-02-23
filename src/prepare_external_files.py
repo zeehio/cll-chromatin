@@ -367,4 +367,4 @@ os.system(cmd)
 
 # CpG islands
 os.system("wget http://hgdownload.cse.ucsc.edu/goldenpath/hg19/database/cpgIslandExt.txt.gz")
-os.system("cut -f 2,3,4 cpgIslandExt.txt > cpgIsland.hg19.bed")
+os.system("cut -f 2,3,4 cpgIslandExt.txt > data/external/cpgIsland.hg19.bed")
