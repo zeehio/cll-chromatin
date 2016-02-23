@@ -56,6 +56,25 @@ def get_promoter_and_genebody(x, radius=2500):
         return x
 
 
+def bowtie2Map(inputFastq1, outputBam, log, metrics, genomeIndex, maxInsert, cpus, inputFastq2=None):
+    import re
+
+    outputBam = re.sub("\.bam$", "", outputBam)
+    # Admits 2000bp-long fragments (--maxins option)
+    cmd = "bowtie2 --very-sensitive -p {0}".format(cpus)
+    cmd += " -x {0}".format(genomeIndex)
+    cmd += " --met-file {0}".format(metrics)
+    if inputFastq2 is None:
+        cmd += " {0} ".format(inputFastq1)
+    else:
+        cmd += " --maxins {0}".format(maxInsert)
+        cmd += " -1 {0}".format(inputFastq1)
+        cmd += " -2 {0}".format(inputFastq2)
+    cmd += " 2> {0} | samtools view -S -b - | samtools sort - {1}".format(log, outputBam)
+
+    return cmd
+
+
 # Get encode blacklisted regions
 blacklist = "wgEncodeDacMapabilityConsensusExcludable.bed.gz"
 
@@ -325,3 +344,22 @@ for group in df4['ontology_group'].unique():
 # save regionset index
 regionset_index.columns = ["species", "description", "dataSource", "filename"]
 regionset_index.to_csv("index.txt", sep="\t", index=False)
+
+
+# CD19 DNase, Roadmap
+accs = ["SRR171503", "SRR171504", "SRR171505", "SRR171506", "SRR171527", "SRR171528"]
+os.system("cd %s " % os.path.join("data", "external"))
+# get data
+for acc in accs:
+    os.system("fastq-dump %s " % acc)
+os.system("cat %s > CD19_DNase.fastq" % " ".join([acc + ".fastq" for acc in accs]))
+
+# map
+cmd = bowtie2Map(
+    inputFastq1="CD19_DNase.fastq",
+    outputBam=os.path.join("data", "external", "CD19_DNase.bam"),
+    log=os.path.join("data", "external", "CD19_DNase.log"),
+    metrics=os.path.join("data", "external", "CD19_DNase.alnmetrics.txt"),
+    genomeIndex="/data/groups/lab_bock/shared/resources/genomes/hg19/indexed_bowtie2/hg19",
+    maxInsert=2000, cpus=24)
+os.system(cmd)
