@@ -3198,7 +3198,6 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
             analysis.plots_dir, "trait_specific", "cll.%s-specific_regions.chromatin_ratios.%sgroup_centric.svg" % (trait, "extended." if extend else "")),
             bbox_inches='tight')
 
-
 def generate_signature_matrix(array, n=101, bounds=(0, 0)):
     """
     :param np.array: 2D np.array
