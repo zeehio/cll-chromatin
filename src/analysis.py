@@ -662,8 +662,8 @@ class Analysis(object):
         plt.savefig(os.path.join(self.plots_dir, "mean_dispersion.svg"), bbox_inches="tight")
 
         # divide samples per IGHV status
-        ighv_u = [s.name for s in samples if not s.mutated]
-        ighv_m = [s.name for s in samples if s.mutated]
+        ighv_u = [s.name for s in samples if not s.ighv_mutation_status]
+        ighv_m = [s.name for s in samples if s.ighv_mutation_status]
 
         df_u = self.coverage_qnorm_annotated[ighv_u]
         df_m = self.coverage_qnorm_annotated[ighv_m]
@@ -759,12 +759,19 @@ class Analysis(object):
         # by threshold
         indexes = [i for i, p in p_values.items() if -np.log10(p) > 1.3]
 
-        # by n-most variable
-        n = 1000
-        indexes = [i for i, k in sorted(p_values.items(), key=lambda x: x[1])[:n]]
+        # filter by n-most variable
+        # n = 1000
+        # indexes = [i for i, k in sorted(p_values.items(), key=lambda x: x[1])[:n]]
 
         # filter out regions with mean across all samples lower than 1
         indexes = [i for i in indexes if self.coverage_qnorm_annotated.ix[i]["mean"] > 1]
+
+        # get color dependent on direction
+        together = pd.concat([u_m, m_m], axis=1).drop(['subtype', 'value'], axis=1)
+        together.columns = range(together.shape[1])
+        together = pd.DataFrame([together[0], u_m['value'] - m_m['value']]).T
+        together.columns = ['variable', 'value']
+        together['color'] = together['value'].apply(lambda x: "orange" if x > 0 else "blue")
 
         # hexbin plots
         g = sns.FacetGrid(df, col="variable", sharex=False, sharey=False)
@@ -787,11 +794,14 @@ class Analysis(object):
                 bins="log"
             )
 
+            # colors
+            colors = together[together["variable"] == variable]["color"]
+
             # significant as scatter
             if i > 1:
-                g.axes[0][i].scatter(np.log2(1 + u.ix[indexes][variable]), np.log2(1 + m.ix[indexes][variable]), color="orange")
+                g.axes[0][i].scatter(np.log2(1 + u.ix[indexes][variable]), np.log2(1 + m.ix[indexes][variable]), color=colors)
             else:
-                g.axes[0][i].scatter(u.ix[indexes][variable], m.ix[indexes][variable], color="orange")
+                g.axes[0][i].scatter(u.ix[indexes][variable], m.ix[indexes][variable], color=colors)
 
             # x=y line
             lims = [
@@ -803,8 +813,8 @@ class Analysis(object):
             # g.axes[0][i].set_xlim(lims)
             # g.axes[0][i].set_ylim(lims)
 
-            g.savefig(os.path.join(self.plots_dir, "ighv_mutation_variable_comparison.hexbin.significant.svg"), bbox_inches="tight")
-            plt.close("all")
+        g.savefig(os.path.join(self.plots_dir, "ighv_mutation_variable_comparison.hexbin.significant.svg"), bbox_inches="tight")
+        plt.close("all")
 
         # investigate:
         # get bed files for u/mCLL specifically
@@ -870,8 +880,9 @@ class Analysis(object):
 
         names = list()
         for sample in rna_samples:
-            if not os.path.exists(os.path.join(sample.paths.sample_root, "bowtie1_hg19_cdna", "bitSeq", sample.name + ".counts")):
-                continue
+            # if not os.path.exists(os.path.join(sample.paths.sample_root, "bowtie1_hg19_cdna", "bitSeq", sample.name + ".counts")):
+            #     print sample.name
+            #     continue
             # read in counts
             expr = pd.read_csv(
                 os.path.join(sample.paths.sample_root, "bowtie1_hg19_cdna", "bitSeq", sample.name + ".counts"),
@@ -1479,9 +1490,9 @@ def samples_to_color(samples, trait="IGHV"):
     elif trait == "gender":
         colors = list()
         for sample in samples:
-            if sample.patient_gender is "F":
+            if sample.patient_gender == "F":
                 colors.append('red')
-            elif sample.patient_gender is "M":
+            elif sample.patient_gender == "M":
                 colors.append('blue')
             else:
                 colors.append('gray')
@@ -1489,10 +1500,10 @@ def samples_to_color(samples, trait="IGHV"):
     elif trait == "clinical_centre":
         colors = list()
         for sample in samples:
-            if sample.clinical_centre is "bournemouth":
+            if sample.clinical_centre == "bournemouth":
+                colors.append(sns.color_palette("colorblind")[4])
+            elif sample.clinical_centre == "vienna":
                 colors.append(sns.color_palette("colorblind")[5])
-            elif sample.clinical_centre is "vienna":
-                colors.append(sns.color_palette("colorblind")[6])
             else:
                 colors.append('gray')
         return colors
@@ -1540,9 +1551,9 @@ def samples_to_color(samples, trait="IGHV"):
     elif trait == "under_treatment":
         colors = list()
         for sample in samples:
-            if sample.under_treatment is False:
+            if sample.under_treatment == False:
                 colors.append('green')  # untreated samples
-            elif sample.under_treatment is True:
+            elif sample.under_treatment == True:
                 colors.append('black')  # untreated samples
             else:
                 colors.append('grey')  # no info
@@ -1550,11 +1561,11 @@ def samples_to_color(samples, trait="IGHV"):
     elif trait == "treatment_regimen":
         colors = list()
         for sample in samples:
-            if sample.under_treatment is False:
+            if sample.under_treatment == False:
                 colors.append('peru')  # untreated samples
-            elif sample.under_treatment is True and sample.chemo_treated is True:
+            elif sample.under_treatment == True and sample.chemo_treated is True:
                 colors.append('black')  # chemo
-            elif sample.under_treatment is True and sample.target_treated is True:
+            elif sample.under_treatment == True and sample.target_treated is True:
                 colors.append('green')  # antibodies
             else:
                 colors.append('grey')  # no info
@@ -1690,24 +1701,10 @@ def annotate_disease_treatments(samples):
     return new_samples
 
 
-def annotate_samples(samples):
+def annotate_samples(samples, attrs):
     new_samples = list()
     for sample in samples:
         # If any attribute is not set, set to NaN
-        attrs = [
-            "sample_name", "cell_line", "number_cells", "library", "ip", "patient_id", "sample_id", "condition",
-            "experiment_name", "technical_replicate", "organism", "flowcell", "lane", "BSF_name", "clinical_centre", "sample_type",
-            "cell_type", "sample_origin", "original_patient_id", "timepoint", "timepoint_name", "patient_gender", "patient_birth_date",
-            "patient_death_date", "patient_last_checkup_date", "diagnosis_date", "diagnosis_disease", "hospital", "diagnosis_change_date",
-            "diagnosis_stage_rai", "diagnosis_stage_binet", "under_treatment", "treatment_date", "treatment_regimen", "treatment_response",
-            "treatment_end_date", "relapse", "treatment_1_date", "treatment_1_regimen", "treatment_1_duration", "treatment_1_response",
-            "treatment_2_date", "treatment_2_regimen", "treatment_2_duration", "treatment_2_response", "treatment_3_date", "treatment_3_regimen",
-            "treatment_3_duration", "treatment_3_response", "treatment_4_date", "treatment_4_regimen", "treatment_4_response", "treatment_end_date.1",
-            "ighv_gene", "ighv_homology", "ighv_mutation_status", "CD38_cells_percentage", "CD38_positive", "CD38_measurement_date", "CD38_changed",
-            "ZAP70_cells_percentage", "ZAP70_positive", "ZAP70_monoallelic_methylation", "sample_collection_date", "storage_condition", "lymp_count",
-            "mutations", "sample_shippment_batch", "sample_cell_number", "sample_experiment_name", "sample_processing_date", "sample_viability"
-            "diagnosis_collection", "diagnosis_date", "diagnosis_disease", "time_since_treatment", "treatment_regimen",
-            "treatment_response", "treated", "previous_treatment_date", "previous_response", "relapse"]
         for attr in attrs:
             if not hasattr(sample, attr):
                 setattr(sample, attr, pd.np.nan)
@@ -2163,6 +2160,65 @@ def classification_random(analysis, sel_samples, labels, trait, n=100):
     fig.savefig(os.path.join(
         analysis.plots_dir,
         "trait_specific", "cll_peaks.%s-random2_significant.classification.random_forest.loocv.ROC_PRC.svg" % trait), bbox_inches="tight")
+
+
+def unsupervised(analysis, samples):
+    """
+    Run trait classification (with independent validation if possible for that trait)
+    on all samples with known annotation of the trait.
+    """
+    from sklearn.decomposition import PCA
+
+    # Approach 1: all regions
+    X = pd.DataFrame(normalize(analysis.coverage_qnorm_annotated[[s.name for s in samples]]))
+    X = analysis.coverage_qnorm_annotated[[s.name for s in samples if s.clinical_centre == "bournemouth"]]
+
+    pca = PCA()
+    x_new = pca.fit_transform(X.T)
+    # transform again
+    x = pd.DataFrame(x_new)
+    xx = x.apply(lambda j: (j - j.mean()) / j.std(), axis=0)
+
+    # plot % explained variance per PC
+    fig, axis = plt.subplots(1)
+    axis.plot(range(1, len(pca.explained_variance_) + 1), pca.explained_variance_, 'o-')
+    axis.set_xlabel("PC")
+    axis.set_ylabel("% variance")
+    fig.savefig(os.path.join(""), bbox_inches='tight')
+
+    # plot PCA
+    # with samples colored for all traits
+    # sample_colors = samples_to_color(samples, "patient")
+    sample_symbols = samples_to_symbol(samples, "unique")
+
+    all_colors = all_sample_colors(samples)
+    traits = [
+        "patient", "clinical_centre", "gender", "disease", "IGHV", "ighv_homology",
+        "CD38", "CD38_cells_percentage", "ZAP70", "ZAP70_cells_percentage",
+        "under_treatment", "del17", "del13", "del11", "tri12"]
+
+    for pc in [0, 1, 2, 3]:
+        fig, axis = plt.subplots(3, 5, figsize=(15, 12))
+        axis = axis.flatten()
+        for i in range(len(traits)):
+            for j in range(len(xx)):
+                axis[i].scatter(xx.ix[j][pc], xx.ix[j][pc + 1], s=50, color=all_colors[i][j], marker=sample_symbols[j])
+            axis[i].set_title(traits[i])
+        fig.savefig(os.path.join("results", "cll_peaks.all_sites.pca.pc%i_vs_pc%i.svg" % (pc + 1, pc + 2)))
+
+    # only with bournemouth samples
+    b = [i for i, s in enumerate(samples) if s.clinical_centre == "bournemouth"]
+    for pc in [0, 1, 2, 3]:
+        fig, axis = plt.subplots(3, 5, figsize=(15, 12))
+        axis = axis.flatten()
+        for i in range(len(traits)):
+            for j in range(len(xx)):
+                axis[i].scatter(xx.ix[j][pc], xx.ix[j][pc + 1], s=50, color=all_colors[i][j], marker=sample_symbols[j])
+            axis[i].set_title(traits[i])
+        fig.savefig(os.path.join("results", "cll_peaks.bournemouth.all_sites.pca.pc%i_vs_pc%i.svg" % (pc + 1, pc + 2)))
+
+    # Approach 2: most variable regions
+    analysis.coverage_qnorm_annotated
 
 
 def state_enrichment_overlap(n=100):
@@ -3974,7 +4030,7 @@ def main():
     prj.add_sample_sheet()
 
     # annotated samples with a few more things:
-    prj.samples = annotate_samples(prj.samples)
+    prj.samples = annotate_samples(prj.samples, prj.sheet.df.columns.tolist())
 
     # Start analysis object
     # only with samples that passed QC
