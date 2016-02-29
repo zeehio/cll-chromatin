@@ -15,11 +15,6 @@ from lifelines import KaplanMeierFitter
 from lifelines import NelsonAalenFitter
 import itertools
 from lifelines.statistics import logrank_test
-import re
-from lifelines import AalenAdditiveFitter, CoxPHFitter
-import patsy
-from lifelines.utils import k_fold_cross_validation
-from joblib import Parallel, delayed
 
 
 # Set settings
@@ -115,25 +110,6 @@ def survival_plot(clinical, fitter, fitter_name, feature, axis=None):
         fig.savefig(os.path.join(plots_dir, "%s_%s.svg" % (feature, fitter_name)), bbox_inches="tight")
 
 
-def test_model(model, fitter_name, df):
-    X = patsy.dmatrix(model + " -1", df, return_type="dataframe").reset_index(drop=True)
-    if X.empty:
-        return [None for _ in range(1, 11)]
-    X["T"] = [i.days / 30. for i in df["duration"].ix[X.index]]
-    X["E"] = [True if i is not pd.NaT else False for i in df["patient_death_date"].ix[X.index]]
-
-    scores = list()
-    for penalty in range(1, 11):
-        if fitter_name == "aalen":
-            fitter = AalenAdditiveFitter(coef_penalizer=penalty, fit_intercept=True)
-        else:
-            fitter = CoxPHFitter(penalizer=penalty * 0.1)
-        score = k_fold_cross_validation(fitter, X, "T", event_col="E", k=10)
-        if score > 0:
-            scores.append((penalty, score))  # append = penalty, score
-    return scores
-
-
 # plots output dir
 plots_dir = os.path.join("results", "plots", "survival")
 # Get clinical info
@@ -151,28 +127,13 @@ traits = [
     "diagnosis_stage_binet",
     "diagnosis_stage_rai",
     "ighv_mutation_status",
-    "CD38_positive",
-    "ZAP70_positive",
-    "ZAP70_monoallelic_methylation",
 ]
-chrom_abrs = ["del13", "del11", "tri12", "del17"]
-mutations = ["SF3B1", "ATM", "NOTCH1", "BIRC3", "BCL2", "TP53", "MYD88", "CHD2", "NFKIE"]
-
-# annotate with chromosomal aberrations
-for abr in chrom_abrs:
-    # add column to clinical with bool info about said mutation
-    clinical[abr] = clinical["mutations"].apply(lambda x: 1 if abr in str(x) else 0)
-
-# annotate with mutations
-for mutation in mutations:
-    # add column to clinical with bool info about said mutation
-    clinical[mutation] = clinical["mutations"].apply(lambda x: 1 if mutation in str(x) else pd.np.nan)
 
 # Get one record per patient
 cols = [
     "patient_id", "patient_birth_date", "patient_death_date", "sample_collection_date",
     "diagnosis_date", "patient_last_checkup_date", "treatment_date"] + ["treatment_%i_date" % i for i in range(1, 5)]
-clinical = clinical[cols + traits + chrom_abrs + mutations].drop_duplicates()
+clinical = clinical[cols + traits].drop_duplicates()
 
 
 # Data cleanup
@@ -199,7 +160,7 @@ clinical["duration"] = clinical.apply(life_duration, axis=1)
 
 # Survival analysis
 # For time since diagnosis
-features = traits + chrom_abrs + mutations
+features = traits
 
 # Survival of each clinical feature
 fig, axis = plt.subplots(3, 7, figsize=(50, 20))
@@ -217,125 +178,3 @@ time = "duration"
 for i, feature in enumerate(features):
     survival_plot(clinical, NelsonAalenFitter(nelson_aalen_smoothing=False), "hazard", feature, axis=axis[i])
 fig.savefig(os.path.join(plots_dir, "all_traits.hazard.svg"), bbox_inches="tight")
-
-
-#
-
-
-# Survival Regression
-# exclude some traits
-# due to being either rare or heavily assymetric between cohorts
-features = traits + chrom_abrs + mutations
-[features.pop(features.index(i)) for i in [
-    "patient_gender",
-    "diagnosis_disease",
-    "diagnosis_stage_binet",
-    "diagnosis_stage_rai",
-    "ZAP70_monoallelic_methylation",
-    "TP53", "del17", "SF3B1", "ATM", "NOTCH1", "BIRC3", "BCL2", "MYD88", "CHD2", "NFKIE"]]
-combinations = [" + ".join(j) for i in range(1, len(features) + 1) for j in itertools.combinations(features, i)]
-
-# Model selection
-clinical2 = clinical.reset_index(drop=True)
-fitters = ["aalen", "cox"]
-predictions = pd.DataFrame()
-for fitter_name in fitters:
-    print(fitter_name)
-    # Test all models
-    performances = Parallel(n_jobs=-1, verbose=5)(delayed(test_model)(model, fitter_name, clinical2) for model in combinations)
-    print("Done with cross-validation for model selection")
-
-    # bit of post processing
-    scores = pd.DataFrame(dict(zip(
-        [re.sub(r" \+ ", "-", c) for c in combinations],
-        sum(performances, []))
-    )).T
-    scores = scores.apply(lambda x: pd.Series(x[1]), axis=1)
-    scores['penalty'] = scores[0]
-
-    # mean  performance across folds
-    scores['mean'] = scores[range(10)].apply(np.mean, axis=1)
-    # model names
-    scores = scores.reset_index()
-    scores = scores.rename(columns={"index": "name"})
-    # number of traits
-    scores['traits'] = scores["name"].apply(lambda x: len(x.split("-")))
-
-    # model concordance distribution
-    fig, axis = plt.subplots(3, sharex=False, sharey=False, figsize=(15, 8))
-    sns.distplot(scores["mean"], rug=True, ax=axis[0])
-    # number of elements in model
-    axis[1].scatter(scores["traits"], scores["mean"])
-    # penalty per model
-    axis[2].scatter(scores["penalty"], scores["mean"])
-    axis[0].set_xlabel("Mean model concordance")
-    axis[0].set_ylabel("Density")
-    axis[1].set_xlabel("Number of model terms")
-    axis[1].set_ylabel("Mean concordance")
-    axis[2].set_xlabel("Co-variate penalty")
-    axis[2].set_ylabel("Mean concordance")
-    fig.savefig(os.path.join(plots_dir, "%s_model_selection_performance.svg" % fitter_name), bbox_inches="tight")
-
-    # Sort models by performance
-    best_models = scores.sort("mean")
-    index_order = np.argsort(best_models["mean"]).index.tolist()
-
-    # Get 5 best models,
-    # plot survival and hazard predictions
-    fig, axis = plt.subplots(2, 5, sharex=False, sharey=False, figsize=(40, 15))
-    fig2, axis2 = plt.subplots(5, sharex=False, sharey=True, figsize=(20, 15))
-    for m in range(1, 6):
-        # get best model
-        model = re.sub("-", " + ", best_models.ix[index_order[-m]]["name"])
-        penalty = best_models.ix[index_order[-m]]["penalty"]
-
-        # regress with best model
-        X = patsy.dmatrix(model + " -1", clinical, return_type="dataframe")
-        X["T"] = [i.days / 30. for i in clinical["duration"].ix[X.index]]
-        X["E"] = [True if i is not pd.NaT else False for i in clinical["patient_death_date"].ix[X.index]]
-
-        # Fit
-        if fitter_name == "aalen":
-            fitter = AalenAdditiveFitter(coef_penalizer=penalty, fit_intercept=True)
-        elif fitter_name == "cox":
-            fitter = CoxPHFitter(penalizer=penalty * 0.1)
-        fitter.fit(X, "T", event_col="E")
-
-        # Predict hazard, survival
-        survival = fitter.predict_survival_function(X)
-        survival["type"] = "survival"
-        hazard = fitter.predict_cumulative_hazard(X)
-        hazard["type"] = "hazard"
-
-        # ...save
-        for df in [survival, hazard]:
-            df["model"] = model
-            df["fitter"] = fitter_name
-        predictions = predictions.append(survival)
-
-        # ...and plot
-        survival.plot(ax=axis[0][m - 1], legend=False)
-        hazard.plot(ax=axis[1][m - 1], legend=False)
-        axis[0][m - 1].set_title(model)
-        axis[1][2].set_xlabel("Time since diagnosis")
-        axis[0][0].set_ylabel("Survival")
-        axis[1][0].set_ylabel("Hazard")
-        # [i[m - 1].legend_.remove() for i in axis]
-
-        # Hazard proportion of each trait
-        if fitter_name == "cox":
-            haz = fitter.hazards_.T.reset_index()
-            haz = haz.sort('coef')
-            sns.barplot("index", "coef", data=haz, ax=axis2[m - 1])
-            axis2[m - 1].set_xlabel("Trait")
-            axis2[m - 1].set_ylabel("Hazard")
-
-    #  save figures
-    fig.savefig(os.path.join(plots_dir, "%s_model_best_5models_predictions_all_patients.svg" % fitter_name), bbox_inches="tight")
-    fig2.savefig(os.path.join(plots_dir, "%s_model_hazard_per_trait.svg" % fitter_name), bbox_inches="tight")
-
-# save predictions
-predictions.columns = clinical.ix[predictions.columns]['patient_id']
-predictions = predictions.reset_index()
-predictions = predictions.rename(columns={"index": "time"})
-predictions.to_csv(os.path.join("data", "survival_hazard_predictions.csv"), index=False)

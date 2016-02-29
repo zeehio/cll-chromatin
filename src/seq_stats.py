@@ -7,7 +7,7 @@ Determine what percentage of the total number of duplicate reads is explained by
 
 import os
 import re
-from pipelines.models import Project, ATACseqSample
+from pipelines.models import Project
 from pipelines import toolkit as tk
 import textwrap
 import pandas as pd
@@ -27,12 +27,12 @@ matplotlib.rc('font', serif='Helvetica Neue')
 matplotlib.rc('text', usetex='false')
 
 
-def parse_duplicate_stats(statsFile):
+def parse_duplicate_stats(stats_file):
     """
     Parses sambamba markdup output, returns series with values.
 
-    :param statsFile: sambamba output file with duplicate statistics.
-    :type statsFile: str
+    :param stats_file: sambamba output file with duplicate statistics.
+    :type stats_file: str
     """
     import pandas as pd
     import re
@@ -40,7 +40,7 @@ def parse_duplicate_stats(statsFile):
     series = pd.Series()
 
     try:
-        with open(statsFile) as handle:
+        with open(stats_file) as handle:
             content = handle.readlines()  # list of strings per line
     except:
         return series
@@ -67,8 +67,11 @@ def parse_FRiP(frip_file, series):
     import re
     import pandas as pd
 
-    with open(frip_file, "r") as handle:
-        content = handle.readlines()
+    try:
+        with open(frip_file, "r") as handle:
+            content = handle.readlines()
+    except:
+        return pd.np.nan
 
     if content[0].strip() == "":
         return pd.np.nan
@@ -89,6 +92,20 @@ def calculateFRiP(inputBam, inputBed, output):
     return cmd
 
 
+def parse_rna_stats(stats_file):
+    """
+    Parses sambamba markdup output, returns series with values.
+
+    :param stats_file: sambamba output file with duplicate statistics.
+    :type stats_file: str
+    """
+    import pandas as pd
+
+    try:
+        return pd.read_csv(stats_file, sep="\t", header=None).set_index(0)[1]
+    except:
+        return pd.Series()
+
 # Get path configuration
 data_dir = os.path.join(".", "data")
 results_dir = os.path.join(".", "results")
@@ -98,19 +115,8 @@ plots_dir = os.path.join(results_dir, "plots")
 prj = Project("metadata/project_config.yaml")
 prj.add_sample_sheet()
 
-
-# Select ATAC-seq samples
-samples_to_exclude = [
-    "CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19",
-    "CLL_ATAC-seq_5186_1-5-57350_ATAC17-4_hg19",
-    "CLL_ATAC-seq_4784_1-5-52817_ATAC17-6_hg19",
-    "CLL_ATAC-seq_981_1-5-42480_ATAC16-6_hg19",
-    "CLL_ATAC-seq_5277_1-5-57269_ATAC17-8_hg19",
-    "CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19",
-    "CLL_ATAC-seq_5147_1-5-48105_ATAC17-2_hg19",
-    "CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19"]
-
-samples = [s for s in prj.samples if type(s) == ATACseqSample and s.cell_line == "CLL" and s.name not in samples_to_exclude]
+samples = [s for s in prj.samples if s.library != "RNA-seq" and s.cell_line == "CLL"]
+samples = [s for s in prj.samples if s.library == "ChIPmentation" and s.cell_line == "CLL"]
 
 
 # GET DUPLICATES IN MITOCHONDRIAL GENOME ONLY
@@ -118,87 +124,87 @@ samples = [s for s in prj.samples if type(s) == ATACseqSample and s.cell_line ==
 for sample in samples:
     dups_log = os.path.join(sample.paths.sample_root, sample.name + ".dupLog.txt")
 
-    if not os.path.exists(dups_log):
-        cmd = tk.slurmHeader("_".join([sample.name, "mitochondria_duplicates"]), "/home/arendeiro/scratch/mitoLog.txt", cpusPerTask=4)
-        cmd += """sambamba slice {0} chrM | sambamba markdup -t 4 /dev/stdin /home/arendeiro/scratch/{1}.dups.rmMe 2>  {2}\n""".format(sample.mapped, sample.name, dups_log)
-        cmd += tk.slurmFooter()
-
-        jobFile = "/home/arendeiro/scratch/" + sample.name + ".slurm.sh"
-
-        with open(jobFile, "w") as handle:
-            handle.writelines(textwrap.dedent(cmd))
-
-        tk.slurmSubmitJob(jobFile)
-
-r = list()
-# Collect duplicate counts, calculate other variables
-df = pd.DataFrame(columns=["name", "total_reads", "%duplicates", "total MT", "%dups nuclear", "%dups MT"])
-for sample in samples:
-    s = pd.Series(index=["name", "total_reads", "%duplicates", "total MT", "%dups MT", "%dups nuclear"])
-
-    all_dups_log = re.sub("dups_metrics", "duplicates", sample.dups_metrics)
-    mt_dups_log = os.path.join(sample.paths.sample_root, sample.name + ".dupLog.txt")
-
-    allDups = parse_duplicate_stats(all_dups_log)
-    mtDups = parse_duplicate_stats(mt_dups_log)
-
-    # is it empty?
-    e = False if len(allDups) != 0 else True
-    mtE = False if len(mtDups) != 0 else True
-
-    if e or mtE:
-        print(sample.name, e, mtE)
-        continue
-
-    s["name"] = sample.name if not e else None
-    s["total_reads"] = float(allDups["single-ends"]) + (float(allDups["paired-ends"]) * 2) if not e else None
-    s["duplicates"] = float(allDups["duplicates"]) if not e else None
-    s["%duplicates"] = ((s["duplicates"] / s["total_reads"]) * 100) if not e else None
-    s["total MT"] = (float(mtDups["single-ends"]) + (float(mtDups["paired-ends"]) * 2)) if not mtE else None
-    s["% MT"] = (s["total MT"] / s["total_reads"]) * 100 if not mtE else None
-    s["%dups MT"] = (float(mtDups["duplicates"]) / float(allDups["duplicates"]) * 100) if not mtE else None
-    s["%dups nuclear"] = ((float(allDups["duplicates"]) - float(mtDups["duplicates"])) / s["total_reads"]) * 100 if not mtE else None
-    s["usable"] = s["total_reads"] - s["duplicates"] if not e else None
-    s["%usable"] = (s["usable"] / s["total_reads"]) * 100 if not e else None
-
-    s["frip"] = parse_FRiP(sample.frip, s)
-
-    if pd.isnull(s["frip"]):
-        r.append(sample)
-
-    df = df.append(s, ignore_index=True)
-
-
-# repeat FRiP for missing samples
-for sample in r:
-    cmd = tk.slurmHeader("_".join([sample.name, "frip"]), "/home/arendeiro/scratch/frip.txt", cpusPerTask=4)
-    cmd += calculateFRiP(
-        inputBam=sample.filtered,
-        inputBed=sample.peaks,
-        output=sample.frip
-    )
+    cmd = tk.slurmHeader("_".join([sample.name, "mitochondria_duplicates"]), "/home/arendeiro/scratch/mitoLog.txt", cpusPerTask=4)
+    cmd += """
+    sambamba index -t 4 {0}
+    """.format(sample.mapped)
+    cmd += """
+    sambamba slice {0} chrM | sambamba markdup -t 4 /dev/stdin /home/arendeiro/scratch/{1}.dups.rmMe 2>  {2}
+    """.format(sample.mapped, sample.name, dups_log)
     cmd += tk.slurmFooter()
 
-    jobFile = "/home/arendeiro/scratch/" + sample.name + ".frip.slurm.sh"
+    jobFile = "/home/arendeiro/scratch/" + sample.name + ".slurm.sh"
 
     with open(jobFile, "w") as handle:
         handle.writelines(textwrap.dedent(cmd))
 
     tk.slurmSubmitJob(jobFile)
 
+r = list()
+# Collect duplicate counts, calculate other variables
+df = pd.DataFrame(columns=["name", "total_reads", "%duplicates", "total MT", "%dups nuclear", "%dups MT"])
+for sample in prj.samples:
+    s = pd.Series(index=["name", "total_reads", "%duplicates", "total MT", "%dups MT", "%dups nuclear"])
 
-#
+    if sample.library != "RNA-seq":
+        if sample.library == "ATAC-seq":
+            all_dups_log = re.sub("dups_metrics", "duplicates", sample.dups_metrics)
+        else:
+            all_dups_log = sample.dups_metrics
+        mt_dups_log = os.path.join(sample.paths.sample_root, sample.name + ".dupLog.txt")
+
+        allDups = parse_duplicate_stats(all_dups_log)
+        mtDups = parse_duplicate_stats(mt_dups_log)
+
+        # is it empty?
+        e = False if len(allDups) != 0 else True
+        mtE = False if len(mtDups) != 0 else True
+
+        if e or mtE:
+            print(sample.name, e, mtE)
+            continue
+
+        s["name"] = sample.name if not e else None
+        s["total_reads"] = float(allDups["single-ends"]) + (float(allDups["paired-ends"]) * 2) if not e else None
+        s["duplicates"] = float(allDups["duplicates"]) if not e else None
+        s["%duplicates"] = ((s["duplicates"] / s["total_reads"]) * 100) if not e else None
+        s["total MT"] = (float(mtDups["single-ends"]) + (float(mtDups["paired-ends"]) * 2)) if not mtE else None
+        s["% MT"] = (s["total MT"] / s["total_reads"]) * 100 if not mtE else None
+        s["%dups MT"] = (float(mtDups["duplicates"]) / float(allDups["duplicates"]) * 100) if not mtE else None
+        s["%dups nuclear"] = ((float(allDups["duplicates"]) - float(mtDups["duplicates"])) / s["total_reads"]) * 100 if not mtE else None
+        s["usable"] = s["total_reads"] - s["duplicates"] if not e else None
+        s["%usable"] = (s["usable"] / s["total_reads"]) * 100 if not e else None
+
+        s["frip"] = parse_FRiP(sample.frip, s)
+
+        if pd.isnull(s["frip"]):
+            r.append(sample)
+
+    else:
+        s2 = parse_rna_stats(os.path.join(sample.paths.sample_root, sample.name + ".rnaBitSeq_stats.tsv"))
+        s["name"] = sample.name
+        s["total_reads"] = float(s2["Fastq_reads"])
+        s["usable"] = float(s2["Deduplicated_reads"])
+        s["duplicates"] = s["total_reads"] - s["usable"]
+        s["%duplicates"] = ((s["duplicates"] / s["total_reads"]) * 100)
+        s["%usable"] = (s["usable"] / s["total_reads"]) * 100
+
+    # add to dataframe
+    df = df.append(s, ignore_index=True)
+
+# replace None with np.nan
 df = df.replace(to_replace="None", value=np.nan)
 
 # order columns
 df = df[["name", "total_reads", "duplicates", "%duplicates", "total MT", "% MT", "%dups MT", "%dups nuclear", "usable", "%usable", "frip"]]
 
 # save table
-df.to_csv(os.path.join(plots_dir, "mitochondria_duplicates.csv"), index=False)
+df.to_csv(os.path.join(plots_dir, "seq_stats.mitochondria_duplicates.csv"), index=False)
 
 # PLOT
+df2 = df[df.name.str.contains("ATAC-seq")].sort(["total_reads"], ascending=False)
 # stripplot on a grid
-g = sns.PairGrid(df.sort(["total_reads"], ascending=False), x_vars=df.columns[1:], y_vars=["name"], size=30, aspect=.15)
+g = sns.PairGrid(df2, x_vars=df2.columns[1:], y_vars=["name"], size=30, aspect=.15)
 g.map(sns.stripplot, size=10, orient="h", palette="Reds_r", edgecolor="gray")
 
 for i, ax in enumerate(g.axes.flat):
@@ -216,4 +222,4 @@ for i, ax in enumerate(g.axes.flat):
 sns.despine(left=True, bottom=True)
 
 # save plot
-plt.savefig(os.path.join(plots_dir, "mitochondria_duplicates.svg"), bbox_inches="tight")
+plt.savefig(os.path.join(plots_dir, "seq_stats.mitochondria_duplicates.svg"), bbox_inches="tight")

@@ -9,7 +9,7 @@
 
 paths:
   # output_dir: the parent, shared space for this project where results will go
-  output_dir: /data/groups/lab_bock/shared/projects/cll-patients
+  output_dir: /scratch/lab_bock/shared/projects/cll-chromatin
   # results and submission subdirs are subdirectors directories under parent output_dir
   # results: where output sample folders will go
   # submission: where cluster submit scripts and log files will go
@@ -23,8 +23,8 @@ metadata:
   # Relative paths are considered relative to this project config file.
   # Typically, this project config file is stored with the project metadata
   # sample_annotation: one-row-per-sample metadata
-  sample_annotation: /data/groups/lab_bock/shared/projects/cll-patients/metadata/annotation.csv
-  merge_table: /data/groups/lab_bock/shared/projects/cll-patients/metadata/merge_table.csv
+  sample_annotation: /scratch/lab_bock/shared/projects/cll-chromatin/metadata/annotation.csv
+  merge_table: /scratch/lab_bock/shared/projects/cll-chromatin/metadata/merge_table.csv
 
 data_sources:
   # specify the ABSOLUTE PATH of input files using variable path expressions
