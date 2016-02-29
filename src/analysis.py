@@ -826,22 +826,32 @@ class Analysis(object):
                     v_u.append(i)
                 else:
                     v_m.append(i)
-        self.coverage_qnorm_annotated.ix[v_u][['chrom', 'start', 'end']].to_csv("ighv_mutation_variable_comparison.significant-uCLL.bed", index=False, sep="\t", header=False)
-        self.coverage_qnorm_annotated.ix[v_m][['chrom', 'start', 'end']].to_csv("ighv_mutation_variable_comparison.significant-mCLL.bed", index=False, sep="\t", header=False)
+        self.coverage_qnorm_annotated.ix[v_u][['chrom', 'start', 'end']].to_csv(
+            os.path.join(self.data_dir, "ighv_mutation_variable_comparison", "ighv_mutation_variable_comparison.significant-uCLL.bed"),
+            index=False, sep="\t", header=False)
+        self.coverage_qnorm_annotated.ix[v_m][['chrom', 'start', 'end']].to_csv(
+            os.path.join(self.data_dir, "ighv_mutation_variable_comparison", "ighv_mutation_variable_comparison.significant-mCLL.bed"),
+            index=False, sep="\t", header=False)
 
-        universe = "data/cll_peaks.bed"
+        universe = os.path.join(self.data_dir, "cll_peaks.bed")
 
         # run lola
-        lola("ighv_mutation_variable_comparison.significant-uCLL.bed", universe, "data/ighv_mutation_variable_comparison/uCLL")
-        lola("ighv_mutation_variable_comparison.significant-mCLL.bed", universe, "data/ighv_mutation_variable_comparison/mCLL")
+        lola(
+            "ighv_mutation_variable_comparison.significant-uCLL.bed",
+            universe,
+            os.path.join(self.data_dir, "ighv_mutation_variable_comparison/uCLL"))
+        lola(
+            "ighv_mutation_variable_comparison.significant-mCLL.bed",
+            universe,
+            os.path.join(self.data_dir, "ighv_mutation_variable_comparison/mCLL"))
 
         # get gene names
         out = dict()
-        out['u'] = self.coverage_qnorm_annotated.ix[v_u]['gene_name'].unique()
-        out['m'] = self.coverage_qnorm_annotated.ix[v_m]['gene_name'].unique()
+        out['u'] = self.coverage_qnorm_annotated.ix[v_u]['gene_name'].dropna().unique()
+        out['m'] = self.coverage_qnorm_annotated.ix[v_m]['gene_name'].dropna().unique()
         # write gene names to file
         for c, genes in out.items():
-            with open("data/ighv_mutation_variable_comparison/%sCLL/genes.txt" % c, 'w') as handle:
+            with open(os.path.join(self.data_dir, "/ighv_mutation_variable_comparison/%sCLL/genes.txt" % c), 'w') as handle:
                 handle.writelines("\n".join(genes.tolist()))
 
     def correlate_expression(self):
@@ -1748,7 +1758,7 @@ def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
         axis[0].plot(1 - TNR, TPR, 'o', color='gray')  # , s=50)
         fig.savefig(os.path.join(
             analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.ROC_PRC.svg" % trait), bbox_inches="tight")
+            "cll_peaks.%s_significant.classification.random_forest.loocv.ROC_PRC.svg" % trait), bbox_inches="tight")
 
         # Display training and prediction of pre-labeled samples of most informative features:
         # average feature importance across iterations
@@ -1759,7 +1769,7 @@ def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
         sns.distplot(mean_importance, ax=axis)
         fig.savefig(os.path.join(
             analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.mean_importance.svg" % trait), bbox_inches="tight")
+            "cll_peaks.%s_significant.classification.random_forest.loocv.mean_importance.svg" % trait), bbox_inches="tight")
         plt.close("all")
 
         # SEE VALUES OF ALL SAMPLES IN IMPORTANT FEATURES
@@ -1781,14 +1791,12 @@ def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
         # Save whole dataframe as csv
         dataframe_file = os.path.join(
             analysis.data_dir,
-            "trait_specific",
             "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
         dataframe.to_csv(dataframe_file, index=False)
 
         # Save as bed
         bed_file = os.path.join(
             analysis.data_dir,
-            "trait_specific",
             "cll_peaks.%s_significant.classification.random_forest.loocv.sites.bed" % trait)
         dataframe[["chrom", "start", "end"]].to_csv(bed_file, sep="\t", header=False, index=False)
 
@@ -1799,13 +1807,13 @@ def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
             row_colors=all_samples_colors)
         plt.savefig(os.path.join(
             analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_correlation.svg" % trait), bbox_inches="tight")
+            "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_correlation.svg" % trait), bbox_inches="tight")
         plt.close("all")
 
         # pca on these regions
         pca_r(x, all_samples_colors, os.path.join(
             analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_labels.svg" % trait))
+            "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_labels.svg" % trait))
 
         # colors of the direction each region is associated to
         region_colors = dict(zip([1, -1], sns.color_palette("colorblind")[1:3]))
@@ -1819,7 +1827,7 @@ def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
             yticklabels=False)
         plt.savefig(os.path.join(
             analysis.plots_dir,
-            "trait_specific", "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sites_labels.svg" % trait), bbox_inches="tight")
+            "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sites_labels.svg" % trait), bbox_inches="tight")
         plt.close("all")
 
 
@@ -1943,7 +1951,7 @@ def classification_random(analysis, sel_samples, labels, trait, n=100):
     axis[1].legend(loc="lower right")
     fig.savefig(os.path.join(
         analysis.plots_dir,
-        "trait_specific", "cll_peaks.%s-random2_significant.classification.random_forest.loocv.ROC_PRC.svg" % trait), bbox_inches="tight")
+        "cll_peaks.%s-random2_significant.classification.random_forest.loocv.ROC_PRC.svg" % trait), bbox_inches="tight")
 
 
 def unsupervised(analysis, samples):
@@ -1955,7 +1963,7 @@ def unsupervised(analysis, samples):
 
     # Approach 1: all regions
     X = pd.DataFrame(normalize(analysis.coverage_qnorm_annotated[[s.name for s in samples]]))
-    X = analysis.coverage_qnorm_annotated[[s.name for s in samples if s.clinical_centre == "bournemouth"]]
+    X = analysis.coverage_qnorm_annotated[[s.name for s in samples]]
 
     pca = PCA()
     x_new = pca.fit_transform(X.T)
@@ -1977,9 +1985,7 @@ def unsupervised(analysis, samples):
 
     all_colors = all_sample_colors(samples)
     traits = [
-        "patient", "clinical_centre", "gender", "disease", "IGHV", "ighv_homology",
-        "CD38", "CD38_cells_percentage", "ZAP70", "ZAP70_cells_percentage",
-        "under_treatment", "del17", "del13", "del11", "tri12"]
+        "patient", "gender", "disease", "IGHV", "ighv_homology"]
 
     for pc in [0, 1, 2, 3]:
         fig, axis = plt.subplots(3, 5, figsize=(15, 12))
@@ -2359,11 +2365,10 @@ def characterize_regions(analysis, traits, nmin=100):
         dataframe = pd.read_csv(
             os.path.join(
                 analysis.data_dir,
-                "trait_specific",
                 "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait))
 
         # Output of all plots/exports will be the same for the same trait
-        output_dir = os.path.join(analysis.plots_dir, "trait_specific", "%s_regions" % trait)
+        output_dir = os.path.join(analysis.plots_dir, "%s_regions" % trait)
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
@@ -2419,9 +2424,9 @@ def characterize_regions(analysis, traits, nmin=100):
         for direction in ["all", 1, -1]:
             print(trait, direction)
             if direction == "all":
-                output_dir = os.path.join("results/plots", "trait_specific", "%s_regions" % trait)
+                output_dir = os.path.join("results/plots", "%s_regions" % trait)
             else:
-                output_dir = os.path.join("results/plots", "trait_specific", "%s_regions" % trait, "%s_direction%i" % (trait, direction))
+                output_dir = os.path.join("results/plots", "%s_regions" % trait, "%s_direction%i" % (trait, direction))
             # # Gather structure
             results = "%s_regions.region_enrichment.csv" % trait if direction == "all" else "%s_direction%i_regions.region_enrichment.csv" % (trait, direction)
             structure = pd.read_csv(os.path.join(output_dir, results))
@@ -2668,26 +2673,6 @@ def trait_analysis(analysis, samples, traits):
         classification_random(analysis, sel_samples, labels, trait, n=100)
 
 
-def join_trait_specific_regions(analysis, traits):
-    # Put trait-specific chromatin regions in one matrix
-    features = pd.DataFrame()
-    for trait in traits:
-        file_name = os.path.join(
-            "data",
-            "trait_specific",
-            "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
-        try:
-            df = pd.read_csv(file_name)
-            # assert df.shape == df.dropna().shape  # check there are no nans - in fact there can be (e.g. gene_name column)
-            df['trait'] = trait
-            features = features.append(df, ignore_index=True)
-        except IOError:
-            print("Trait %s did not generate any associated regions" % trait)
-
-    # # Save whole dataframe as csv
-    features.to_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"), index=False)
-
-
 def characterize_regions_chromatin(analysis, traits, extend=False):
     """
     For each trait-associated region, get ratios of active/repressed and poised/repressed chromatin,
@@ -2782,7 +2767,7 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
     # samples
     samples = analysis.samples
     # read in dataframe with counts over CLL ATAC-seq peaks
-    features = pd.read_csv(os.path.join(analysis.data_dir, "trait_specific", "cll.trait-specific_regions.csv"))
+    features = pd.read_csv(os.path.join(analysis.data_dir, "cll.trait-specific_regions.csv"))
     if extend:
         # alternatively, replace ChIPmentation counts with new read count around peaks (e.g. 1kb)
         chip_samples = [s for s in analysis.samples if s.library == "ChIPmentation"]
@@ -2851,7 +2836,7 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
             standard_scale=0,
             col_colors=sample_colors,
             yticklabels=False)
-        plt.savefig(os.path.join(analysis.plots_dir, "trait_specific", "%s.%sclustermap.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
+        plt.savefig(os.path.join(analysis.plots_dir, "%s.%sclustermap.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
 
         # order rows by ATAC-seq dendrogram
@@ -2862,25 +2847,25 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
         # order columns by histone mark
         chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: x.split("_")[2])]
         sns.heatmap(chrom, yticklabels=False)
-        plt.savefig(os.path.join(analysis.plots_dir, "trait_specific", "%s_histones.%sordered_mark.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
+        plt.savefig(os.path.join(analysis.plots_dir, "%s_histones.%sordered_mark.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
 
         # order columns by group
         chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: (x.split("_")[0], x.split("_")[2]))]
         sns.heatmap(chrom, yticklabels=False)
-        plt.savefig(os.path.join(analysis.plots_dir, "trait_specific", "%s_histones.%sordered_group.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
+        plt.savefig(os.path.join(analysis.plots_dir, "%s_histones.%sordered_group.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
 
         # Z-scored, order columns by histone mark
         chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: x.split("_")[2])]
         sns.heatmap(chrom.apply(lambda x: (x - x.mean()) / x.std(), axis=0), yticklabels=False)
-        plt.savefig(os.path.join(analysis.plots_dir, "trait_specific", "%s_histones.%sordered_mark.zscore_rows.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
+        plt.savefig(os.path.join(analysis.plots_dir, "%s_histones.%sordered_mark.zscore_rows.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
 
         # Z-scored, order columns by group
         chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: (x.split("_")[0], x.split("_")[2]))]
         sns.heatmap(chrom.apply(lambda x: (x - x.mean()) / x.std(), axis=0), yticklabels=False)
-        plt.savefig(os.path.join(analysis.plots_dir, "trait_specific", "%s_histones.%sordered_group.zscore_rows.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
+        plt.savefig(os.path.join(analysis.plots_dir, "%s_histones.%sordered_group.zscore_rows.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
 
     # Plot values
@@ -2907,21 +2892,21 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
         g.map(sns.violinplot, "mark", "intensity", split=True)
         sns.despine()
         plt.savefig(os.path.join(
-            analysis.plots_dir, "trait_specific", "cll.%s-specific_regions.chromatin_intensity.%smark_centric.svg" % (trait, "extended." if extend else "")),
+            analysis.plots_dir, "cll.%s-specific_regions.chromatin_intensity.%smark_centric.svg" % (trait, "extended." if extend else "")),
             bbox_inches='tight')
 
         g = sns.FacetGrid(p, col="group", row="mark", legend_out=True, margin_titles=True)
         g.map(sns.violinplot, "direction", "intensity", split=True, order=[-1, 1])
         sns.despine()
         plt.savefig(os.path.join(
-            analysis.plots_dir, "trait_specific", "cll.%s-specific_regions.chromatin_intensity.%sdirection_centric.svg" % (trait, "extended." if extend else "")),
+            analysis.plots_dir, "cll.%s-specific_regions.chromatin_intensity.%sdirection_centric.svg" % (trait, "extended." if extend else "")),
             bbox_inches='tight')
 
         g = sns.FacetGrid(p, row="mark", col="direction", legend_out=True, margin_titles=True)
         g.map(sns.violinplot, "group", "intensity", split=True, order=["uCLL", "iCLL", "mCLL"])
         sns.despine()
         plt.savefig(os.path.join(
-            analysis.plots_dir, "trait_specific", "cll.%s-specific_regions.chromatin_intensity.%sgroup_centric.svg" % (trait, "extended." if extend else "")),
+            analysis.plots_dir, "cll.%s-specific_regions.chromatin_intensity.%sgroup_centric.svg" % (trait, "extended." if extend else "")),
             bbox_inches='tight')
 
     # Plot ratios
@@ -2947,21 +2932,21 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
         g.map(sns.violinplot, "type", "ratio", split=True)
         sns.despine()
         plt.savefig(os.path.join(
-            analysis.plots_dir, "trait_specific", "cll.%s-specific_regions.chromatin_ratios.%smark_centric.svg" % (trait, "extended." if extend else "")),
+            analysis.plots_dir, "cll.%s-specific_regions.chromatin_ratios.%smark_centric.svg" % (trait, "extended." if extend else "")),
             bbox_inches='tight')
 
         g = sns.FacetGrid(p, col="group", row="type", legend_out=True)
         g.map(sns.violinplot, "direction", "ratio", split=True)
         sns.despine()
         plt.savefig(os.path.join(
-            analysis.plots_dir, "trait_specific", "cll.%s-specific_regions.chromatin_ratios.%sdirection_centric.svg" % (trait, "extended." if extend else "")),
+            analysis.plots_dir, "cll.%s-specific_regions.chromatin_ratios.%sdirection_centric.svg" % (trait, "extended." if extend else "")),
             bbox_inches='tight')
 
         g = sns.FacetGrid(p, row="type", col="direction", legend_out=True, margin_titles=True)
         g.map(sns.violinplot, "group", "ratio", split=True, order=["uCLL", "iCLL", "mCLL"])
         sns.despine()
         plt.savefig(os.path.join(
-            analysis.plots_dir, "trait_specific", "cll.%s-specific_regions.chromatin_ratios.%sgroup_centric.svg" % (trait, "extended." if extend else "")),
+            analysis.plots_dir, "cll.%s-specific_regions.chromatin_ratios.%sgroup_centric.svg" % (trait, "extended." if extend else "")),
             bbox_inches='tight')
 
 
@@ -3059,6 +3044,8 @@ def main():
     analysis.variability()
     # inter-group variation
     analysis.inspect_variability(atac_seq_samples)
+    # unsupervised analysis
+    unsupervised(analysis, atac_seq_samples)
 
     # TRAIT-SPECIFIC ANALYSIS (Figure 3)
     traits = ["IGHV"]
