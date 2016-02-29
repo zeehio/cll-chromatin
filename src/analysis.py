@@ -655,10 +655,10 @@ class Analysis(object):
             return rvtest(rd1, rd2)[2][0]
 
         # plot mean vs qv2
-        plt.scatter(self.coverage_qnorm_annotated["mean"], self.coverage_qnorm_annotated["qv2"])
+        plt.hexbin(self.coverage_qnorm_annotated["mean"], self.coverage_qnorm_annotated["qv2"], bins='log')
         plt.savefig(os.path.join(self.plots_dir, "mean_qv2.svg"), bbox_inches="tight")
         # plot mean vs dispersion
-        plt.scatter(self.coverage_qnorm_annotated["mean"], self.coverage_qnorm_annotated["std"])
+        plt.hexbin(self.coverage_qnorm_annotated["mean"], self.coverage_qnorm_annotated["dispersion"], bins='log')
         plt.savefig(os.path.join(self.plots_dir, "mean_dispersion.svg"), bbox_inches="tight")
 
         # divide samples per IGHV status
@@ -745,7 +745,7 @@ class Analysis(object):
         plt.close("all")
 
         # correct p-values
-        p_values = dict(zip(p_values.keys(), multipletests(p_values.values())[1]))
+        p_values = dict(zip(p_values.keys(), multipletests(p_values.values(), method="fdr_bh")[1]))
         # plot p-value distribution
         sns.distplot(-np.log10(np.array(p_values.values())), hist=False)
         plt.savefig(os.path.join(self.plots_dir, "ighv_mutation_variable_comparison.p_values-corrected.svg"), bbox_inches="tight")
@@ -849,18 +849,11 @@ class Analysis(object):
         Investigate degree of correlation between accessibility and gene expression using several approaches.
         """
         import itertools
-        from scipy.stats import kendalltau
         from scipy.stats import pearsonr
 
         def bin_distance(x):
-            ranges = [range(i * 1000, (i * 1000) + 1000) for i in range(100)]
-            j = 0
-            d = x["distance"]
-            for r in ranges:
-                if d in r:
-                    return j
-                j += 1
-            return len(ranges)
+            ranges = np.arange(0, 100000, 1000)
+            return ranges.searchsorted(x)
 
         def hexbin(x, y, color, **kwargs):
             cmap = sns.light_palette(color, as_cmap=True)
@@ -903,7 +896,7 @@ class Analysis(object):
 
         # save expression matrix
         expression_genes.to_csv(os.path.join(self.data_dir, "cll_expression_matrix.log2.csv"))
-        expression_genes = pd.read_csv(os.path.join(self.data_dir, "cll_expression_matrix.log2.csv"))
+        expression_genes = pd.read_csv(os.path.join(self.data_dir, "cll_expression_matrix.log2.csv")).set_index("ensembl_gene_id")
 
         # Explore expression
         fig, axis = plt.subplots(1)
@@ -922,11 +915,11 @@ class Analysis(object):
         # By IGHV group
         fig, axis = plt.subplots(3, figsize=(10, 30))
         for i, (group1, group2) in enumerate(itertools.combinations(["uCLL", "iCLL", "mCLL"], 2)):
-            m1 = expression_genes[[s.name for s in rna_samples if (s.ighv_group == group1) and (s.name in names)]].apply(np.median, axis=1)
-            m2 = expression_genes[[s.name for s in rna_samples if (s.ighv_group == group2) and (s.name in names)]].apply(np.median, axis=1)
-            axis[i].scatter(m1, m2)
-            axis[i].set_xlabel(group1 + " - %i samples" % len(m1.shape[1]))
-            axis[i].set_ylabel(group2 + " - %i samples" % len(m2.shape[1]))
+            m1 = expression_genes[[s.name for s in rna_samples if (s.ighv_group == group1) and (s.name in names)]]
+            m2 = expression_genes[[s.name for s in rna_samples if (s.ighv_group == group2) and (s.name in names)]]
+            axis[i].scatter(m1.apply(np.median, axis=1), m2.apply(np.median, axis=1))
+            axis[i].set_xlabel(group1 + " - %i samples" % m1.shape[1])
+            axis[i].set_ylabel(group2 + " - %i samples" % m2.shape[1])
         fig.savefig(os.path.join(self.plots_dir, "expression_ighv-groups.median.svg"), bbox_inches="tight")
 
         # Get openness
@@ -952,7 +945,8 @@ class Analysis(object):
             df["sample_id"] = sample_id
             matched = matched.append(df)
         # Put gene-element pairs in bins dependent on distance
-        matched["distance_bin"] = matched.apply(bin_distance, axis=1)
+        ranges = np.arange(0, 100000, 1000)
+        matched["distance_bin"] = ranges.searchsorted(matched["distance"])
 
         # save
         matched.drop("ensembl_gene_id", axis=1).to_csv(os.path.join(self.data_dir, "cll_expression_accessibility_matrix.csv"))
@@ -968,74 +962,87 @@ class Analysis(object):
         # all genes with associated elements vs median of all patients
         x = matched[['atac', 'sample_id']].groupby(level=0)['atac'].apply(np.median)
         y = matched[['rna', 'sample_id']].groupby(level=0)['rna'].apply(np.median)
-        sns.jointplot(x, y, kind="scatter", s=3, linewidth=1, alpha=.3)
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.scatter.svg"), bbox_inches="tight")
-        sns.jointplot(x, y, kind="kde", n_levels=30)
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.kde.svg"), bbox_inches="tight")
-        sns.jointplot(x, y, kind="hex", stat_func=kendalltau, color="#4CB391")
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.hex.svg"), bbox_inches="tight")
+        j = sns.jointplot(x, y, kind="hex", color="#4CB391", joint_kws={'bins': 'log'})
+        sns.regplot(x, y, ax=j.ax_joint, scatter=False)
+        j.fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.brute_force_median.hex.svg"), bbox_inches="tight")
 
         # Brute force, patient-specific
         # all genes with associated elements within each matched patient
-        sns.jointplot(matched["atac"], matched["rna"], kind="scatter", s=3, linewidth=1, alpha=.3)
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.scatter.svg"), bbox_inches="tight")
+        j = sns.jointplot(matched["atac"], matched["rna"], kind="hex", color="#4CB391", joint_kws={'bins': 'log'})
+        sns.regplot(matched["atac"], matched["rna"], ax=j.ax_joint, scatter=False)
+        j.fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.hex.svg"), bbox_inches="tight")
 
         # plotted individually
         g = sns.FacetGrid(matched, col="sample_id", col_wrap=3)
-        g.map(sns.kdeplot, "atac", "rna")
-        plt.savefig(os.path.join(self.plots_dir, "norm_counts.mean.per_genomic_region.distplot.svg"), bbox_inches="tight")
+        g.map(plt.hexbin, "atac", "rna", bins='log', gridsize=50, marginals=False, edgecolors=None)
+        g.fig.savefig(os.path.join(self.plots_dir, "norm_counts.mean.per_genomic_region.hex.svg"), bbox_inches="tight")
         plt.close()
 
         # Promoters only, patient-specific
         # only promoters with associated elements within each matched patient
         # get only genes within 5kb
         proms = matched[matched["distance"] < 2500]
-        sns.jointplot(proms["atac"], proms["rna"], kind="scatter", s=3, linewidth=1, alpha=.3)
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter.scatter.svg"), bbox_inches="tight")
-        sns.jointplot(proms["atac"], proms["rna"], kind="kde")
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter.kde.svg"), bbox_inches="tight")
+        j = sns.jointplot(proms["atac"], proms["rna"], kind="hex", color="#4CB391", joint_kws={'bins': 'log'})
+        sns.regplot(proms["atac"], proms["rna"], ax=j.ax_joint, scatter=False)
+        j.fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter.hex.svg"), bbox_inches="tight")
 
         # Distal elemnts only, patient-specific
         # only promoters with associated elements within each matched patient
         # get only genes within 5kb
         distal = matched[matched["distance"] > 2500]
-        sns.jointplot(distal["atac"], distal["rna"], kind="scatter", s=3, linewidth=1, alpha=.3)
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distal.scatter.svg"), bbox_inches="tight")
-        sns.jointplot(distal["atac"], distal["rna"], kind="kde")
-        plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distal.kde.svg"), bbox_inches="tight")
+        j = sns.jointplot(distal["atac"], distal["rna"], kind="hex", color="#4CB391", joint_kws={'bins': 'log'})
+        sns.regplot(distal["atac"], distal["rna"], ax=j.ax_joint, scatter=False)
+        j.fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distal.hex.svg"), bbox_inches="tight")
 
         # Promoters only vs distal elements only, patient-specific
         # only promoters and only distal elements with associated elements within each matched patient
         fig, axis = plt.subplots(2)
-        axis[0].scatter(proms["atac"], proms["rna"])
-        axis[1].scatter(distal["atac"], distal["rna"])
-        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter_vs_distal.kde.svg"), bbox_inches="tight")
+        axis[0].hexbin(proms["atac"], proms["rna"], color="#4CB391", bins='log')
+        sns.regplot(distal["atac"], distal["rna"], ax=axis[0], scatter=False)
+        axis[1].hexbin(distal["atac"], distal["rna"], color="#4CB391", bins='log')
+        sns.regplot(distal["atac"], distal["rna"], ax=axis[1], scatter=False)
+        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.promoter_vs_distal.hex.svg"), bbox_inches="tight")
 
         # Promoters only vs distal elements only, patient-specific, distance dependent
         # only promoters and only distal elements with associated elements within each matched patient
-        bins = matched["distance_bin"].unique()
-        fig, axis = plt.subplots(len(bins))
-
-        ranges = dict(zip(range(100), [(i * 1000, (i * 1000) + 1000) for i in range(100)]))
+        # ranges = dict(zip(range(100), [(i * 1000, (i * 1000) + 1000) for i in range(100)]))
         cor = dict()
+        cor_filtered = dict()
         for i in range(100):
             subset = matched[
-                (ranges[i][0] < matched["distance"]) &
-                (ranges[i][1] < matched["distance"])
+                matched["distance_bin"] == i
             ]
-
-            # sns.jointplot(subset["atac"], subset["rna"], kind="kde", ax=ax)
-
             # add correlation
-            cor[i] = pearsonr(subset["atac"], subset["rna"])
-        # save several subplots
-        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.distance_dependent.kde.svg"), bbox_inches="tight")
+            cor[i] = (pearsonr(subset["atac"], subset["rna"]), subset.shape[0])
+
+            subset = matched[
+                (matched["distance_bin"] == i) &
+                (matched["rna"] > 2)
+            ]
+            # add correlation
+            cor_filtered[i] = (pearsonr(subset["atac"], subset["rna"]), subset.shape[0])
 
         # plot correlation vs distance
         fig, axis = plt.subplots(2)
-        axis[0].plot(cor.keys(), [j[0] for j in cor.values()])
-        axis[1].plot(cor.keys(), -np.log10([j[1] for j in cor.values()]))
+        axis[0].plot(cor.keys(), [k[0][0] for k in cor.values()])
+        axis[1].plot(cor.keys(), -np.log10([k[0][1] for k in cor.values()]))
+        axis[1].twinx().plot(cor_filtered.keys(), np.log10([k[1] for k in cor.values()]), color="green")
+        axis[0].set_title("ATAC-seq/RNA-seq concordance")
+        axis[0].set_ylabel("Pearson correlation")
+        axis[1].set_ylabel("correlation p-value (-log10)")
+        axis[1].set_xlabel("distance to TSS (kb)")
         fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.correlation_distance.svg"), bbox_inches="tight")
+
+        # plot correlation vs distance
+        fig, axis = plt.subplots(2)
+        axis[0].plot(cor_filtered.keys(), [k[0][0] for k in cor_filtered.values()])
+        axis[1].plot(cor_filtered.keys(), -np.log10([k[0][1] for k in cor_filtered.values()]))
+        axis[1].twinx().plot(cor_filtered.keys(), np.log10([k[1] for k in cor_filtered.values()]), color="green")
+        axis[0].set_title("ATAC-seq/RNA-seq concordance")
+        axis[0].set_ylabel("Pearson correlation")
+        axis[1].set_ylabel("correlation p-value (-log10)")
+        axis[1].set_xlabel("distance to TSS (kb)")
+        fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.expressed_genes.correlation_distance.svg"), bbox_inches="tight")
 
     def correlate_expression_spanish_cohort(self):
         # get expression
@@ -1163,21 +1170,6 @@ class Analysis(object):
         fig.tight_layout()
         fig.savefig(os.path.join(self.plots_dir, "cll_peaks.chromatin_states.svg"), bbox_inches="tight")
 
-        # distribution of count attributes
-        data = self.coverage_qnorm_annotated.copy()
-
-        sns.distplot(data["mean"], rug=False)
-        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.mean.distplot.svg"), bbox_inches="tight")
-        plt.close()
-
-        sns.distplot(data["qv2"], rug=False)
-        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.qv2.distplot.svg"), bbox_inches="tight")
-        plt.close()
-
-        sns.distplot(data["dispersion"], rug=False)
-        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.dispersion.distplot.svg"), bbox_inches="tight")
-        plt.close()
-
         # this is loaded now
         df = pd.read_csv(os.path.join(self.data_dir, "cll_peaks.support.csv"))
         sns.distplot(df["support"], rug=False)
@@ -1186,6 +1178,18 @@ class Analysis(object):
 
     def plot_coverage(self):
         data = self.coverage_qnorm_annotated.copy()
+
+        # distribution of count attributes
+        sns.distplot(data["mean"], rug=False)
+        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.mean.distplot.svg"), bbox_inches="tight")
+        plt.close()
+        sns.distplot(data["qv2"], rug=False)
+        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.qv2.distplot.svg"), bbox_inches="tight")
+        plt.close()
+        sns.distplot(data["dispersion"], rug=False)
+        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.dispersion.distplot.svg"), bbox_inches="tight")
+        plt.close()
+
         # (rewrite to avoid putting them there in the first place)
         for variable in ['gene_name', 'genomic_region', 'chromatin_state']:
             d = data[variable].str.split(',').apply(pd.Series).stack()  # separate comma-delimited fields
@@ -1275,16 +1279,6 @@ class Analysis(object):
         sns.jointplot('mean', "qv2", data=filtered)
         plt.savefig(os.path.join(self.plots_dir, "norm_counts_per_sample.support_vs_qv2.filtered.svg"), bbox_inches="tight")
 
-    def plot_qnorm_comparison(self):
-        # Compare raw counts vs qnormalized data
-        fig, axis = plt.subplots(2, sharex=True)
-        [sns.distplot(np.log2(1 + self.coverage[[sample.name]]), ax=axis[0], hist=False) for sample in self.samples if sample.cell_line != "PBMC"]
-        [sns.distplot(self.coverage_qnorm[[sample.name]], ax=axis[1], hist=False) for sample in self.samples if sample.cell_line != "PBMC"]
-        axis[0].set_title("Raw counts")
-        axis[1].set_title("Quantile normalized counts")
-        axis[1].set_xlabel("log2(1 + x)")
-        fig.savefig(os.path.join(self.plots_dir, "coverage_vs_coverage_qnorm.svg"), bbox_inches="tight")
-
     def plot_qv2_fit(self):
         from scipy.optimize import curve_fit
         from scipy import stats
@@ -1337,37 +1331,6 @@ class Analysis(object):
         axis[1].set_ylabel("residuals")
 
         plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.qv2_vs_mean.fit_residuals.svg"), bbox_inches="tight")
-
-    def plot_sample_correlations(self):
-        # get colors depending on IGHV mut
-        df = pd.DataFrame([sample.asSeries() for sample in self.samples])
-
-        df = pd.merge(df, self.clinical, left_on="sample_id", right_on="sample_id")
-        mut_s = {"1.0": "red", "2.0": "black", "nan": "grey"}
-        sex_s = {"F": "red", "M": "blue", "nan": "grey"}
-        muts = [self.clinical.loc[self.clinical['sample_id'] == sample.sample_id, "ighv_mutation_status"] for sample in self.samples]
-        sex = [self.clinical.loc[self.clinical['sample_id'] == sample.sample_id, "patient_gender"] for sample in self.samples]
-        mut_colors = [mut_s[str(x.get(x.index[0]))] if len(x.tolist()) > 0 else "grey" for x in muts]
-        sex_colors = [sex_s[str(x.get(x.index[0]))] if len(x.tolist()) > 0 else "grey" for x in sex]
-
-        # Correlation
-        cmap = sns.diverging_palette(h_neg=210, h_pos=350, s=90, l=30, as_cmap=True)
-
-        correlations = self.rpkm[[sample.name for sample in self.samples]].corr()
-        correlations.index = map(name_to_repr, correlations.index)
-        correlations.columns = map(name_to_repr, correlations.columns)
-
-        sns.clustermap(
-            correlations,
-            method="complete",
-            cmap=cmap,
-            row_colors=mut_colors,
-            col_colors=sex_colors,
-            square=True, annot=False,
-            figsize=(20, 16)
-        )
-        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.correlation_clustering.svg"), bbox_inches="tight")
-        plt.close("all")
 
 
 def add_args(parser):
@@ -1619,8 +1582,8 @@ def annotate_samples(samples, attrs):
     # annotate samples with the respective IGHV group
     for sample in samples:
         group = selected[
-            (selected["patient_id"] == sample.patient_id) &
-            (selected["sample_id"] == sample.sample_id)
+            (selected["patient_id"].astype(str) == str(sample.patient_id)) &
+            (selected["sample_id"].astype(str) == str(sample.sample_id))
         ]["sample_cluster"]
         if len(group) == 1:
             sample.ighv_group = group.squeeze()
@@ -3019,21 +2982,18 @@ def main():
     prj.samples = annotate_samples(prj.samples, prj.sheet.df.columns.tolist())
 
     # Start analysis object
-    # only with samples that passed QC
-    samples_to_exclude = ["CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19", "CLL_ATAC-seq_AKH13_M3152_ATAC40s21_hg19"]
-    samples = [sample for sample in prj.samples if sample.name not in samples_to_exclude]
-
-    # Start analysis object
     analysis = Analysis(
-        data_dir=os.path.join(".", "data"),
+        data_dir=os.path.join(".", "data_submission"),
         plots_dir=os.path.join(".", "results", "plots"),
-        samples=samples,
+        samples=prj.samples,
         pickle_file=os.path.join(".", "data", "analysis.pickle")
     )
     # pair analysis and Project
     analysis.prj = prj
 
+    # Create subsets of samples
     atac_seq_samples = [sample for sample in analysis.samples if sample.library == "ATAC-seq"]
+    chromatin_samples = [sample for sample in analysis.samples if sample.library in ["ATAC-seq", "ChIPmentation"]]
 
     # GET CONSENSUS PEAK SET, ANNOTATE IT, PLOT FEATURES
     if args.generate:
@@ -3066,12 +3026,12 @@ def main():
     # GET CHROMATIN OPENNESS MEASUREMENTS, PLOT
     if args.generate:
         # Get coverage values for each peak in each sample of ATAC-seq and ChIPmentation
-        analysis.measure_coverage([sample for sample in analysis.samples if sample.cell_line == "CLL"])
+        analysis.measure_coverage(chromatin_samples)
         # normalize coverage values
-        analysis.normalize_coverage_quantiles([sample for sample in analysis.samples if sample.cell_line == "CLL"])
+        analysis.normalize_coverage_quantiles(chromatin_samples)
         # Annotate peaks with closest gene, chromatin state,
         # genomic location, mean and variance measurements across samples
-        analysis.annotate(atac_seq_samples)
+        analysis.annotate(chromatin_samples)
     else:
         analysis.coverage = pd.read_csv(os.path.join(analysis.data_dir, "cll_peaks.raw_coverage.tsv"), sep="\t", index_col=0)
         analysis.coverage_qnorm = pd.read_csv(os.path.join(analysis.data_dir, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t")
@@ -3087,7 +3047,6 @@ def main():
     # Plot oppenness across peaks/samples
     analysis.plot_coverage()
     analysis.plot_variance()
-    analysis.plot_sample_correlations()
     # Observe exponential fit to the coeficient of variation
     analysis.plot_qv2_fit()
     # Correlate with expression
