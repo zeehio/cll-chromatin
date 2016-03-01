@@ -367,9 +367,9 @@ class Analysis(object):
         self.coverage.to_csv(os.path.join(self.data_dir, "cll_peaks.raw_coverage.tsv"), sep="\t", index=True)
 
     @pickle_me
-    def normalize_coverage_quantiles(self, samples):
+    def normalize_coverage_quantiles(self, samples, samples2=None):
         # Normalize by quantiles
-        to_norm = self.coverage.iloc[:, :len(samples)]
+        to_norm = self.coverage[[s.name for s in samples]]
         self.coverage_qnorm = pd.DataFrame(
             normalize_quantiles_r(np.array(to_norm)),
             index=to_norm.index,
@@ -378,7 +378,23 @@ class Analysis(object):
         # Log2 transform
         self.coverage_qnorm = np.log2(1 + self.coverage_qnorm)
 
+        if samples2 is not None:
+            # Normalize by quantiles
+            to_norm2 = self.coverage[[s.name for s in samples2]]
+            qnorm2 = pd.DataFrame(
+                normalize_quantiles_r(np.array(to_norm2)),
+                index=to_norm2.index,
+                columns=to_norm2.columns
+            )
+            # Log2 transform
+            qnorm2 = np.log2(1 + qnorm2)
+
+            # Join with other matrix
+            self.coverage_qnorm = self.coverage_qnorm.join(qnorm2)
+
+        # Add coordinates
         self.coverage_qnorm = self.coverage_qnorm.join(self.coverage[['chrom', 'start', 'end']])
+        # Save
         self.coverage_qnorm.to_csv(os.path.join(self.data_dir, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t", index=False)
 
     @pickle_me
@@ -479,6 +495,8 @@ class Analysis(object):
         promoters = df2.ix[promoter_index]
 
         # get peaks away from promoters (> 1kb)
+        # enhancers = df[df['distance'] > 2500]
+        # enhancers = df2.groupby(["ensembl_gene_id"])[["variance", "std_deviation", "dispersion", "qv2"]].apply(np.mean).reset_index()
         df2 = df[df['distance'] > 2500]
         # enhancers
         enhancer_index = df2.groupby(["ensembl_gene_id"]).apply(lambda x: np.argmin((x['distance'])))
@@ -490,6 +508,44 @@ class Analysis(object):
         cll_p = promoters[promoters['ensembl_gene_id'].str.contains(genes_str)]
         cll_e = enhancers[enhancers['ensembl_gene_id'].str.contains(genes_str)]
 
+        fig, axis = plt.subplots(2, sharex=True, sharey=True)
+        sns.distplot(np.log2(1 + promoters['std_deviation']), ax=axis[0], bins=100)
+        sns.distplot(np.log2(1 + enhancers['std_deviation']), ax=axis[1], bins=100)
+        sns.distplot(np.log2(1 + cll_p['std_deviation']), ax=axis[0], rug=True, bins=20)
+        sns.distplot(np.log2(1 + cll_e['std_deviation']), ax=axis[1], rug=True, bins=20)
+        fig.savefig(os.path.join(self.plots_dir, "prom-enh.std_deviation.log2.svg"), bbox_inches="tight")
+
+        fig, axis = plt.subplots(2, sharex=True, sharey=True)
+        sns.distplot(np.log2(1 + promoters['variance']), ax=axis[0], bins=100)
+        sns.distplot(np.log2(1 + enhancers['variance']), ax=axis[1], bins=100)
+        sns.distplot(np.log2(1 + cll_p['variance']), ax=axis[0], rug=True, bins=20)
+        sns.distplot(np.log2(1 + cll_e['variance']), ax=axis[1], rug=True, bins=20)
+        fig.savefig(os.path.join(self.plots_dir, "prom-enh.variance.log2.svg"), bbox_inches="tight")
+
+        fig, axis = plt.subplots(2, sharex=True, sharey=True)
+        sns.distplot(np.log2(1 + promoters['dispersion']), ax=axis[0], bins=100)
+        sns.distplot(np.log2(1 + enhancers['dispersion']), ax=axis[1], bins=100)
+        sns.distplot(np.log2(1 + cll_p['dispersion']), ax=axis[0], rug=True, bins=20)
+        sns.distplot(np.log2(1 + cll_e['dispersion']), ax=axis[1], rug=True, bins=20)
+        fig.savefig(os.path.join(self.plots_dir, "prom-enh.dispersion.log2.svg"), bbox_inches="tight")
+
+        fig, axis = plt.subplots(2, sharex=True, sharey=True)
+        sns.distplot(np.log2(1 + promoters['qv2']), ax=axis[0], bins=100)
+        sns.distplot(np.log2(1 + enhancers['qv2']), ax=axis[1], bins=100)
+        sns.distplot(np.log2(1 + cll_p['qv2']), ax=axis[0], rug=True, bins=20)
+        sns.distplot(np.log2(1 + cll_e['qv2']), ax=axis[1], rug=True, bins=20)
+        fig.savefig(os.path.join(self.plots_dir, "prom-enh.qv2.log2.svg"), bbox_inches="tight")
+
+        # test difference in distributions
+        D, p = ks_2samp(promoters['std_deviation'], cll_p["std_deviation"])
+        D, p = ks_2samp(enhancers['std_deviation'], cll_e["std_deviation"])
+        D, p = ks_2samp(promoters['variance'], cll_p["variance"])
+        D, p = ks_2samp(enhancers['variance'], cll_e["variance"])
+        D, p = ks_2samp(promoters['dispersion'], cll_p["dispersion"])
+        D, p = ks_2samp(enhancers['dispersion'], cll_e["dispersion"])
+        D, p = ks_2samp(promoters['qv2'], cll_p["qv2"])
+        D, p = ks_2samp(enhancers['qv2'], cll_e["qv2"])
+
         # random subset of genes
         n = 1000
         r_p_values = list()
@@ -499,9 +555,17 @@ class Analysis(object):
             # plt.scatter(r_p["mean"], r_p["variance"], alpha=0.3)
             r_p_values.append(ks_2samp(r_p['variance'], cll_p["variance"])[1])
 
+        # Number of elements
         # random subset of genes with similar number of reg elements
         elements_per_gene = df.groupby("ensembl_gene_id").apply(len)
         cll_elements_per_gene = elements_per_gene.ix[cll_p["ensembl_gene_id"]]
+
+        fig, axis = plt.subplots(1)
+        sns.distplot(np.log2(1 + elements_per_gene), ax=axis, bins=100)
+        sns.distplot(np.log2(1 + cll_elements_per_gene), ax=axis, bins=20)
+        fig.savefig(os.path.join(self.plots_dir, "genes.number_of elements.log2.svg"), bbox_inches="tight")
+        # test
+        D, p = ks_2samp(elements_per_gene, cll_elements_per_gene)
 
         # now chose one gene with the same number of elements
         n = 1000
@@ -538,48 +602,11 @@ class Analysis(object):
         sns.jointplot(r_p["mean"], r_p["variance"])
         sns.jointplot(hk_p["mean"], hk_p["variance"])
 
-        fig, axis = plt.subplots(2, sharex=True, sharey=True)
-        sns.distplot(np.log2(1 + promoters['variance']), ax=axis[0], bins=100)
-        sns.distplot(np.log2(1 + enhancers['variance']), ax=axis[1], bins=100)
-        sns.distplot(np.log2(1 + cll_p), ax=axis[0], rug=True, bins=20)
-        sns.distplot(np.log2(1 + cll_e), ax=axis[1], rug=True, bins=20)
-        fig.savefig("prom-enh.variance.log2.svg", bbox_inches="tight")
-
-        # test difference in distributions
-        D, p = ks_2samp(promoters['variance'], cll_p["variance"])
-        D, p = ks_2samp(enhancers['variance'], cll_e["variance"])
-
         # Plot distributions of amplitude (fold_change)
         fig, axis = plt.subplots(1, figsize=(15, 10))
         sns.distplot(promoters['amplitude'], color="b", ax=axis)
         sns.distplot(enhancers['amplitude'], color="y", ax=axis)
-        fig.savefig(os.path.join("results", "plots", "all_genes.distplot.svg"), bbox_inches='tight')
-
-        # plot aditional boxplots for selected genes
-        gene_values = promoters[promoters['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in samples]].T
-        gene_values.columns = promoters.ix[gene_values.columns]['gene_name']
-        promoter_data = pd.melt(gene_values, var_name="gene", value_name="openness")
-        promoter_data['region'] = 'promoter'
-
-        gene_values = enhancers[enhancers['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in samples]].T
-        gene_values.columns = enhancers.ix[gene_values.columns]['gene_name']
-        enhancer_data = pd.melt(gene_values, var_name="gene", value_name="openness")
-        enhancer_data['region'] = 'enhancer'
-
-        boxplot_data = pd.concat([promoter_data, enhancer_data])
-
-        fig, axis = plt.subplots(1, figsize=(45, 10))
-        sns.violinplot(data=boxplot_data.sort('openness'), x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
-        fig.savefig(os.path.join("results", "plots", "relevant_genes.full.violinplot.svg"), bbox_inches='tight')
-
-        # sort by predefined order (intensity/functional classes)
-        sorterIndex = dict(zip(sel_genes.keys(), range(len(sel_genes.keys()))))
-        boxplot_data['order'] = boxplot_data['gene'].map(sorterIndex)
-        boxplot_data.sort('order', ascending=False, inplace=True)
-
-        fig, axis = plt.subplots(1, figsize=(45, 10))
-        sns.violinplot(data=boxplot_data, x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
-        fig.savefig(os.path.join("results", "plots", "relevant_genes.full.violinplot.funcorder.svg"), bbox_inches='tight')
+        fig.savefig(os.path.join(self.plots_dir, "all_genes.distplot.svg"), bbox_inches='tight')
 
         # Inspect influence of CpG Islands
         # divide promoters and enhancers in CGI/non-CGI containing
@@ -609,7 +636,7 @@ class Analysis(object):
         axis[1].set_xlabel("log2(1 + variance)")
         axis[0].legend()
         axis[1].legend()
-        fig.savefig("prom-enh.cgislands.variance.log2.svg", bbox_inches="tight")
+        fig.savefig(os.path.join(self.plots_dir, "prom-enh.cgislands.variance.log2.svg"), bbox_inches="tight")
 
         # Now compare ALL vs CLL split into CGI/non-CGI
         genes_str = "|".join(sel_genes.values())
@@ -620,6 +647,10 @@ class Analysis(object):
         cll_p_non_cgi = cll_p.ix[~cll_p.index.isin(cll_p_cgi.index)]
         cll_e_cgi = cll_e.reset_index().merge(peaks_cgi, on=["chrom", "start", "end"], how="inner").set_index('index')
         cll_e_non_cgi = cll_e.ix[~cll_e.index.isin(cll_e_cgi.index)]
+
+        # Test overrepresentation of CpG Islands
+        from scipy.stats import fisher_exact
+        fisher_exact([[cll_p_cgi.shape[0], promoters_cgi.shape[0]], [cll_p_non_cgi.shape[0], promoters_non_cgi.shape[0]]])
 
         # plot
         fig, axis = plt.subplots(2)
@@ -638,7 +669,37 @@ class Analysis(object):
         axis[1].set_xlabel("log2(1 + variance)")
         axis[0].legend()
         axis[1].legend()
-        fig.savefig("prom-enh.cll-specfic.cgislands.variance.log2.svg", bbox_inches="tight")
+        fig.savefig(os.path.join(self.plots_dir, "prom-enh.cll-specfic.cgislands.variance.log2.svg"), bbox_inches="tight")
+
+        #
+
+        # Specific gene analysis
+        # plot aditional boxplots for selected genes
+        gene_values = promoters[promoters['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in samples]].T
+        gene_values.columns = promoters.ix[gene_values.columns]['gene_name']
+        promoter_data = pd.melt(gene_values, var_name="gene", value_name="openness")
+        promoter_data['region'] = 'promoter'
+
+        gene_values = enhancers[enhancers['ensembl_gene_id'].str.contains(genes_str)][[sample.name for sample in samples]].T
+        gene_values.columns = enhancers.ix[gene_values.columns]['gene_name']
+        enhancer_data = pd.melt(gene_values, var_name="gene", value_name="openness")
+        enhancer_data['region'] = 'enhancer'
+
+        boxplot_data = pd.concat([promoter_data, enhancer_data])
+
+        fig, axis = plt.subplots(1, figsize=(45, 10))
+        sns.violinplot(data=boxplot_data.sort('openness'), x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
+        fig.savefig(os.path.join(self.plots_dir, "relevant_genes.full.violinplot.svg"), bbox_inches='tight')
+
+        # sort by predefined order (intensity/functional classes)
+        sorterIndex = dict(zip(sel_genes.keys(), range(len(sel_genes.keys()))))
+        boxplot_data['order'] = boxplot_data['gene'].map(sorterIndex)
+        boxplot_data.sort('order', ascending=False, inplace=True)
+
+        fig, axis = plt.subplots(1, figsize=(45, 10))
+        sns.violinplot(data=boxplot_data, x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
+        fig.savefig(os.path.join(self.plots_dir, "relevant_genes.full.violinplot.funcorder.svg"), bbox_inches='tight')
+
 
     def inspect_variability(self, samples):
         """
@@ -1536,7 +1597,7 @@ def annotate_clinical_traits(samples):
             sample.chemo_treated = 1 if sample.treatment_regimen in chemo_drugs else 0
             sample.target_treated = 1 if sample.treatment_regimen in target_drugs else 0
         for mut in muts:
-            setattr(sample, mut, 1 if sample.mutations is not pd.np.nan and mut in sample.mutations else 0)
+            setattr(sample, mut, 1 if sample.mutations is not pd.np.nan and mut in str(sample.mutations) else 0)
 
     return samples
 
@@ -1845,7 +1906,7 @@ def classification_random(analysis, sel_samples, labels, trait, n=100):
     X = normalize(analysis.coverage_qnorm_annotated[[s.name for s in sel_samples]].T)
 
     fig, axis = plt.subplots(1, 2, figsize=(12, 5))
-    metrics = list()
+    metrics = pd.DataFrame(index=["fpr", "tpr", "roc_auc", "TNR", "TPR", "recall", "precision", "aps"])
     for i in range(n):
         # randomize labels
         y = np.array(np.random.permutation(labels))
@@ -1911,7 +1972,10 @@ def classification_random(analysis, sel_samples, labels, trait, n=100):
         # Plot ROC and PRC curves
         axis[0].plot(fpr, tpr, alpha=0.3)
         axis[1].plot(recall, precision, alpha=0.3)
-        metrics.append([fpr, tpr, roc_auc, TNR, TPR, recall, precision, aps])
+        metrics[i] = [fpr, tpr, roc_auc, TNR, TPR, recall, precision, aps]
+        metrics.T.to_csv(os.path.join(
+            analysis.plots_dir,
+            "cll_peaks.%s-random_significant.classification.random_forest.loocv.metrics.csv" % trait), index=False)
 
     # calculate mean metrics
     # values
@@ -1951,7 +2015,7 @@ def classification_random(analysis, sel_samples, labels, trait, n=100):
     axis[1].legend(loc="lower right")
     fig.savefig(os.path.join(
         analysis.plots_dir,
-        "cll_peaks.%s-random2_significant.classification.random_forest.loocv.ROC_PRC.svg" % trait), bbox_inches="tight")
+        "cll_peaks.%s-random_significant.classification.random_forest.loocv.ROC_PRC.svg" % trait), bbox_inches="tight")
 
 
 def unsupervised(analysis, samples):
@@ -2662,13 +2726,13 @@ def trait_analysis(analysis, samples, traits):
     """
     for trait in traits:
         # cross-validated classification
-        sel_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan]
+        sel_samples = [s for s in samples if not pd.isnull(getattr(s, trait))]
         labels = np.array([getattr(s, trait) for s in sel_samples])
         classify_samples(analysis, sel_samples, labels, trait, rerun=True)
         export_matrices(analysis, sel_samples, labels, trait)
 
         # random classifiers
-        sel_samples = [s for s in samples if getattr(s, trait) is not pd.np.nan]
+        sel_samples = [s for s in samples if not pd.isnull(getattr(s, trait))]
         labels = np.array([getattr(s, trait) for s in sel_samples])
         classification_random(analysis, sel_samples, labels, trait, n=100)
 
@@ -2959,25 +3023,30 @@ def main():
     parser = add_args(parser)
     args = parser.parse_args()
 
-    # Start project
-    prj = Project("metadata/project_config.yaml")
-    prj.add_sample_sheet()
+    # Create Project and Analysis objects or load them
+    if args.generate:
+        # Start project
+        prj = Project("metadata/project_config.yaml")
+        prj.add_sample_sheet()
 
-    # annotated samples with a few more things:
-    prj.samples = annotate_samples(prj.samples, prj.sheet.df.columns.tolist())
+        # annotated samples with a few more things:
+        prj.samples = annotate_samples(prj.samples, prj.sheet.df.columns.tolist())
 
-    # Start analysis object
-    analysis = Analysis(
-        data_dir=os.path.join(".", "data_submission"),
-        plots_dir=os.path.join(".", "results", "plots"),
-        samples=prj.samples,
-        pickle_file=os.path.join(".", "data", "analysis.pickle")
-    )
-    # pair analysis and Project
-    analysis.prj = prj
+        # Start analysis object
+        analysis = Analysis(
+            data_dir=os.path.join(".", "data_submission"),
+            plots_dir=os.path.join(".", "results", "plots"),
+            samples=prj.samples,
+            pickle_file=os.path.join(".", "data", "analysis.pickle")
+        )
+        # pair analysis and Project
+        analysis.prj = prj
+    else:
+        analysis = pickle.load(open(os.path.join(".", "data", "analysis.pickle"), 'rb'))
 
     # Create subsets of samples
     atac_seq_samples = [sample for sample in analysis.samples if sample.library == "ATAC-seq"]
+    chipmentation_samples = [sample for sample in analysis.samples if sample.library == "ChIPmentation"]
     chromatin_samples = [sample for sample in analysis.samples if sample.library in ["ATAC-seq", "ChIPmentation"]]
 
     # GET CONSENSUS PEAK SET, ANNOTATE IT, PLOT FEATURES
@@ -3013,10 +3082,10 @@ def main():
         # Get coverage values for each peak in each sample of ATAC-seq and ChIPmentation
         analysis.measure_coverage(chromatin_samples)
         # normalize coverage values
-        analysis.normalize_coverage_quantiles(chromatin_samples)
+        analysis.normalize_coverage_quantiles(atac_seq_samples, chipmentation_samples)  # normalize them seperately
         # Annotate peaks with closest gene, chromatin state,
         # genomic location, mean and variance measurements across samples
-        analysis.annotate(chromatin_samples)
+        analysis.annotate(atac_seq_samples)  # samples on which peak metrics will be calculated on
     else:
         analysis.coverage = pd.read_csv(os.path.join(analysis.data_dir, "cll_peaks.raw_coverage.tsv"), sep="\t", index_col=0)
         analysis.coverage_qnorm = pd.read_csv(os.path.join(analysis.data_dir, "cll_peaks.coverage_qnorm.log2.tsv"), sep="\t")
