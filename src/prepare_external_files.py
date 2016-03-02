@@ -8,26 +8,6 @@ import re
 from Bio import motifs
 
 
-def sra2bam(sra_acession, output_bam):
-    from pipelines import toolkit as tk
-    import textwrap
-    # Slurm header
-    cmd = tk.slurmHeader("_".join(["sra2bam", sra_acession]), "/scratch/users/arendeiro/%s_sra2bam.log" % sra_acession, cpusPerTask=4)
-
-    # SRA to BAM
-    cmd += "\n    sam-dump {0} | sambamba view -t 4 -S -f bam /dev/stdin > /home/arendeiro/cll-patients/data/external/{0}.bam\n".format(sra_acession)
-    # Slurm footer
-    cmd += tk.slurmFooter() + "\n"
-
-    # Write job to file
-    job_file = "/scratch/users/arendeiro/%s_sra2bam.sh" % sra_acession
-    with open(job_file, "w") as handle:
-        handle.write(textwrap.dedent(cmd))
-
-    # Submit
-    tk.slurmSubmitJob(job_file)
-
-
 def get_tss(x):
     if x['strand'] == "+":
         x['end'] = x['start'] + 1
@@ -80,7 +60,7 @@ blacklist = "wgEncodeDacMapabilityConsensusExcludable.bed.gz"
 
 os.system("wget http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeMapability/{0}".format(blacklist))
 os.system("gzip -d {0}".format(blacklist))
-os.system("mv wgEncodeDacMapabilityConsensusExcludable.bed ../data/wgEncodeDacMapabilityConsensusExcludable.bed")
+os.system("mv {} ../data/{}".format(re.sub(".gz", "", blacklist)))
 
 
 # # Get ensembl genes and transcripts from grch37 and hg19 chromosomes (to get TSSs)
@@ -271,32 +251,6 @@ colapsed = df2.groupby(['CHROM', 'POS', 'REF', 'ALT']).aggregate(lambda x: ",".j
 # interesect
 
 
-# External samples, SRA to unaligned bam
-
-samples = {
-    "GM12878": "SRR891268",  # rep1
-    "CD4_T_day1": "SRR891275",  # 1hour - rep1
-    "CD4_T_day2": "SRR891277",  # 2hour - rep1
-    "CD4_T_day3": "SRR891279",  # 3hour - rep1
-    "Raji": "SRR1787814",
-    "RJ2.2.5": "SRR1787816",
-    "SKNMC": "SRR1594026",
-    "Monocyte-derived_dendritic_cells": "SRR1725732",
-    "Monocyte-derived_dendritic_cells_infected": "SRR1725731",
-    # "IMR90": [
-    #     "SRR1448792",
-    #     "SRR1448793"
-    # ],
-    # "IMR90_Nutlin-3a": [
-    #     "SRR1448794",
-    #     "SRR1448795"
-    # ]
-}
-
-for accession in samples.values():
-    sra2bam(accession, os.path.join("data/external/%s.bam" % accession))
-
-
 # GWAS studies
 # get GWAS catalog
 os.system("wget -O gwas_catalog.tsv http://www.ebi.ac.uk/gwas/api/search/downloads/alternative")  # gwas db dump
@@ -368,3 +322,49 @@ os.system(cmd)
 # CpG islands
 os.system("wget http://hgdownload.cse.ucsc.edu/goldenpath/hg19/database/cpgIslandExt.txt.gz")
 os.system("cut -f 2,3,4 cpgIslandExt.txt > data/external/cpgIsland.hg19.bed")
+
+#
+
+# DNAme Kulis 2012
+
+os.system("wget http://www.nature.com/ng/journal/v44/n11/extref/ng.2443-S2.xls")
+df = pd.read_excel("ng.2443-S2.xls", skiprows=1)
+df.rename(columns={"CHR": "chrom", "MAPINFO": "start"}, inplace=True)
+
+# add chr
+df["chrom"] = "chr" + df.chrom.astype(str)
+
+# replace strs
+df["Group"] = df["Group"].str.replace(" / ", "-").str.replace("Met ", "").str.replace("unmet ", "").str.replace("-CLL", "")
+
+for group in df["Group"].unique():
+    df2 = df[df["Group"] == group][["chrom", "start"]]
+    df2["end"] = df2["start"] + 1
+    df2[['chrom', 'start', 'end']].to_csv("data/external/Kulis_DNAme.%s.hg19.bed" % group, sep="\t", index=False, header=None)
+
+# Save whole thing
+df.to_csv("data/external/ng.2443-S2.csv", index=False)
+
+
+# DNAme windows from Oakes 2016
+os.system("wget http://www.nature.com/ng/journal/v48/n3/extref/ng.3488-S3.xlsx")
+df = pd.read_excel("ng.3488-S3.xlsx", skiprows=1)
+
+# get only windows with at least one TF motif
+tfs = ["AP-1", "EBF1", "RUNX3", "IRF4", "OCT2", "NFkB"]
+df2 = df[tfs]
+df2 = df.ix[df2[df2.any(1)].index]
+
+# Export Bed file
+df2['chrom'] = df2["Window position (hg19)"].apply(lambda x: x.split(":")[0])
+df2['start'] = df2["Window position (hg19)"].apply(lambda x: x.split(":")[1].split("-")[0])
+df2['end'] = df2["Window position (hg19)"].apply(lambda x: x.split(":")[1].split("-")[1])
+
+df2[['chrom', 'start', 'end']].to_csv("data/external/TF_DNAme_windows.hg19.bed", sep="\t", index=False, header=None)
+
+# Split by TF
+for TF in tfs:
+    df2[df2[TF] == 1][['chrom', 'start', 'end']].to_csv("data/external/TF_DNAme_windows.%s.hg19.bed" % TF, sep="\t", index=False, header=None)
+
+# Save whole thing
+df2.to_csv("data/external/ng.3488-S3.csv", index=False)

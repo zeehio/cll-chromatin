@@ -939,7 +939,7 @@ class Analysis(object):
         out['m'] = self.coverage_qnorm_annotated.ix[v_m]['gene_name'].dropna().unique()
         # write gene names to file
         for c, genes in out.items():
-            with open(os.path.join(self.data_dir, "/ighv_mutation_variable_comparison/%sCLL/genes.txt" % c), 'w') as handle:
+            with open(os.path.join(self.data_dir, "ighv_mutation_variable_comparison/%sCLL.variable_genes.txt" % c), 'w') as handle:
                 handle.writelines("\n".join(genes.tolist()))
 
     def correlate_expression(self):
@@ -998,7 +998,7 @@ class Analysis(object):
 
         # Explore expression
         fig, axis = plt.subplots(1)
-        sns.distplot(expression_genes['median'] ** 2, bins=100, ax=axis)
+        sns.distplot(expression_genes['median'], bins=100, ax=axis)
         fig.savefig(os.path.join(self.plots_dir, "expression_all_samples.median.svg"), bbox_inches="tight")
 
         # a few samples vs samples
@@ -1182,6 +1182,106 @@ class Analysis(object):
         plt.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.kde.svg"), bbox_inches="tight")
 
         # os.path.join("data", "ferreira_2012_gr.ighv_mutation_status.csv")
+
+    def correlate_methylation(self, samples):
+        """
+        See how accessibility varies in windows with TF motifs
+        shown to have different methylation levels along B cell development
+        (and IGHV status of CLL)
+        """
+        # IGHV dependent colors
+        group_colors = samples_to_color(samples, "IGHV")
+        homology_colors = samples_to_color(samples, "ighv_homology")
+        # colorbar
+        cmap = plt.get_cmap('summer')
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=86, vmax=100))
+        sm._A = []
+
+        # Kulis 2012 dataset
+        acc_meth = pd.DataFrame()
+
+        # plot mean vs rank
+        fig, axis = plt.subplots(2, 2, figsize=(10, 8))
+        for i, group in enumerate(["U-M", "M-U"]):
+            # Intersect TF binding site windows with CLL peaks
+            diff_meth = pybedtools.BedTool(os.path.join("data", "external", "Kulis_DNAme.%s.hg19.bed" % group))
+            overlap = self.sites.intersect(diff_meth, wa=True).to_dataframe()
+            overlap.columns = ["chrom", "start", "end"]
+            peaks_overlap = pd.merge(self.coverage_qnorm_annotated, overlap, how="right", on=["chrom", "start", "end"])
+            mean_tf = peaks_overlap[[s.name for s in samples]].mean()
+            acc_meth[group] = mean_tf
+            # sns.regplot(mean_tf.rank(ascending=False), mean_tf, label=group, fit_reg=False)
+            axis[0][i].scatter(mean_tf.rank(ascending=False), mean_tf, label=group, color=group_colors)
+            axis[1][i].scatter(mean_tf.rank(ascending=False), mean_tf, label=group, color=homology_colors)
+        axis[0][0].set_ylabel("Mean accessibility")
+        axis[1][0].set_ylabel("Mean accessibility")
+        axis[0][0].set_title("uCLL hypermethylated regions")
+        axis[0][1].set_title("mCLL hypermethylated regions")
+        axis[1][0].set_xlabel("Sample rank in mean accessibility")
+        axis[1][1].set_xlabel("Sample rank in mean accessibility")
+        fig.savefig(os.path.join(self.plots_dir, "hypermethylated_regions.accessibility_rank.svg"), bbox_inches="tight")
+
+        # plot mean uCLL vs mean mCLL
+        fig, axis = plt.subplots(2, figsize=(10, 15))
+        axis[0].scatter(acc_meth["U-M"], acc_meth["M-U"], color=group_colors)
+        axis[1].scatter(acc_meth["U-M"], acc_meth["M-U"], color=homology_colors)
+        plt.colorbar(sm, orientation="horizontal", aspect=5.)
+        axis[0].set_xlabel("Mean accessibility in uCLL hypermethylated regions")
+        axis[0].set_ylabel("Mean accessibility in mCLL hypermethylated regions")
+        axis[1].set_xlabel("Mean accessibility in uCLL hypermethylated regions")
+        axis[1].set_ylabel("Mean accessibility in mCLL hypermethylated regions")
+        fig.savefig(os.path.join(self.plots_dir, "hypermethylated_regions.accessibility.svg"), bbox_inches="tight")
+
+        # Oakes 2016 dataset
+        # Intersect TF binding site windows with CLL peaks
+        all_me_tfbs = pybedtools.BedTool(os.path.join("data", "external", "TF_DNAme_windows.hg19.bed"))
+        overlap = self.sites.intersect(all_me_tfbs, wa=True).to_dataframe()
+        overlap.columns = ["chrom", "start", "end"]
+        peaks_overlap = pd.merge(self.coverage_qnorm_annotated, overlap, how="right", on=["chrom", "start", "end"])
+
+        # Get mean accessibility per sample in those peaks
+        mean_acc = peaks_overlap[[s.name for s in samples]].mean()
+
+        # Plot rank vs mean accessibility
+        fig, axis = plt.subplots(1, figsize=(8, 8))
+        sns.regplot(mean_acc.rank(ascending=False), mean_acc, label="all", fit_reg=False, color="black", ax=axis)
+
+        # Split by TF
+        tfs = ["AP-1", "EBF1", "RUNX3", "IRF4", "OCT2", "NFkB"]
+        for tf in tfs:
+            tfbs = pybedtools.BedTool(os.path.join("data", "external", "TF_DNAme_windows.%s.hg19.bed" % tf))
+            overlap = self.sites.intersect(tfbs, wa=True).to_dataframe()
+            overlap.columns = ["chrom", "start", "end"]
+            tfbs_overlap = pd.merge(self.coverage_qnorm_annotated, overlap, how="right", on=["chrom", "start", "end"])
+            mean_tf = tfbs_overlap[[s.name for s in samples]].mean()
+            sns.regplot(mean_tf.rank(ascending=False), mean_tf, label=tf, fit_reg=False, ax=axis)
+        axis.legend()
+        fig.savefig(os.path.join(self.plots_dir, "methylated_regions_TFBS.accessibility_rank.svg"), bbox_inches="tight")
+
+        # Plot rank vs mean accessibility
+        fig, axis = plt.subplots(4, 2, figsize=(6, 10))
+        axis = axis.flatten()
+        axis[0].scatter(mean_acc.rank(ascending=False), mean_acc, label="all", color=homology_colors)
+        axis[0].set_title("all")
+        axis[0].set_xlim((-5, 93))
+
+        # Split by TF
+        tfs = ["AP-1", "EBF1", "RUNX3", "IRF4", "OCT2", "NFkB"]
+        for i, tf in enumerate(tfs):
+            tfbs = pybedtools.BedTool(os.path.join("data", "external", "TF_DNAme_windows.%s.hg19.bed" % tf))
+            overlap = self.sites.intersect(tfbs, wa=True).to_dataframe()
+            overlap.columns = ["chrom", "start", "end"]
+            tfbs_overlap = pd.merge(self.coverage_qnorm_annotated, overlap, how="right", on=["chrom", "start", "end"])
+            mean_tf = tfbs_overlap[[s.name for s in samples]].mean()
+            axis[i + 1].scatter(mean_tf.rank(ascending=False), mean_tf, label=tf, color=homology_colors)
+            axis[i + 1].set_title(tf)
+            axis[i + 1].set_xlim((-5, 93))
+        axis[i + 1].set_xlabel("sample rank")
+        axis[i + 2].set_xlabel("sample rank")
+        axis[i + 2].set_visible(False)
+        [axis[i].set_ylabel("mean accessibility") for i in range(0, 8, 2)]
+        plt.colorbar(sm, orientation="horizontal", aspect=5.)
+        fig.savefig(os.path.join(self.plots_dir, "methylated_regions_TFBS.accessibility_rank.svg"), bbox_inches="tight")
 
     def plot_peak_characteristics(self):
         # Loop at summary statistics:
@@ -1564,7 +1664,7 @@ def samples_to_color(samples, trait="IGHV"):
         # get colors acordingly
         colors = list()
         for sample in samples:
-            if vmin < getattr(sample, trait) < 100:
+            if vmin <= getattr(sample, trait) <= 100:
                 colors.append(m.to_rgba(getattr(sample, trait)))
             else:
                 colors.append('gray')
