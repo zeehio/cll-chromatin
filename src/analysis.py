@@ -700,7 +700,6 @@ class Analysis(object):
         sns.violinplot(data=boxplot_data, x="gene", y="openness", hue="region", split=True, inner="quart", palette={"promoter": "b", "enhancer": "y"}, jitter=True, ax=axis)
         fig.savefig(os.path.join(self.plots_dir, "relevant_genes.full.violinplot.funcorder.svg"), bbox_inches='tight')
 
-
     def inspect_variability(self, samples):
         """
         Investigate variability within sample groups.
@@ -796,6 +795,13 @@ class Analysis(object):
         p_values = dict()
         for i in df_u.index:
             p_values[i] = f_test_pvalue_rpy2(df_u.ix[i], df_m.ix[i])
+
+        # significantly variable regions
+        # by threshold
+        indexes = [i for i, p in p_values.items() if -np.log10(p) > 1.3]
+        # filter out regions with mean across all samples lower than 1
+        indexes = [i for i in indexes if self.coverage_qnorm_annotated.ix[i]["mean"] > 1]
+
         # plot uncorrected p_values
         sns.distplot(-np.log10(np.array(p_values.values())), hist=False)
         plt.savefig(os.path.join(self.plots_dir, "ighv_mutation_variable_comparison.p_values.svg"), bbox_inches="tight")
@@ -816,53 +822,34 @@ class Analysis(object):
         plt.savefig(os.path.join(self.plots_dir, "ighv_mutation_variable_comparison.volcano-corrected.svg"), bbox_inches="tight")
         plt.close("all")
 
-        # significantly variable regions
-        # by threshold
-        indexes = [i for i, p in p_values.items() if -np.log10(p) > 1.3]
-
-        # filter by n-most variable
-        # n = 1000
-        # indexes = [i for i, k in sorted(p_values.items(), key=lambda x: x[1])[:n]]
-
-        # filter out regions with mean across all samples lower than 1
-        indexes = [i for i in indexes if self.coverage_qnorm_annotated.ix[i]["mean"] > 1]
-
-        # get color dependent on direction
-        together = pd.concat([u_m, m_m], axis=1).drop(['subtype', 'value'], axis=1)
-        together.columns = range(together.shape[1])
-        together = pd.DataFrame([together[0], u_m['value'] - m_m['value']]).T
-        together.columns = ['variable', 'value']
-        together['color'] = together['value'].apply(lambda x: "orange" if x > 0 else "blue")
-
         # hexbin plots
         g = sns.FacetGrid(df, col="variable", sharex=False, sharey=False)
         for i, variable in enumerate(df["variable"].unique()):
             a = df[
                 (df["variable"] == variable) &
                 (df["subtype"] == "u")
-            ]["value"]
+            ]["value"].reset_index(drop=True)
             b = df[
                 (df["variable"] == variable) &
                 (df["subtype"] == "m")
-            ]["value"]
+            ]["value"].reset_index(drop=True)
             if i > 1:
                 a = np.log2(1 + a)
                 b = np.log2(1 + b)
 
-            g.axes[0][i].hexbin(
-                a,
-                b,
-                bins="log"
-            )
+            # distribution as hexbin
+            g.axes[0][i].hexbin(a, b, bins="log")
+            g.axes[0][i].set_title(variable)
+
+            # get original indexes of significant regions
+            aa = a.ix[indexes]
+            bb = b.ix[indexes]
 
             # colors
-            colors = together[together["variable"] == variable]["color"]
+            colors = (aa > bb).replace(True, "#d55e00").replace(False, "#0072b2")
 
             # significant as scatter
-            if i > 1:
-                g.axes[0][i].scatter(np.log2(1 + u.ix[indexes][variable]), np.log2(1 + m.ix[indexes][variable]), color=colors)
-            else:
-                g.axes[0][i].scatter(u.ix[indexes][variable], m.ix[indexes][variable], color=colors)
+            g.axes[0][i].scatter(aa, bb, color=colors)
 
             # x=y line
             lims = [
@@ -871,10 +858,50 @@ class Analysis(object):
             ]
             g.axes[0][i].plot(lims, lims, 'k-', alpha=0.75, zorder=0)
             g.axes[0][i].set_aspect('equal')
-            # g.axes[0][i].set_xlim(lims)
-            # g.axes[0][i].set_ylim(lims)
 
         g.savefig(os.path.join(self.plots_dir, "ighv_mutation_variable_comparison.hexbin.significant.svg"), bbox_inches="tight")
+        plt.close("all")
+
+        # hexbin plots with color of highest variance to mean ratio ~= dispersion
+        # get colors according to dispersion
+        a = df[(df["variable"] == "dispersion") & (df["subtype"] == "u")]["value"].reset_index(drop=True).ix[indexes]
+        b = df[(df["variable"] == "dispersion") & (df["subtype"] == "m")]["value"].reset_index(drop=True).ix[indexes]
+        colors = (a > b).replace(True, "#d55e00").replace(False, "#0072b2")
+
+        g = sns.FacetGrid(df, col="variable", sharex=False, sharey=False)
+        for i, variable in enumerate(df["variable"].unique()):
+            a = df[
+                (df["variable"] == variable) &
+                (df["subtype"] == "u")
+            ]["value"].reset_index(drop=True)
+            b = df[
+                (df["variable"] == variable) &
+                (df["subtype"] == "m")
+            ]["value"].reset_index(drop=True)
+            if i > 1:
+                a = np.log2(1 + a)
+                b = np.log2(1 + b)
+
+            # distribution as hexbin
+            g.axes[0][i].hexbin(a, b, bins="log")
+            g.axes[0][i].set_title(variable)
+
+            # get original indexes of significant regions
+            aa = a.ix[indexes]
+            bb = b.ix[indexes]
+
+            # significant as scatter
+            g.axes[0][i].scatter(aa, bb, color=colors)
+
+            # x=y line
+            lims = [
+                np.min([g.axes[0][i].get_xlim(), g.axes[0][i].get_ylim()]),  # min of both axes
+                np.max([g.axes[0][i].get_xlim(), g.axes[0][i].get_ylim()]),  # max of both axes
+            ]
+            g.axes[0][i].plot(lims, lims, 'k-', alpha=0.75, zorder=0)
+            g.axes[0][i].set_aspect('equal')
+
+        g.savefig(os.path.join(self.plots_dir, "ighv_mutation_variable_comparison.hexbin.significant.dispersion_colored.svg"), bbox_inches="tight")
         plt.close("all")
 
         # investigate:
