@@ -35,16 +35,23 @@ def life_duration(x, kind="diagnosis_date"):
         return x["patient_death_date"] - x[kind]
 
 
-def survival_plot(clinical, fitter, fitter_name, feature, axis=None):
+def time_to_treatment(x, kind="diagnosis_date"):
+    if x["date_first_treatment"] is pd.NaT:
+        return x["patient_last_checkup_date"] - x[kind]
+    else:
+        return x["date_first_treatment"] - x[kind]
+
+
+def survival_plot(clinical, fitter, fitter_name, feature, time="life_duration", event="patient_death_date", axis=None):
     """
     Plot survival/hazard of all patients regardless of trait and dependent of trait.
     """
     # duration of life
-    T = [i.days / 30. for i in clinical["duration"]]
+    T = [i.days / 30. for i in clinical[time]]
     # events:
     # True for observed event (death);
     # else False (this includes death not observed; death by other causes)
-    C = [True if i is not pd.NaT else False for i in clinical["patient_death_date"]]
+    C = [True if i is not pd.NaT else False for i in clinical[event]]
 
     # drop index (to have syncronised numbers between lists T, C and the index of clinical)
     # this is because we drop a few rows from clinical before during data cleanup
@@ -99,11 +106,11 @@ def survival_plot(clinical, fitter, fitter_name, feature, axis=None):
     # Add p-values as anchored text
     try:  # problem with matplotlib < 1.4
         axis.add_artist(AnchoredText("\n".join(p_values), loc=8, frameon=False))
+        axis.set_xlabel("time (months)")
     except:
-        pass
+        axis.set_xlabel("time (months)\n%s" % "\n".join(p_values))
 
     axis.set_title("%s" % feature)
-    axis.set_xlabel("time (months)")
     axis.set_ylabel(fitter_name)
     sns.despine()
     if save:
@@ -116,8 +123,8 @@ plots_dir = os.path.join("results", "plots", "survival")
 clinical = pd.read_csv(
     os.path.join("metadata", "annotation.csv"),
     parse_dates=[
-        "patient_birth_date", "patient_death_date", "sample_collection_date",
-        "diagnosis_date", "patient_last_checkup_date", "treatment_date"] + ["treatment_%i_date" % i for i in range(1, 5)],
+        "patient_birth_date", "patient_death_date", "date_first_treatment",
+        "diagnosis_date", "patient_last_checkup_date"],
     dayfirst=True)
 
 # traits to investigate (used at several points)
@@ -125,14 +132,13 @@ traits = [
     "patient_gender",
     "diagnosis_disease",
     "diagnosis_stage_binet",
-    "diagnosis_stage_rai",
     "ighv_mutation_status",
 ]
 
 # Get one record per patient
 cols = [
-    "patient_id", "patient_birth_date", "patient_death_date", "sample_collection_date",
-    "diagnosis_date", "patient_last_checkup_date", "treatment_date"] + ["treatment_%i_date" % i for i in range(1, 5)]
+    "patient_id", "patient_birth_date", "patient_death_date", "date_first_treatment",
+    "diagnosis_date", "patient_last_checkup_date"]
 clinical = clinical[cols + traits].drop_duplicates()
 
 
@@ -144,7 +150,7 @@ clinical = clinical[~clinical["diagnosis_date"].isnull()]
 
 # Get duration of patient life or up to time of censorship
 # but first, let"s replace missing "patient_last_checkup_date" with last date of treatment, death or collection
-cols = ["patient_death_date", "sample_collection_date", "diagnosis_date"] + ["treatment_%i_date" % i for i in range(1, 5)]
+cols = ["patient_death_date", "diagnosis_date"]
 subs = clinical[cols].apply(lambda x: max(x.dropna()), axis=1).groupby(clinical.index).max()
 no_checkup = clinical[clinical["patient_last_checkup_date"].isnull()]
 
@@ -152,29 +158,63 @@ for i in no_checkup.index:
     if subs[i] is not pd.NaT:
         clinical.loc[i, "patient_last_checkup_date"] = subs[i]
 
-clinical["duration"] = clinical.apply(life_duration, axis=1)
-
-
-#
+# Get times
+clinical["life_duration"] = clinical.apply(life_duration, axis=1)
+clinical["time_to_treatment"] = clinical.apply(time_to_treatment, axis=1)
 
 
 # Survival analysis
 # For time since diagnosis
 features = traits
 
-# Survival of each clinical feature
-fig, axis = plt.subplots(3, 7, figsize=(50, 20))
-axis = axis.flatten()
-time = "duration"
-for i, feature in enumerate(features):
-    survival_plot(clinical, KaplanMeierFitter(), "survival", feature, axis=axis[i])
-fig.savefig(os.path.join(plots_dir, "all_traits.survival.svg"), bbox_inches="tight")
+for plot in [
+    ("life_duration", "patient_death_date"),
+        ("time_to_treatment", "date_first_treatment")]:
+    time, event = plot
+    # Survival of each clinical feature
+    fig, axis = plt.subplots(1, 4, figsize=(20, 4))
+    axis = axis.flatten()
+    for i, feature in enumerate(features):
+        survival_plot(clinical, KaplanMeierFitter(), "survival", feature, time=time, event=event, axis=axis[i])
+    fig.savefig(os.path.join(plots_dir, "all_traits.%s.survival.svg" % time), bbox_inches="tight")
+
+    # Hazard of each clinical feature
+    fig, axis = plt.subplots(1, 4, figsize=(20, 4))
+    axis = axis.flatten()
+    for i, feature in enumerate(features):
+        survival_plot(clinical, NelsonAalenFitter(nelson_aalen_smoothing=False), "hazard", feature, time=time, event=event, axis=axis[i])
+    fig.savefig(os.path.join(plots_dir, "all_traits.%s.hazard.svg" % time), bbox_inches="tight")
 
 
-# Hazard of each clinical feature
-fig, axis = plt.subplots(3, 7, figsize=(50, 20))
-axis = axis.flatten()
-time = "duration"
-for i, feature in enumerate(features):
-    survival_plot(clinical, NelsonAalenFitter(nelson_aalen_smoothing=False), "hazard", feature, axis=axis[i])
-fig.savefig(os.path.join(plots_dir, "all_traits.hazard.svg"), bbox_inches="tight")
+# Take discovered sample groups
+# read in
+df = pd.read_csv(os.path.join(
+    "data_submission", "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_assignments.csv" % "IGHV"))
+df["patient_id"] = df['sample'].apply(lambda x: x.split("_")[2]).astype(np.int64)
+
+# get patients which all of their samples agree in the cluster
+from collections import Counter
+counts = pd.DataFrame(Counter(df[["patient_id", "cluster"]].drop_duplicates()['patient_id']).items())
+patients = counts[counts[1] == 1][0]
+
+# subset clinical with those patients
+df2 = df[df["patient_id"].isin(patients)]
+# merge with rest of clinical info
+clinical_subset = pd.merge(
+    clinical, df2[["patient_id", "cluster"]].drop_duplicates(), on=["patient_id"]).drop_duplicates()
+
+feature = "cluster"
+
+for plot in [
+    ("life_duration", "patient_death_date"),
+        ("time_to_treatment", "date_first_treatment")]:
+    time, event = plot
+    # Survival per ighv cluster
+    fig, axis = plt.subplots(1, figsize=(8, 6))
+    survival_plot(clinical_subset, KaplanMeierFitter(), "survival", feature, time=time, event=event, axis=axis)
+    fig.savefig(os.path.join(plots_dir, "ighv_cluster.%s.survival.svg" % time), bbox_inches="tight")
+
+    # Hazard per ighv cluster
+    fig, axis = plt.subplots(1, figsize=(8, 6))
+    survival_plot(clinical_subset, NelsonAalenFitter(nelson_aalen_smoothing=False), "hazard", feature, time=time, event=event, axis=axis)
+    fig.savefig(os.path.join(plots_dir, "ighv_cluster.%s.hazard.svg" % time), bbox_inches="tight")
