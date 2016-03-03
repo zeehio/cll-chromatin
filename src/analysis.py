@@ -3385,6 +3385,20 @@ def characterize_regions_expression(analysis, traits, extend=False):
             analysis.plots_dir, "cll.%s-specific_regions.expression_ratio.direction_centric.mean_fold_change_in_regions.svg" % trait),
             bbox_inches='tight')
 
+        # Get fold-change over the other regions within each group and over all samples
+        exp_int4 = pd.DataFrame()
+        groups = ["all", "uCLL", "iCLL", "mCLL"]
+        for group in groups:
+            df = pd.Series()
+            df["value"] = np.log2(exp_int3[group]["value"] / exp_int3["all"]["value"])
+            exp_int4[group] = df
+
+        fig, axis = plt.subplots(1)
+        sns.barplot(groups, exp_int4.T["value"], ax=axis)
+        fig.savefig(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.expression_ratio.direction_centric.mean_fold_change_in_regions.over_all_samples.svg" % trait),
+            bbox_inches='tight')
+
         # Filter out non-expressed genes across all samples
         d = exp_int[(exp_int['group'] == 'all') & (exp_int['direction'] == 'all')]
         expressed_genes = d[d["value"] >= 1]["ensembl_gene_id"]
@@ -3410,6 +3424,20 @@ def characterize_regions_expression(analysis, traits, extend=False):
         sns.barplot(groups, exp_int3.T["value"], ax=axis)
         fig.savefig(os.path.join(
             analysis.plots_dir, "cll.%s-specific_regions.expression_ratio.direction_centric.expressed.mean_fold_change_in_regions.svg" % trait),
+            bbox_inches='tight')
+
+        # Get fold-change over the other regions within each group and over all samples
+        exp_int4 = pd.DataFrame()
+        groups = ["all", "uCLL", "iCLL", "mCLL"]
+        for group in groups:
+            df = pd.Series()
+            df["value"] = np.log2(exp_int3[group]["value"] / exp_int3["all"]["value"])
+            exp_int4[group] = df
+
+        fig, axis = plt.subplots(1)
+        sns.barplot(groups, exp_int4.T["value"], ax=axis)
+        fig.savefig(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.expression_ratio.direction_centric.expressed.mean_fold_change_in_regions.over_all_samples.svg" % trait),
             bbox_inches='tight')
 
 
