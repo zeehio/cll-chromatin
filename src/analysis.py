@@ -1189,6 +1189,8 @@ class Analysis(object):
         shown to have different methylation levels along B cell development
         (and IGHV status of CLL)
         """
+        from scipy.stats import pearsonr
+
         # IGHV dependent colors
         group_colors = samples_to_color(samples, "IGHV")
         homology_colors = samples_to_color(samples, "ighv_homology")
@@ -1222,9 +1224,11 @@ class Analysis(object):
         fig.savefig(os.path.join(self.plots_dir, "hypermethylated_regions.accessibility_rank.svg"), bbox_inches="tight")
 
         # plot mean uCLL vs mean mCLL
+        r, p = pearsonr(acc_meth["U-M"], acc_meth["M-U"])
         fig, axis = plt.subplots(2, figsize=(10, 15))
-        axis[0].scatter(acc_meth["U-M"], acc_meth["M-U"], color=group_colors)
-        axis[1].scatter(acc_meth["U-M"], acc_meth["M-U"], color=homology_colors)
+        axis[0].scatter(acc_meth["U-M"], acc_meth["M-U"], color=group_colors, label="r={}\np={}".format(r, p))
+        axis[1].scatter(acc_meth["U-M"], acc_meth["M-U"], color=homology_colors, label="r={}\np={}".format(r, p))
+        plt.legend()
         plt.colorbar(sm, orientation="horizontal", aspect=5.)
         axis[0].set_xlabel("Mean accessibility in uCLL hypermethylated regions")
         axis[0].set_ylabel("Mean accessibility in mCLL hypermethylated regions")
@@ -1590,6 +1594,16 @@ def normalize_quantiles_r(array):
     return np.array(normq(array))
 
 
+def normalize_variation_r(array):
+    import rpy2.robjects as robjects
+    import rpy2.robjects.numpy2ri
+    rpy2.robjects.numpy2ri.activate()
+
+    robjects.r('require("limma")')
+    normq = robjects.r('normalizeVSN')
+    return np.array(normq(array + 1))
+
+
 def name_to_repr(name):
     return "_".join([name.split("_")[0]] + [name.split("_")[2]] + name.split("_")[3:4])
 
@@ -1676,7 +1690,6 @@ def samples_to_color(samples, trait="IGHV"):
 def all_sample_colors(samples, order=""):
     return [
         samples_to_color(samples, "patient"),
-        samples_to_color(samples, "clinical_centre"),
         samples_to_color(samples, "gender"),
         samples_to_color(samples, "disease"),
         samples_to_color(samples, "IGHV"),
@@ -1851,7 +1864,6 @@ def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
 
     dataframe_file = os.path.join(
         analysis.data_dir,
-        "trait_specific",
         "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
     if os.path.exists(dataframe_file) and not rerun:  # Load up
         dataframe = pd.read_csv(dataframe_file, sep="\t")
@@ -1989,7 +2001,7 @@ def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
         dataframe[["chrom", "start", "end"]].to_csv(bed_file, sep="\t", header=False, index=False)
 
         # sample correlation dendrogram
-        sns.clustermap(
+        dend = sns.clustermap(
             x.corr(),
             col_colors=all_samples_colors,  # all_sample_colors(all_samples),
             row_colors=all_samples_colors)
@@ -1998,19 +2010,35 @@ def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
             "cll_peaks.%s_significant.classification.random_forest.loocv.clustering_sites.sample_correlation.svg" % trait), bbox_inches="tight")
         plt.close("all")
 
+        # extract linkage matrix
+        from scipy.cluster.hierarchy import fcluster
+        lm = dend.dendrogram_col.linkage
+
+        mclust = 4  # this is determined with supervision
+        clusters = fcluster(lm, mclust, criterion='maxclust')
+        col_dict = dict(zip(np.unique(clusters), sns.color_palette("colorblind")[1:mclust + 1]))
+        # get colors according to cluster
+        cluster_colors = [col_dict[c] for c in clusters]
+
+        # save sample assignment
+        assignments = pd.DataFrame([[s.name for s in all_samples], list(clusters)]).T
+        assignments.columns = ["sample", "cluster"]
+        assignments.to_csv(os.path.join(
+            analysis.data_dir, "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_assignments.csv" % trait), index=False)
+
         # pca on these regions
-        pca_r(x, all_samples_colors, os.path.join(
+        pca_r(x, cluster_colors, os.path.join(
             analysis.plots_dir,
             "cll_peaks.%s_significant.classification.random_forest.loocv.pca.sample_labels.svg" % trait))
 
-        # colors of the direction each region is associated to
+        # region-sample heatmap with colors of the direction each region is associated to
         region_colors = dict(zip([1, -1], sns.color_palette("colorblind")[1:3]))
         colors = [region_colors[c] for c in dataframe['direction']]
         sns.clustermap(
             x,
             cmap=cmap,
             standard_scale=0,
-            col_colors=all_samples_colors,
+            col_colors=cluster_colors,
             row_colors=colors,
             yticklabels=False)
         plt.savefig(os.path.join(
@@ -2153,7 +2181,6 @@ def unsupervised(analysis, samples):
     from sklearn.decomposition import PCA
 
     # Approach 1: all regions
-    X = pd.DataFrame(normalize(analysis.coverage_qnorm_annotated[[s.name for s in samples]]))
     X = analysis.coverage_qnorm_annotated[[s.name for s in samples]]
 
     pca = PCA()
@@ -2164,10 +2191,12 @@ def unsupervised(analysis, samples):
 
     # plot % explained variance per PC
     fig, axis = plt.subplots(1)
-    axis.plot(range(1, len(pca.explained_variance_) + 1), pca.explained_variance_, 'o-')
+    axis.plot(
+        range(1, len(pca.explained_variance_) + 1),  # all PCs
+        (pca.explained_variance_ / pca.explained_variance_.sum()) * 100, 'o-')  # % of total variance
     axis.set_xlabel("PC")
     axis.set_ylabel("% variance")
-    fig.savefig(os.path.join(""), bbox_inches='tight')
+    fig.savefig(os.path.join(analysis.plots_dir, "cll_peaks.all_sites.pca.explained_variance.svg"), bbox_inches='tight')
 
     # plot PCA
     # with samples colored for all traits
@@ -2178,28 +2207,14 @@ def unsupervised(analysis, samples):
     traits = [
         "patient", "gender", "disease", "IGHV", "ighv_homology"]
 
-    for pc in [0, 1, 2, 3]:
-        fig, axis = plt.subplots(3, 5, figsize=(15, 12))
+    for pc in [0, 1, 2, 3, 4, 5]:
+        fig, axis = plt.subplots(5, figsize=(3, 12))
         axis = axis.flatten()
         for i in range(len(traits)):
             for j in range(len(xx)):
                 axis[i].scatter(xx.ix[j][pc], xx.ix[j][pc + 1], s=50, color=all_colors[i][j], marker=sample_symbols[j])
             axis[i].set_title(traits[i])
-        fig.savefig(os.path.join("results", "cll_peaks.all_sites.pca.pc%i_vs_pc%i.svg" % (pc + 1, pc + 2)))
-
-    # only with bournemouth samples
-    b = [i for i, s in enumerate(samples) if s.clinical_centre == "bournemouth"]
-    for pc in [0, 1, 2, 3]:
-        fig, axis = plt.subplots(3, 5, figsize=(15, 12))
-        axis = axis.flatten()
-        for i in range(len(traits)):
-            for j in range(len(xx)):
-                axis[i].scatter(xx.ix[j][pc], xx.ix[j][pc + 1], s=50, color=all_colors[i][j], marker=sample_symbols[j])
-            axis[i].set_title(traits[i])
-        fig.savefig(os.path.join("results", "cll_peaks.bournemouth.all_sites.pca.pc%i_vs_pc%i.svg" % (pc + 1, pc + 2)))
-
-    # Approach 2: most variable regions
-    analysis.coverage_qnorm_annotated
+        fig.savefig(os.path.join(analysis.plots_dir, "cll_peaks.all_sites.pca.pc%i_vs_pc%i.svg" % (pc + 1, pc + 2)), bbox_inches="tight")
 
 
 def state_enrichment_overlap(n=100):
@@ -2864,6 +2879,31 @@ def trait_analysis(analysis, samples, traits):
         classification_random(analysis, sel_samples, labels, trait, n=100)
 
 
+def join_trait_specific_regions(analysis, traits):
+    # Put trait-specific chromatin regions in one matrix
+    features = pd.DataFrame()
+    for trait in traits:
+        file_name = os.path.join(
+            analysis.data_dir,
+            "cll_peaks.%s_significant.classification.random_forest.loocv.dataframe.csv" % trait)
+        try:
+            df = pd.read_csv(file_name)
+            # assert df.shape == df.dropna().shape  # check there are no nans - in fact there can be (e.g. gene_name column)
+            df['trait'] = trait
+
+            df = pd.merge(
+                df[["chrom", "start", "end", "change", "direction", "importance", "trait"]],
+                analysis.coverage_qnorm_annotated,
+                on=["chrom", "start", "end"])
+
+            features = features.append(df, ignore_index=True)
+        except IOError:
+            print("Trait %s did not generate any associated regions" % trait)
+
+    # # Save whole dataframe as csv
+    features.to_csv(os.path.join(analysis.data_dir, "cll.trait-specific_regions.csv"), index=False)
+
+
 def characterize_regions_chromatin(analysis, traits, extend=False):
     """
     For each trait-associated region, get ratios of active/repressed and poised/repressed chromatin,
@@ -2993,7 +3033,6 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
     # save dataframe with intensities/ratios of chromatin marks per peak
     features.to_csv(os.path.join(
         analysis.data_dir,
-        "trait_specific",
         "cll.trait-specific_regions.%shistone_intensities_ratios.csv" % ("extended." if extend else "")), index=False)
 
     # extend = True
@@ -3015,7 +3054,7 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
         # color samples according to mutation status
         palette = sns.color_palette("colorblind")
         trait_colors = {True: palette[1], False: palette[2]}
-        sample_colors = [trait_colors[s.ighv_mutation_status] if s.ighv_mutation_status is not pd.np.nan else "gray" for s in samples]
+        sample_colors = [trait_colors[s.ighv_mutation_status] if not pd.isnull(s.ighv_mutation_status) else "gray" for s in samples]
 
         # colormap for heatmap values
         cmap = sns.cubehelix_palette(8, start=.5, rot=-.75, as_cmap=True)
@@ -3059,6 +3098,20 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
         plt.savefig(os.path.join(analysis.plots_dir, "%s_histones.%sordered_group.zscore_rows.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
 
+        chrom_specfic = chrom[chrom.columns[~chrom.columns.str.contains("all")]]
+
+        # Z-scored, order columns by histone mark
+        chrom_specfic = chrom_specfic[sorted(chrom_specfic.columns.tolist(), key=lambda x: x.split("_")[2])]
+        sns.heatmap(chrom_specfic.apply(lambda x: (x - x.mean()) / x.std(), axis=0), yticklabels=False)
+        plt.savefig(os.path.join(analysis.plots_dir, "%s_histones.%sordered_mark.specific.zscore_rows.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
+        plt.close("all")
+
+        # Z-scored, order columns by group
+        chrom_specfic = chrom_specfic[sorted(chrom_specfic.columns.tolist(), key=lambda x: (x.split("_")[0], x.split("_")[2]))]
+        sns.heatmap(chrom_specfic.apply(lambda x: (x - x.mean()) / x.std(), axis=0), yticklabels=False)
+        plt.savefig(os.path.join(analysis.plots_dir, "%s_histones.%sordered_group.specific.zscore_rows.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
+        plt.close("all")
+
     # Plot values
     # subset data and melt dataframe for ploting
     features_slim = pd.melt(
@@ -3076,7 +3129,7 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
     features_slim["mark"] = features_slim["mark_type"].apply(lambda x: x.split("_")[2])
 
     # traits as columns, group by positively- and negatively-associated regions
-    for trait in ["IGHV", "CD38", "ZAP70"]:
+    for trait in ["IGHV"]:
         p = features_slim[features_slim['trait'] == trait].dropna()
 
         g = sns.FacetGrid(p, col="group", row="direction", legend_out=True, row_order=[-1, 1], margin_titles=True)
@@ -3116,7 +3169,7 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
     features_slim["type"] = features_slim["ratio_type"].apply(lambda x: x.split("_")[2])
 
     # traits as columns, group by positively- and negatively-associated regions
-    for trait in ["IGHV", "CD38", "ZAP70"]:
+    for trait in ["IGHV"]:
         p = features_slim[features_slim['trait'] == trait].dropna()
 
         g = sns.FacetGrid(p, col="group", row="direction", legend_out=True)
@@ -3138,6 +3191,225 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
         sns.despine()
         plt.savefig(os.path.join(
             analysis.plots_dir, "cll.%s-specific_regions.chromatin_ratios.%sgroup_centric.svg" % (trait, "extended." if extend else "")),
+            bbox_inches='tight')
+
+
+def characterize_regions_expression(analysis, traits, extend=False):
+    """
+    For each trait-associated region, get of genes in those regions,
+    across all patients or groups of patients with same IGHV mutation status.
+
+    Visualize dependent on the positive- or negative-association of regions with
+    accessibility signal.
+    """
+    import itertools
+
+    def get_mean_expression(df, group):
+        """
+        Get mean expression of genes across a subset of samples (uCLL or mCLL).
+        """
+        samples = [s for s in analysis.samples if s.library == "RNA-seq"]
+        # subset samples according to requested group (all, uCLL, iCLL or mCLL)
+        if group == "all":
+            g = samples
+        else:
+            g = [s for s in samples if s.ighv_group == group]
+        # mean of that mark across the subset of samples
+        return pd.DataFrame(df[[s.name for s in g]].mean(axis=1), columns=["value"]).reset_index()
+
+    def calculate_fold_change(df, group1, group2):
+        """
+        Get mean fold-change of gene expression in two groups of samples.
+        """
+        samples = [s for s in analysis.samples if s.library == "RNA-seq"]
+        # subset samples according to requested group (all, uCLL, iCLL or mCLL)
+        if group1 == "all":
+            u = samples
+        else:
+            u = [s for s in samples if s.ighv_group == group1]
+        if group2 == "all":
+            m = samples
+        else:
+            m = [s for s in samples if s.ighv_group == group2]
+
+        # get ratio of the requested histone marks
+        u_s = df[[s.name for s in u]]
+        m_s = df[[s.name for s in m]]
+        return pd.DataFrame(np.log2(((1 + u_s.mean(1)) / (1 + m_s.mean(1)))), columns=["value"]).reset_index()
+
+    # read in trait-specific regions
+    features = pd.read_csv(os.path.join(analysis.data_dir, "cll.trait-specific_regions.csv"))
+    # Get ensembl_gene ids mapping
+    features = pd.merge(
+        features,
+        analysis.gene_annotation, on=["chrom", "start", "end"])
+
+    # Get gene expression matrix
+    expression_genes = pd.read_csv(os.path.join(analysis.data_dir, "cll_expression_matrix.log2.csv")).set_index("ensembl_gene_id")
+
+    # Quantile normalization
+    to_norm = expression_genes[[s.name for s in analysis.samples if s.library == "RNA-seq"]]
+    expression_genes_qnorm = pd.DataFrame(
+        normalize_quantiles_r(np.array(to_norm)),
+        index=to_norm.index,
+        columns=to_norm.columns
+    )
+
+    # Get expression intensities and ratios on each group of trait-specific regions
+    for trait in traits:
+        # subset trait
+        feature_specific = features[features["trait"] == trait]
+
+        # get intensity of gene expression
+        exp_int = pd.DataFrame()
+        groups = ["all", "uCLL", "iCLL", "mCLL"]
+        # across all patients
+        for group in groups:
+            for direction in ["all", 1, -1]:
+                # Get genes within regions of trait, direction-specific
+                if direction == "all":
+                    index = feature_specific["ensembl_gene_id"].dropna().drop_duplicates()
+                else:
+                    index = feature_specific[feature_specific["direction"] == direction]["ensembl_gene_id"].dropna().drop_duplicates()
+                expression_genes_regions = expression_genes_qnorm.ix[index]
+                df = get_mean_expression(expression_genes_regions, group)
+                df["kind"] = "intensity"
+                df["group"] = group
+                df["direction"] = direction
+                exp_int = exp_int.append(df, ignore_index=True)
+
+        # compute ratios of gene expression
+        exp_ratio = pd.DataFrame()
+        groups = ["all", "uCLL", "iCLL", "mCLL"]
+        for group1, group2 in itertools.permutations(groups, 2):
+            for direction in ["all", 1, -1]:
+                # Get genes within regions of trait, direction-specific
+                if direction == "all":
+                    index = feature_specific["ensembl_gene_id"].dropna().drop_duplicates()
+                else:
+                    index = feature_specific[feature_specific["direction"] == direction]["ensembl_gene_id"].dropna().drop_duplicates()
+                expression_genes_regions = expression_genes_qnorm.ix[index]
+                df = calculate_fold_change(expression_genes_regions, group1, group2)
+                df["kind"] = "ratio"
+                df["group"] = "{}_{}".format(group1, group2)
+                df["direction"] = direction
+                exp_ratio = exp_ratio.append(df, ignore_index=True)
+
+        # save dataframe with intensities/ratios of chromatin marks per peak
+        pd.concat([exp_int, exp_ratio]).to_csv(os.path.join(
+            analysis.data_dir,
+            "cll.trait-specific_regions.%s.expression_intensities_ratios.csv" % trait), index=False)
+
+        g = sns.FacetGrid(exp_int, col="direction", col_wrap=3, legend_out=True, col_order=["all", -1, 1], margin_titles=True)
+        g.map(sns.violinplot, "group", "value", split=True)
+        sns.despine()
+        plt.savefig(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.expression_intensity.group_centric.svg" % trait),
+            bbox_inches='tight')
+
+        g = sns.FacetGrid(exp_int, col="group", col_wrap=3, legend_out=True, margin_titles=True)
+        g.map(sns.violinplot, "direction", "value", split=True, order=["all", -1, 1])
+        sns.despine()
+        plt.savefig(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.expression_intensity.direction_centric.svg" % trait),
+            bbox_inches='tight')
+
+        g = sns.FacetGrid(exp_ratio, col="direction", col_wrap=3, legend_out=True, col_order=["all", -1, 1], margin_titles=True)
+        g.map(sns.violinplot, "group", "value", split=True)
+        sns.despine()
+        plt.savefig(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.expression_ratio.group_centric.svg" % trait),
+            bbox_inches='tight')
+
+        g = sns.FacetGrid(exp_ratio, col="group", col_wrap=3, legend_out=True, margin_titles=True)
+        g.map(sns.violinplot, "direction", "value", split=True, order=["all", -1, 1])
+        sns.despine()
+        plt.savefig(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.expression_ratio.direction_centric.svg" % trait),
+            bbox_inches='tight')
+
+        # Filter out non-expressed genes across all samples
+        d = exp_int[(exp_int['group'] == 'all') & (exp_int['direction'] == 'all')]
+        expressed_genes = d[d["value"] >= 1]["ensembl_gene_id"]
+
+        # new dataframes
+        exp_int2 = exp_int[exp_int["ensembl_gene_id"].isin(expressed_genes)]
+        exp_ratio2 = exp_ratio[exp_ratio["ensembl_gene_id"].isin(expressed_genes)]
+
+        g = sns.FacetGrid(exp_int2, col="direction", col_wrap=3, legend_out=True, col_order=["all", -1, 1], margin_titles=True)
+        g.map(sns.violinplot, "group", "value", split=True)
+        sns.despine()
+        plt.savefig(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.expression_intensity.group_centric.expressed.svg" % trait),
+            bbox_inches='tight')
+
+        g = sns.FacetGrid(exp_int2, col="group", col_wrap=3, legend_out=True, margin_titles=True)
+        g.map(sns.violinplot, "direction", "value", split=True, order=["all", -1, 1])
+        sns.despine()
+        plt.savefig(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.expression_intensity.direction_centric.expressed.svg" % trait),
+            bbox_inches='tight')
+
+        g = sns.FacetGrid(exp_ratio2, col="direction", col_wrap=3, legend_out=True, col_order=["all", -1, 1], margin_titles=True)
+        g.map(sns.violinplot, "group", "value", split=True)
+        sns.despine()
+        plt.savefig(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.expression_ratio.group_centric.expressed.svg" % trait),
+            bbox_inches='tight')
+
+        g = sns.FacetGrid(exp_ratio2, col="group", col_wrap=3, legend_out=True, margin_titles=True)
+        g.map(sns.violinplot, "direction", "value", split=True, order=["all", -1, 1])
+        sns.despine()
+        plt.savefig(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.expression_ratio.direction_centric.expressed.svg" % trait),
+            bbox_inches='tight')
+
+        # Get fold-change over the other regions within each group
+        exp_int3 = pd.DataFrame()
+        groups = ["all", "uCLL", "iCLL", "mCLL"]
+        for group in groups:
+            df = pd.Series()
+            a = exp_int[
+                (exp_int["group"] == group) &
+                (exp_int["direction"] == 1)]["value"].mean()
+            b = exp_int[
+                (exp_int["group"] == group) &
+                (exp_int["direction"] == -1)]["value"].mean()
+            df["value"] = np.log2(a / b)
+            df["direction"] = 1
+            exp_int3[group] = df
+
+        fig, axis = plt.subplots(1)
+        sns.barplot(groups, exp_int3.T["value"], ax=axis)
+        fig.savefig(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.expression_ratio.direction_centric.mean_fold_change_in_regions.svg" % trait),
+            bbox_inches='tight')
+
+        # Filter out non-expressed genes across all samples
+        d = exp_int[(exp_int['group'] == 'all') & (exp_int['direction'] == 'all')]
+        expressed_genes = d[d["value"] >= 1]["ensembl_gene_id"]
+        exp_int2 = exp_int[exp_int["ensembl_gene_id"].isin(expressed_genes)]
+
+        # Get fold-change over the other regions within each group
+        exp_int3 = pd.DataFrame()
+        groups = ["all", "uCLL", "iCLL", "mCLL"]
+        for group in groups:
+            df = pd.Series()
+            a = exp_int2[
+                (exp_int2["group"] == group) &
+                (exp_int2["direction"] == 1)]["value"].mean()
+            b = exp_int2[
+                (exp_int2["group"] == group) &
+                (exp_int2["direction"] == -1)]["value"].mean()
+            df["value"] = np.log2(a / b)
+            df["kind"] = "intensity"
+            df["group"] = group
+            exp_int3[group] = df
+
+        fig, axis = plt.subplots(1)
+        sns.barplot(groups, exp_int3.T["value"], ax=axis)
+        fig.savefig(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.expression_ratio.direction_centric.expressed.mean_fold_change_in_regions.svg" % trait),
             bbox_inches='tight')
 
 
@@ -3175,6 +3447,7 @@ def main():
     atac_seq_samples = [sample for sample in analysis.samples if sample.library == "ATAC-seq"]
     chipmentation_samples = [sample for sample in analysis.samples if sample.library == "ChIPmentation"]
     chromatin_samples = [sample for sample in analysis.samples if sample.library in ["ATAC-seq", "ChIPmentation"]]
+    rna_samples = [sample for sample in analysis.samples if sample.library == "RNA-seq"]
 
     # GET CONSENSUS PEAK SET, ANNOTATE IT, PLOT FEATURES
     if args.generate:
@@ -3232,6 +3505,7 @@ def main():
     analysis.plot_qv2_fit()
     # Correlate with expression
     analysis.correlate_expression()
+    analysis.correlate_methylation(atac_seq_samples)
 
     # INTER-PATIENT VARIATION (Figure 2)
     # cross-cohort variation at gene level
@@ -3246,6 +3520,8 @@ def main():
     # TRAIT-SPECIFIC ANALYSIS (Figure 3)
     traits = ["IGHV"]
     trait_analysis(analysis, atac_seq_samples, traits)
+
+    join_trait_specific_regions(analysis, traits)
 
     # characterize trait-specific regions
     # structurally, functionaly and in light of histone marks
