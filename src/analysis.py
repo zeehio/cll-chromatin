@@ -986,6 +986,9 @@ class Analysis(object):
         # get gene-level quantification by having transcript with highest value
         expression_genes = expression.groupby("ensembl_gene_id").apply(max)
 
+        # save raw counts
+        expression_genes.to_csv(os.path.join(self.data_dir, "cll_expression_matrix.csv"))
+
         # log expression
         expression_genes = np.log2(expression_genes.drop(["ensembl_gene_id", "ensembl_transcript_id"], axis=1))
 
@@ -994,7 +997,7 @@ class Analysis(object):
 
         # save expression matrix
         expression_genes.to_csv(os.path.join(self.data_dir, "cll_expression_matrix.log2.csv"))
-        expression_genes = pd.read_csv(os.path.join(self.data_dir, "cll_expression_matrix.log2.csv")).set_index("ensembl_gene_id")
+        # expression_genes = pd.read_csv(os.path.join(self.data_dir, "cll_expression_matrix.log2.csv")).set_index("ensembl_gene_id")
 
         # Explore expression
         fig, axis = plt.subplots(1)
@@ -1141,6 +1144,73 @@ class Analysis(object):
         axis[1].set_ylabel("correlation p-value (-log10)")
         axis[1].set_xlabel("distance to TSS (kb)")
         fig.savefig(os.path.join(self.plots_dir, "expression_oppenness_correlation.patient_matched.expressed_genes.correlation_distance.svg"), bbox_inches="tight")
+
+        """
+        IGHV differential expression relation to accessibility.
+        """
+        from scipy.stats import pearsonr
+
+        samples = [sample for sample in self.samples if sample.library == "ATAC-seq"]
+
+        # IGHV dependent colors
+        group_colors = samples_to_color(samples, "IGHV")
+        homology_colors = samples_to_color(samples, "ighv_homology")
+        # colorbar
+        cmap = plt.get_cmap('summer')
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=86, vmax=100))
+        sm._A = []
+
+        # set genes as index
+        matched = matched.set_index("ensembl_gene_id")
+        openness = self.coverage_qnorm_annotated[self.coverage_qnorm_annotated["chrom"].str.contains("chr[^X|Y]")]
+        # get closest gene info with ensembl ids
+        g = pd.read_csv(os.path.join(self.data_dir, "cll_peaks.gene_annotation.csv"))
+        openness = pd.merge(openness, g)
+
+        group = "{}_{}".format("uCLL", "mCLL")
+        # Get differentially expressed genes
+        diff_expr = pd.read_csv(os.path.join(self.data_dir, "gene_expression.differential.{}-{}_results.degs.csv".format("uCLL", "mCLL")), index_col=0)
+
+        # # Separate genes in up/down regulated
+        up = diff_expr[diff_expr["log2FoldChange"] > 0]
+        down = diff_expr[diff_expr["log2FoldChange"] < 0]
+        # Get genes of each group
+        up = openness[openness["ensembl_gene_id"].isin(up.index)]
+        down = openness[openness["ensembl_gene_id"].isin(down.index)]
+        # Get samples of each group
+        up = up[[s.name for s in samples]].mean()
+        down = down[[s.name for s in samples]].mean()
+
+        # plot mean vs rank
+        fig, axis = plt.subplots(2, 2, figsize=(10, 8))
+        # Plot Rank vs mean
+        axis[0][0].scatter(up.rank(ascending=False), up, label=group, color=group_colors)
+        axis[0][1].scatter(up.rank(ascending=False), up, label=group, color=homology_colors)
+        axis[1][0].scatter(down.rank(ascending=False), down, label=group, color=group_colors)
+        axis[1][1].scatter(down.rank(ascending=False), down, label=group, color=homology_colors)
+        plt.legend()
+        axis[0][0].set_ylabel("Mean accessibility")
+        axis[1][0].set_ylabel("Mean accessibility")
+        axis[0][0].set_title("uCLL differential regions")
+        axis[0][1].set_title("mCLL differential regions")
+        axis[1][0].set_xlabel("Sample rank in mean accessibility")
+        axis[1][1].set_xlabel("Sample rank in mean accessibility")
+        fig.savefig(os.path.join(self.plots_dir, "gene_expression.differential_regions.accessibility_rank.svg"), bbox_inches="tight")
+
+        # plot mean uCLL vs mean mCLL
+        fig2, axis2 = plt.subplots(2, 1, figsize=(10, 8))
+        r, p = pearsonr(up, down)
+        # sns.regplot(up, down, scatter=False, fit_reg=True, ax=axis2[0])
+        # sns.regplot(up, down, scatter=False, fit_reg=True, ax=axis2[1])
+        axis2[0].scatter(up, down, label="r={}\np={}".format(r, p), color=group_colors)
+        axis2[1].scatter(up, down, label="r={}\np={}".format(r, p), color=homology_colors)
+        plt.legend()
+        plt.colorbar(sm, orientation="horizontal", aspect=5.)
+        axis2[0].set_xlabel("Mean accessibility in uCLL differential regions")
+        axis2[0].set_ylabel("Mean accessibility in mCLL differential regions")
+        axis2[1].set_xlabel("Mean accessibility in uCLL differential regions")
+        axis2[1].set_ylabel("Mean accessibility in mCLL differential regions")
+        fig2.savefig(os.path.join(self.plots_dir, "gene_expression.differential_regions.accessibility.svg"), bbox_inches="tight")
 
     def correlate_expression_spanish_cohort(self):
         # get expression
@@ -3019,14 +3089,16 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
         # features_extended = pd.concat([to_append, n], axis=1)
 
     # get intensity of chromatin marks
+    groups = ["all", "uCLL", "iCLL", "mCLL"]
+    marks = ["H3K27ac", "H3K4me1", "H3K27me3"]
     # across all patients
-    for group in ["all", "uCLL", "iCLL", "mCLL"]:
+    for group in groups:
         for mark in ["H3K27ac", "H3K4me1", "H3K27me3"]:
             features["%s_intensity_%s" % (group, mark)] = get_intensities(features, group, mark)
 
     # compute ratios of chromatin marks
     # across all patients and for each each IGHV class
-    for group in ["all", "uCLL", "iCLL", "mCLL"]:
+    for group in marks:
         for ratio in ["A:R", "P:R"]:
             features["%s_ratio_%s" % (group, ratio)] = calculate_ratio(features, group, ratio)
 
@@ -3075,25 +3147,25 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
         chrom = chrom.ix[order]
 
         # order columns by histone mark
-        chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: x.split("_")[2])]
+        chrom = chrom[["_".join([g, "intensity", mark]) for mark in marks for g in groups]]
         sns.heatmap(chrom, yticklabels=False)
         plt.savefig(os.path.join(analysis.plots_dir, "%s_histones.%sordered_mark.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
 
         # order columns by group
-        chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: (x.split("_")[0], x.split("_")[2]))]
+        chrom = chrom[["_".join([g, "intensity", mark]) for g in groups for mark in marks]]
         sns.heatmap(chrom, yticklabels=False)
         plt.savefig(os.path.join(analysis.plots_dir, "%s_histones.%sordered_group.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
 
         # Z-scored, order columns by histone mark
-        chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: x.split("_")[2])]
+        chrom = chrom[["_".join([g, "intensity", mark]) for mark in marks for g in groups]]
         sns.heatmap(chrom.apply(lambda x: (x - x.mean()) / x.std(), axis=0), yticklabels=False)
         plt.savefig(os.path.join(analysis.plots_dir, "%s_histones.%sordered_mark.zscore_rows.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
 
         # Z-scored, order columns by group
-        chrom = chrom[sorted(chrom.columns.tolist(), key=lambda x: (x.split("_")[0], x.split("_")[2]))]
+        chrom = chrom[["_".join([g, "intensity", mark]) for g in groups for mark in marks]]
         sns.heatmap(chrom.apply(lambda x: (x - x.mean()) / x.std(), axis=0), yticklabels=False)
         plt.savefig(os.path.join(analysis.plots_dir, "%s_histones.%sordered_group.zscore_rows.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
@@ -3101,16 +3173,26 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
         chrom_specfic = chrom[chrom.columns[~chrom.columns.str.contains("all")]]
 
         # Z-scored, order columns by histone mark
-        chrom_specfic = chrom_specfic[sorted(chrom_specfic.columns.tolist(), key=lambda x: x.split("_")[2])]
+        chrom_specfic = chrom_specfic[["_".join([g, "intensity", mark]) for mark in marks for g in groups]]
         sns.heatmap(chrom_specfic.apply(lambda x: (x - x.mean()) / x.std(), axis=0), yticklabels=False)
         plt.savefig(os.path.join(analysis.plots_dir, "%s_histones.%sordered_mark.specific.zscore_rows.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
 
         # Z-scored, order columns by group
-        chrom_specfic = chrom_specfic[sorted(chrom_specfic.columns.tolist(), key=lambda x: (x.split("_")[0], x.split("_")[2]))]
+        chrom_specfic = chrom_specfic[["_".join([g, "intensity", mark]) for g in groups for mark in marks]]
         sns.heatmap(chrom_specfic.apply(lambda x: (x - x.mean()) / x.std(), axis=0), yticklabels=False)
         plt.savefig(os.path.join(analysis.plots_dir, "%s_histones.%sordered_group.specific.zscore_rows.svg" % (trait, "extended." if extend else "")), bbox_inches="tight")
         plt.close("all")
+
+        # Z score separately each mark
+        for mark in ["H3K27ac", "H3K4me1", "H3K27me3"]:
+            df = chrom_specfic[chrom_specfic.columns[chrom_specfic.columns.str.contains(mark)]]
+
+            # Z-scored, order columns by histone mark
+            df = df[["_".join([g, "intensity", mark]) for g in ["uCLL", "iCLL", "mCLL"]]]
+            sns.heatmap(df.apply(lambda x: (x - x.mean()) / x.std(), axis=0), yticklabels=False)
+            plt.savefig(os.path.join(analysis.plots_dir, "%s_histones.%sordered_mark.specific.zscore_rows.%s_only.separate.svg" % (trait, "extended." if extend else "", mark)), bbox_inches="tight")
+            plt.close("all")
 
     # Plot values
     # subset data and melt dataframe for ploting
