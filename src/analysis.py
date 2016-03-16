@@ -218,12 +218,104 @@ class Analysis(object):
         support = support.to_dataframe()
         support = support.reset_index()
         support.columns = ["chrom", "start", "end"] + [sample.name for sample in samples]
+        support.to_csv(os.path.join(self.data_dir, "cll_peaks.binary_overlap_support.csv"), index=False)
+
+        # get % of total consensus regions found per sample
+        m = pd.melt(support, ["chrom", "start", "end"], var_name="sample_name")
+        # groupby
+        n = m.groupby("sample_name").apply(lambda x: len(x[x["value"] == 1]))
+
         # divide sum (of unique overlaps) by total to get support value between 0 and 1
         support["support"] = support[range(len(samples))].apply(lambda x: sum([i if i <= 1 else 1 for i in x]) / float(len(self.samples)), axis=1)
         # save
         support.to_csv(os.path.join(self.data_dir, "cll_peaks.support.csv"), index=False)
 
         self.support = support
+
+    def calculate_pairwise_peak_support(self, samples):
+        import itertools
+        samples = [s for s in self.samples if s.library == "ATAC-seq" and s.cell_line == "CLL"]
+        # calculate support (number of samples overlaping each merged peak)
+        sample_overlaps = pd.DataFrame()
+        for i, (sample1, sample2) in enumerate(itertools.combinations(samples, 2)):
+            if i % 100 == 1:
+                print i
+                # save
+                sample_overlaps.to_csv(os.path.join(self.data_dir, "cll_peaks.pairwise_sample_overlaps.csv"), index=False)
+
+            # intersect1
+            a = len(pybedtools.BedTool(sample1.peaks).intersect(pybedtools.BedTool(sample2.peaks))) / float(len(pybedtools.BedTool(sample1.peaks)))
+            # intersect2
+            b = len(pybedtools.BedTool(sample2.peaks).intersect(pybedtools.BedTool(sample1.peaks))) / float(len(pybedtools.BedTool(sample2.peaks)))
+            # get max of 2
+            sample_overlaps.loc[sample1.name, sample2.name] = max(a, b)
+            sample_overlaps.loc[sample2.name, sample1.name] = max(a, b)
+        # save
+        sample_overlaps = sample_overlaps.fillna(1.)
+        sample_overlaps.to_csv(os.path.join(self.data_dir, "cll_peaks.pairwise_sample_overlaps.csv"), index=False)
+
+        # plot
+        d = sample_overlaps.values.flatten()
+        fig, axis = plt.subplots(1)
+        sns.distplot(d[~(d == 1.0)], ax=axis)
+        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.pairwise_sample_overlaps.dist.svg"), bbox_inches="tight")
+
+        mask = np.zeros_like(sample_overlaps, dtype=np.bool)
+        mask[np.triu_indices_from(mask)] = True
+
+        sns.heatmap(sample_overlaps, mask=mask, cmap="summer_r")
+        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.pairwise_sample_overlaps.heatmap.svg"), bbox_inches="tight")
+        plt.close('all')
+
+        sns.clustermap(sample_overlaps, cmap="summer_r")
+        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.pairwise_sample_overlaps.clustermap.svg"), bbox_inches="tight")
+        plt.close('all')
+
+    def get_ranked_samples(self, samples):
+        sample_names = [s.name for s in self.samples if s.library == "ATAC-seq" and s.cell_line == "CLL"]
+        # get ranks
+        sample_ranks = self.coverage_qnorm_annotated[sample_names].rank(1)
+
+        # plot mean rank
+        fig, axis = plt.subplots(1)
+        d = sns.distplot(sample_ranks.mean())
+        d.axes.set_xlim(0, 88)
+        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.sample_ranks.mean.svg"), bbox_inches="tight")
+
+        # plot frequency of X percentile
+        fig, axis = plt.subplots(len(range(0, 100, 5)) / 5, 5, figsize=(20, 12))
+        axis = axis.flatten()
+        for i, X in enumerate(range(0, 100, 5)):
+            if X == 0:
+                X = 2.5
+            # convert % to rank
+            p = X * sample_ranks.shape[1] / 100.
+            # get fraction of times a sample is above that percentile
+            t = sample_ranks[sample_ranks <= p].count() / sample_ranks.shape[0]
+            d = sns.distplot(t, ax=axis[i])
+            # d.axes.set_xlim(0, 100)
+            axis[i].set_title("{} percentile".format(X))
+        fig.savefig(os.path.join(self.plots_dir, "cll_peaks.sample_ranks.percentiles.svg"), bbox_inches="tight")
+
+        # plot frequency of X percentile
+        df = pd.DataFrame()
+        for i, X in enumerate(range(0, 105, 5)):
+            if X == 0:
+                X = 2.5
+            # convert % to rank
+            p = X * sample_ranks.shape[1] / 100.
+            # get fraction of times a sample is above that percentile
+            df[X] = sample_ranks[sample_ranks <= p].count() / sample_ranks.shape[0]
+
+        sns.clustermap(df, col_cluster=False)
+        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.sample_ranks.percentile_heatmap.svg"), bbox_inches="tight")
+        plt.close('all')
+        sns.clustermap(df, standard_scale=1, col_cluster=False)
+        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.sample_ranks.percentile_heatmap.stdscore1.svg"), bbox_inches="tight")
+        plt.close('all')
+        sns.clustermap(df, standard_scale=0, col_cluster=False)
+        plt.savefig(os.path.join(self.plots_dir, "cll_peaks.sample_ranks.percentile_heatmap.stdscore0.svg"), bbox_inches="tight")
+        plt.close('all')
 
     def get_peak_gene_annotation(self):
         """
@@ -548,36 +640,52 @@ class Analysis(object):
 
         # random subset of genes
         n = 1000
-        r_p_values = list()
+        random_p_values = list()
         for i in range(n):
             r_p = promoters.ix[np.random.choice(promoters.index, len(cll_p), replace=False)]
-            # r_e = enhancers.ix[np.random.choice(enhancers.index, len(cll_e), replace=False)]
-            # plt.scatter(r_p["mean"], r_p["variance"], alpha=0.3)
-            r_p_values.append(ks_2samp(r_p['variance'], cll_p["variance"])[1])
+            random_p_values.append(ks_2samp(r_p['variance'], cll_p["variance"])[1])
 
         # Number of elements
         # random subset of genes with similar number of reg elements
         elements_per_gene = df.groupby("ensembl_gene_id").apply(len)
         cll_elements_per_gene = elements_per_gene.ix[cll_p["ensembl_gene_id"]]
 
-        fig, axis = plt.subplots(1)
-        sns.distplot(np.log2(1 + elements_per_gene), ax=axis, bins=100)
-        sns.distplot(np.log2(1 + cll_elements_per_gene), ax=axis, bins=20)
-        fig.savefig(os.path.join(self.plots_dir, "genes.number_of elements.log2.svg"), bbox_inches="tight")
-        # test
-        D, p = ks_2samp(elements_per_gene, cll_elements_per_gene)
-
         # now chose one gene with the same number of elements
         n = 1000
-        rm_p_values = list()
+        elements_p_values = list()
         for i in range(n):
             genes = list()
             for gene in cll_elements_per_gene:
-                genes.append(np.random.choice(elements_per_gene[elements_per_gene == gene].index, 1, replace=False)[0])
+                cond = (float(gene - 1) > elements_per_gene) & (elements_per_gene < float(gene + 1))
+                try:
+                    genes.append(np.random.choice(elements_per_gene[cond].index, 1, replace=False)[0])
+                except:
+                    continue
             rm_p = promoters[promoters["ensembl_gene_id"].str.contains("|".join(genes))]
-            rm_p_values.append(ks_2samp(rm_p['variance'], cll_p["variance"])[1])
+            elements_p_values.append(ks_2samp(rm_p['variance'], cll_p["variance"])[1])
 
         # random subset of genes with similar mean accessibility
+        mean_per_gene = df.groupby("ensembl_gene_id")["mean"].apply(np.mean)
+        cll_mean_per_gene = mean_per_gene.ix[cll_p["ensembl_gene_id"]]
+
+        # now chose one genes with the same mean accessibility of elements
+        n = 1000
+        access_p_values = list()
+        for i in range(n):
+            genes = list()
+            for gene in cll_mean_per_gene:
+                cond = (float(gene - 1) > mean_per_gene) & (mean_per_gene < float(gene + 1))
+                try:
+                    genes.append(np.random.choice(mean_per_gene[cond].index, 1, replace=False)[0])
+                except:
+                    continue
+            rm_p = promoters[promoters["ensembl_gene_id"].str.contains("|".join(genes))]
+            access_p_values.append(ks_2samp(rm_p['variance'], cll_p["variance"])[1])
+
+        data = pd.DataFrame([-np.log10(random_p_values), -np.log10(elements_p_values), -np.log10(access_p_values)], index=["random", "elements", "access"]).T
+        fig, axis = plt.subplots(1)
+        sns.boxplot("variable", "value", data=pd.melt(data), ax=axis)
+        fig.savefig(os.path.join(self.plots_dir, "variance_difference.promoters.matched_variables.svg"))
 
         # housekeeping genes
         hk_genes = pd.read_csv(os.path.join("metadata", "gene_lists", "housekeeping_genes.tsv"), sep="\t")
@@ -1753,6 +1861,15 @@ def samples_to_color(samples, trait="IGHV"):
             else:
                 colors.append('gray')
         return colors
+    if trait in ["batch"]:
+        # get set of experiemnt batches
+        n = set([s.experiment_name.split("-")[0] for s in samples])
+        # get mapping of batch:color
+        cmap = dict(zip(n, sns.color_palette("cubehelix", len(n))))
+        colors = list()
+        for sample in samples:
+            colors.append(cmap[sample.experiment_name.split("-")[0]])
+        return colors
     else:
         raise ValueError("trait %s is not valid" % trait)
 
@@ -1763,7 +1880,8 @@ def all_sample_colors(samples, order=""):
         samples_to_color(samples, "gender"),
         samples_to_color(samples, "disease"),
         samples_to_color(samples, "IGHV"),
-        samples_to_color(samples, "ighv_homology")
+        samples_to_color(samples, "ighv_homology"),
+        samples_to_color(samples, "batch")
     ]
 
 
@@ -2275,16 +2393,21 @@ def unsupervised(analysis, samples):
 
     all_colors = all_sample_colors(samples)
     traits = [
-        "patient", "gender", "disease", "IGHV", "ighv_homology"]
+        "patient", "gender", "disease", "IGHV", "ighv_homology", "batch"]
 
-    for pc in [0, 1, 2, 3, 4, 5]:
-        fig, axis = plt.subplots(5, figsize=(3, 12))
+    for pc in range(6):
+        fig, axis = plt.subplots(len(traits), figsize=(3, 12))
         axis = axis.flatten()
         for i in range(len(traits)):
             for j in range(len(xx)):
                 axis[i].scatter(xx.ix[j][pc], xx.ix[j][pc + 1], s=50, color=all_colors[i][j], marker=sample_symbols[j])
             axis[i].set_title(traits[i])
         fig.savefig(os.path.join(analysis.plots_dir, "cll_peaks.all_sites.pca.pc%i_vs_pc%i.svg" % (pc + 1, pc + 2)), bbox_inches="tight")
+
+    # Nice one for main figure
+    fig, axis = plt.subplots(1, figsize=(12, 12))
+    axis.scatter(xx[0], xx[1], s=50, color=samples_to_color(samples, "IGHV"))
+    fig.savefig(os.path.join(analysis.plots_dir, "cll_peaks.all_sites.pca.pc1_vs_pc2.main.svg"), bbox_inches="tight")
 
 
 def state_enrichment_overlap(n=100):
@@ -3194,6 +3317,30 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
             plt.savefig(os.path.join(analysis.plots_dir, "%s_histones.%sordered_mark.specific.zscore_rows.%s_only.separate.svg" % (trait, "extended." if extend else "", mark)), bbox_inches="tight")
             plt.close("all")
 
+        # Showing each sample (not group-wise intensity or ratio)
+        histones = df[[s.name for s in analysis.samples if (s.library == "ChIPmentation")]]
+        histones = histones[histones.columns[~histones.columns.str.contains("IgG")]]
+        names = map(lambda x: "_".join(x.split("_")[2:5]), histones.columns.tolist())
+        cmap = plt.get_cmap('BrBG')
+
+        # clustered by histone data only
+        sns.clustermap(histones, cmap=cmap, xticklabels=names, yticklabels=False)
+        plt.savefig(os.path.join(analysis.plots_dir, "histones.%s.clustered.svg" % trait), bbox_inches="tight")
+        plt.close("all")
+        sns.clustermap(histones, cmap=cmap, standard_scale=0, xticklabels=names, yticklabels=False)
+        plt.savefig(os.path.join(analysis.plots_dir, "histones.%s.clustered.std0.svg" % trait), bbox_inches="tight")
+        plt.close("all")
+
+        # ordered by chromatin accessibility
+        order = dend.dendrogram_row.dendrogram['leaves']
+        histones = histones.ix[order]
+        sns.clustermap(histones, cmap=cmap, row_cluster=False, xticklabels=names, yticklabels=False)
+        plt.savefig(os.path.join(analysis.plots_dir, "histones.%s.ordered.svg" % trait), bbox_inches="tight")
+        plt.close("all")
+        sns.clustermap(histones, cmap=cmap, row_cluster=False, standard_scale=0, xticklabels=names, yticklabels=False)
+        plt.savefig(os.path.join(analysis.plots_dir, "histones.%s.ordered.std0.svg" % trait), bbox_inches="tight")
+        plt.close("all")
+
     # Plot values
     # subset data and melt dataframe for ploting
     features_slim = pd.melt(
@@ -3521,6 +3668,159 @@ def characterize_regions_expression(analysis, traits, extend=False):
         fig.savefig(os.path.join(
             analysis.plots_dir, "cll.%s-specific_regions.expression_ratio.direction_centric.expressed.mean_fold_change_in_regions.over_all_samples.svg" % trait),
             bbox_inches='tight')
+
+
+def characterize_TF_regulation_chromatin(analysis):
+    """
+    For each genes differentially regulated in the TF networks, get ratios of active/repressed and poised/repressed chromatin,
+    across all patients or groups of patients with same IGHV mutation status.
+
+    Visualize histone mark ratios dependent on the positive- or negative-association of differential regulation.
+    """
+    def get_intensities(df, subset, mark):
+        samples = [s for s in analysis.samples if s.library == "ChIPmentation"]
+        # subset samples according to requested group (all, uCLL, iCLL or mCLL)
+        if subset == "all":
+            samples = [s for s in samples if s.ighv_group is not pd.np.nan]
+        else:
+            samples = [s for s in samples if s.ighv_group == subset]
+
+        # mean of that mark across the subset of samples
+        return df[[s.name for s in samples if s.ip == mark]].mean(axis=1)
+
+    def calculate_ratio(df, subset, kind):
+        samples = [s for s in analysis.samples if s.library == "ChIPmentation"]
+        # subset samples according to requested group (all, uCLL, iCLL or mCLL)
+        if subset == "all":
+            samples = [s for s in samples if s.ighv_group is not pd.np.nan]
+        else:
+            samples = [s for s in samples if s.ighv_group == subset]
+
+        # get ratio of the requested histone marks
+        if kind == "A:R":
+            a = df[[s.name for s in samples if s.ip == "H3K27ac"]]
+            r = df[[s.name for s in samples if s.ip == "H3K27me3"]]
+        elif kind == "P:R":
+            a = df[[s.name for s in samples if s.ip == "H3K4me1"]]
+            r = df[[s.name for s in samples if s.ip == "H3K27me3"]]
+        return np.log2(((1 + a.values) / (1 + r.values))).mean(axis=1)
+
+    # read in list of differntially regulated genes at the network level
+    drgs = pd.read_csv(os.path.join("netwx", "merged-samples.TF-gene_interactions.IGHV_differential.csv"), header=None, names=["gene", "fold_change"])
+    drgs_up = drgs[drgs["fold_change"] > 2]["gene"]
+    drgs_down = drgs[drgs["fold_change"] < -2]["gene"]
+
+    # get chromatin regions of differentially regulated genes
+    features = analysis.coverage_qnorm_annotated
+    features_up = features[features["gene_name"].isin(drgs_up)]
+    features_down = features[features["gene_name"].isin(drgs_down)]
+
+    # get intensity of chromatin marks
+    groups = ["all", "uCLL", "iCLL", "mCLL"]
+    marks = ["H3K27ac", "H3K4me1", "H3K27me3"]
+    # across all patients
+    for group in groups:
+        for mark in marks:
+            features_up["%s_intensity_%s" % (group, mark)] = get_intensities(features_up, group, mark)
+            features_down["%s_intensity_%s" % (group, mark)] = get_intensities(features_down, group, mark)
+
+    # compute ratios of chromatin marks
+    # across all patients and for each each IGHV class
+    for group in groups:
+        for ratio in ["A:R", "P:R"]:
+            features_up["%s_ratio_%s" % (group, ratio)] = calculate_ratio(features_up, group, ratio)
+            features_down["%s_ratio_%s" % (group, ratio)] = calculate_ratio(features_down, group, ratio)
+
+    # save dataframe with intensities/ratios of chromatin marks per peak
+    features_up2 = features_up[features_up.columns[features_up.columns.str.contains("intensity|ratio")]]
+    features_up2["direction"] = "up"
+    features_down2 = features_down[features_down.columns[features_down.columns.str.contains("intensity|ratio")]]
+    features_down2["direction"] = "down"
+    # put together
+    features = pd.concat([features_up2, features_down2])
+    # save
+    features.to_csv(os.path.join(
+        analysis.data_dir,
+        "cll.differential_reg.histone_intensities_ratios.csv"), index=False)
+
+    # Plot values
+    # subset data and melt dataframe for ploting
+    features_slim = pd.melt(
+        features[
+            ["direction"] +
+            ["%s_intensity_H3K27ac" % group for group in ["uCLL", "iCLL", "mCLL"]] +
+            ["%s_intensity_H3K4me1" % group for group in ["uCLL", "iCLL", "mCLL"]] +
+            ["%s_intensity_H3K27me3" % group for group in ["uCLL", "iCLL", "mCLL"]]
+        ],
+        id_vars=["direction"],
+        var_name="mark_type",
+        value_name="intensity"
+    )
+    features_slim["group"] = features_slim["mark_type"].apply(lambda x: x.split("_")[0])
+    features_slim["mark"] = features_slim["mark_type"].apply(lambda x: x.split("_")[2])
+
+    # traits as columns, group by positively- and negatively-associated regions
+    p = features_slim
+
+    g = sns.FacetGrid(p, col="group", row="direction")
+    g.map(sns.violinplot, "mark", "intensity")
+    sns.despine()
+    plt.savefig(os.path.join(
+        analysis.plots_dir, "cll.differential_reg.chromatin_intensity.mark_centric.svg"),
+        bbox_inches='tight')
+
+    g = sns.FacetGrid(p, col="group", row="mark")
+    g.map(sns.violinplot, "direction", "intensity", order=["up", "down"])
+    sns.despine()
+    plt.savefig(os.path.join(
+        analysis.plots_dir, "cll.differential_reg.chromatin_intensity.direction_centric.svg"),
+        bbox_inches='tight')
+
+    g = sns.FacetGrid(p, row="mark", col="direction")
+    g.map(sns.violinplot, "group", "intensity", order=["uCLL", "iCLL", "mCLL"])
+    sns.despine()
+    plt.savefig(os.path.join(
+        analysis.plots_dir, "cll.differential_reg.chromatin_intensity.group_centric.svg"),
+        bbox_inches='tight')
+
+    # Plot ratios
+    # subset data and melt dataframe for ploting
+    features_slim = pd.melt(
+        features[
+            ["direction"] +
+            ["%s_ratio_A:R" % group for group in ["all", "uCLL", "iCLL", "mCLL"]] +
+            ["%s_ratio_P:R" % group for group in ["all", "uCLL", "iCLL", "mCLL"]]
+        ],
+        id_vars=["direction"],
+        var_name="ratio_type",
+        value_name="ratio"
+    )
+    features_slim["group"] = features_slim["ratio_type"].apply(lambda x: x.split("_")[0])
+    features_slim["type"] = features_slim["ratio_type"].apply(lambda x: x.split("_")[2])
+
+    # traits as columns, group by positively- and negatively-associated regions
+    p = features_slim
+
+    g = sns.FacetGrid(p, col="group", row="direction", legend_out=True)
+    g.map(sns.violinplot, "type", "ratio")
+    sns.despine()
+    plt.savefig(os.path.join(
+        analysis.plots_dir, "cll.differential_reg.chromatin_ratios.mark_centric.svg"),
+        bbox_inches='tight')
+
+    g = sns.FacetGrid(p, col="group", row="type", legend_out=True)
+    g.map(sns.violinplot, "direction", "ratio")
+    sns.despine()
+    plt.savefig(os.path.join(
+        analysis.plots_dir, "cll.differential_reg.chromatin_ratios.direction_centric.svg"),
+        bbox_inches='tight')
+
+    g = sns.FacetGrid(p, row="type", col="direction", legend_out=True, margin_titles=True)
+    g.map(sns.violinplot, "group", "ratio", order=["uCLL", "iCLL", "mCLL"])
+    sns.despine()
+    plt.savefig(os.path.join(
+        analysis.plots_dir, "cll.differential_reg.chromatin_ratios.group_centric.svg"),
+        bbox_inches='tight')
 
 
 def main():
