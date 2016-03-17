@@ -2786,6 +2786,29 @@ def characterize_regions(analysis, traits, nmin=100):
         sns.barplot(rel_counts[:, 0], rel_counts[:, 1].astype(float), ax=axis[1])
         fig.savefig(os.path.join(output_dir, "cll_peaks.%s_regions.chromossomes.svg" % trait), bbox_inches="tight")
 
+        # Fisher test
+        from scipy.stats import fisher_exact
+        from statsmodels.sandbox.stats.multicomp import multipletests
+
+        counts = pd.DataFrame(pd.Series(Counter(dataframe[['chrom', 'start', 'end']].chrom)), columns=["a"])
+        counts["b"] = dataframe.shape[0] - pd.Series(Counter(dataframe[['chrom', 'start', 'end']].chrom))
+        counts["c"] = pd.Series(all_chrom_counts)
+        counts["d"] = sum(all_chrom_counts.values()) - pd.Series(all_chrom_counts)
+
+        fisher = counts.apply(lambda x: pd.Series(fisher_exact([[x['a'], x['b']], [x['c'], x['d']]])), axis=1)
+        fisher.columns = ["odds", "p"]
+        fisher["p"] = -np.log10(multipletests(fisher["p"], method="fdr_bh")[1])
+        fisher["odds"] = np.log2(fisher["odds"])
+
+        fig, axis = plt.subplots(1, figsize=(10, 5))
+        axis.scatter(fisher["odds"], fisher["p"], s=25)
+        axis.hlines(-np.log10(0.05), -2, 2)
+        axis.set_xlim((-2, 2))
+        axis.set_ylim((0, 5))
+        for i in fisher.index:
+            axis.text(fisher.ix[i]["odds"], fisher.ix[i]["p"], i)
+        fig.savefig(os.path.join(output_dir, "cll_peaks.%s_regions.chromossomes.fisher_test.svg" % trait), bbox_inches="tight")
+
         # region's function
         characterize_regions_function(df=dataframe, output_dir=output_dir, prefix=trait)
 
@@ -3105,6 +3128,9 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
     Visualize histone mark ratios dependent on the positive- or negative-association of regions with
     accessibility signal.
     """
+    import itertools
+    from scipy.stats import mannwhitneyu
+
     def coverage_around(sites, samples, diameter=1000):
         sites2 = sites.slop(b=diameter, genome="hg19")
         sites_str = [str(i.chrom) + ":" + str(i.start) + "-" + str(i.stop) for i in sites2]
@@ -3221,7 +3247,7 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
 
     # compute ratios of chromatin marks
     # across all patients and for each each IGHV class
-    for group in marks:
+    for group in groups:
         for ratio in ["A:R", "P:R"]:
             features["%s_ratio_%s" % (group, ratio)] = calculate_ratio(features, group, ratio)
 
@@ -3382,6 +3408,22 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
             analysis.plots_dir, "cll.%s-specific_regions.chromatin_intensity.%sgroup_centric.svg" % (trait, "extended." if extend else "")),
             bbox_inches='tight')
 
+        # p values
+        df = list()
+        for group1, group2 in itertools.combinations(groups, 2):
+            for mark in marks:
+                for direction in [1, -1]:
+                    # kstest(p[(p['direction'] == 1) & (p['ratio_type'] == 'uCLL_ratio_A:R')]["ratio"], 'norm')
+                    # kstest(p[(p['direction'] == 1) & (p['ratio_type'] == 'mCLL_ratio_A:R')]["ratio"], 'norm')
+
+                    v = mannwhitneyu(
+                        p[(p['direction'] == direction) & (p['mark_type'] == '%s_intensity_%s' % (group1, mark))]["intensity"],
+                        p[(p['direction'] == direction) & (p['mark_type'] == '%s_intensity_%s' % (group2, mark))]["intensity"]
+                    )[1]
+                    df.append(pd.Series([mark, direction, group1, group2, v]))
+        pd.DataFrame(df).to_csv(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.chromatin_intensity.%sp_values.csv" % (trait, "extended." if extend else "")), index=False)
+
     # Plot ratios
     # subset data and melt dataframe for ploting
     features_slim = pd.melt(
@@ -3422,6 +3464,22 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
             analysis.plots_dir, "cll.%s-specific_regions.chromatin_ratios.%sgroup_centric.svg" % (trait, "extended." if extend else "")),
             bbox_inches='tight')
 
+        # p values
+        df = list()
+        for group1, group2 in itertools.combinations(groups, 2):
+            for ratio in ["A:R", "P:R"]:
+                for direction in [1, -1]:
+                    # kstest(p[(p['direction'] == 1) & (p['ratio_type'] == 'uCLL_ratio_A:R')]["ratio"], 'norm')
+                    # kstest(p[(p['direction'] == 1) & (p['ratio_type'] == 'mCLL_ratio_A:R')]["ratio"], 'norm')
+
+                    v = mannwhitneyu(
+                        p[(p['direction'] == direction) & (p['ratio_type'] == '%s_ratio_%s' % (group1, ratio))]["ratio"],
+                        p[(p['direction'] == direction) & (p['ratio_type'] == '%s_ratio_%s' % (group2, ratio))]["ratio"]
+                    )[1]
+                    df.append(pd.Series([ratio, direction, group1, group2, v]))
+        pd.DataFrame(df).to_csv(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.chromatin_ratios.%sp_values.csv" % (trait, "extended." if extend else "")), index=False)
+
 
 def characterize_regions_expression(analysis, traits, extend=False):
     """
@@ -3432,6 +3490,7 @@ def characterize_regions_expression(analysis, traits, extend=False):
     accessibility signal.
     """
     import itertools
+    from scipy.stats import mannwhitneyu
 
     def get_mean_expression(df, group):
         """
@@ -3608,6 +3667,23 @@ def characterize_regions_expression(analysis, traits, extend=False):
             df["direction"] = 1
             exp_int3[group] = df
 
+        # p-values
+        df = list()
+        groups = ["all", "uCLL", "iCLL", "mCLL"]
+        for group1, group2 in itertools.combinations(groups, 2):
+            for direction in [1, -1]:
+                a = exp_int[
+                    (exp_int["group"] == group1) &
+                    (exp_int["direction"] == direction)]["value"].dropna()
+                b = exp_int[
+                    (exp_int["group"] == group2) &
+                    (exp_int["direction"] == direction)]["value"].dropna()
+                v = mannwhitneyu(a, b)[1]
+                df.append([direction, group1, group2, v])
+
+        pd.DataFrame(df).to_csv(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.expression_intensity.%sp_values.csv" % (trait, "extended." if extend else "")), index=False)
+
         fig, axis = plt.subplots(1)
         sns.barplot(groups, exp_int3.T["value"], ax=axis)
         fig.savefig(os.path.join(
@@ -3627,6 +3703,44 @@ def characterize_regions_expression(analysis, traits, extend=False):
         fig.savefig(os.path.join(
             analysis.plots_dir, "cll.%s-specific_regions.expression_ratio.direction_centric.mean_fold_change_in_regions.over_all_samples.svg" % trait),
             bbox_inches='tight')
+
+        # p-values
+        # for the whole distribution (not just mean)
+        df = list()
+        for group1, group2 in itertools.combinations(groups, 2):
+            a1 = exp_int[
+                (exp_int["group"] == group1) &
+                (exp_int["direction"] == 1)]["value"].reset_index(drop=True).dropna()
+            aa1 = exp_int[
+                (exp_int["group"] == "all") &
+                (exp_int["direction"] == 1)]["value"].reset_index(drop=True).dropna()
+            a2 = exp_int[
+                (exp_int["group"] == group1) &
+                (exp_int["direction"] == -1)]["value"].reset_index(drop=True).dropna()
+            aa2 = exp_int[
+                (exp_int["group"] == "all") &
+                (exp_int["direction"] == -1)]["value"].reset_index(drop=True).dropna()
+
+            b1 = exp_int[
+                (exp_int["group"] == group2) &
+                (exp_int["direction"] == 1)]["value"].reset_index(drop=True).dropna()
+            bb1 = exp_int[
+                (exp_int["group"] == "all") &
+                (exp_int["direction"] == 1)]["value"].reset_index(drop=True).dropna()
+            b2 = exp_int[
+                (exp_int["group"] == group2) &
+                (exp_int["direction"] == -1)]["value"].reset_index(drop=True).dropna()
+            bb2 = exp_int[
+                (exp_int["group"] == "all") &
+                (exp_int["direction"] == -1)]["value"].reset_index(drop=True).dropna()
+
+            v = mannwhitneyu(
+                np.log2((a1 / aa1) / (a2 / aa2)).replace([np.inf, -np.inf], np.nan).dropna(),
+                np.log2((b1 / bb1) / (b2 / bb2)).replace([np.inf, -np.inf], np.nan).dropna())[1]
+            df.append([group1, group2, v])
+
+        pd.DataFrame(df).to_csv(os.path.join(
+            analysis.plots_dir, "cll.%s-specific_regions.expression_ratio.%sp_values.csv" % (trait, "extended." if extend else "")), index=False)
 
         # Filter out non-expressed genes across all samples
         d = exp_int[(exp_int['group'] == 'all') & (exp_int['direction'] == 'all')]
@@ -3677,6 +3791,9 @@ def characterize_TF_regulation_chromatin(analysis):
 
     Visualize histone mark ratios dependent on the positive- or negative-association of differential regulation.
     """
+    import itertools
+    from scipy.stats import mannwhitneyu
+
     def get_intensities(df, subset, mark):
         samples = [s for s in analysis.samples if s.library == "ChIPmentation"]
         # subset samples according to requested group (all, uCLL, iCLL or mCLL)
@@ -3783,6 +3900,22 @@ def characterize_TF_regulation_chromatin(analysis):
         analysis.plots_dir, "cll.differential_reg.chromatin_intensity.group_centric.svg"),
         bbox_inches='tight')
 
+    # p values
+    df = list()
+    for group1, group2 in itertools.combinations(groups, 2):
+        for mark in marks:
+            for direction in ["up", "down"]:
+                # kstest(p[(p['direction'] == 1) & (p['ratio_type'] == 'uCLL_ratio_A:R')]["ratio"], 'norm')
+                # kstest(p[(p['direction'] == 1) & (p['ratio_type'] == 'mCLL_ratio_A:R')]["ratio"], 'norm')
+
+                v = mannwhitneyu(
+                    p[(p['direction'] == direction) & (p['mark_type'] == '%s_intensity_%s' % (group1, mark))]["intensity"],
+                    p[(p['direction'] == direction) & (p['mark_type'] == '%s_intensity_%s' % (group2, mark))]["intensity"]
+                )[1]
+                df.append(pd.Series([mark, direction, group1, group2, v]))
+    pd.DataFrame(df).to_csv(os.path.join(
+        analysis.plots_dir, "cll.differential_reg.chromatin_intensity.p_values.csv"), index=False)
+
     # Plot ratios
     # subset data and melt dataframe for ploting
     features_slim = pd.melt(
@@ -3821,6 +3954,22 @@ def characterize_TF_regulation_chromatin(analysis):
     plt.savefig(os.path.join(
         analysis.plots_dir, "cll.differential_reg.chromatin_ratios.group_centric.svg"),
         bbox_inches='tight')
+
+    # p values
+    df = list()
+    for group1, group2 in itertools.combinations(groups, 2):
+        for ratio in ["A:R", "P:R"]:
+            for direction in ["up", "down"]:
+                # kstest(p[(p['direction'] == 1) & (p['ratio_type'] == 'uCLL_ratio_A:R')]["ratio"], 'norm')
+                # kstest(p[(p['direction'] == 1) & (p['ratio_type'] == 'mCLL_ratio_A:R')]["ratio"], 'norm')
+
+                v = mannwhitneyu(
+                    p[(p['direction'] == direction) & (p['ratio_type'] == '%s_ratio_%s' % (group1, ratio))]["ratio"],
+                    p[(p['direction'] == direction) & (p['ratio_type'] == '%s_ratio_%s' % (group2, ratio))]["ratio"]
+                )[1]
+                df.append(pd.Series([ratio, direction, group1, group2, v]))
+    pd.DataFrame(df).to_csv(os.path.join(
+        analysis.plots_dir, "cll.differential_reg.chromatin_ratios.p_values.csv"), index=False)
 
 
 def main():
