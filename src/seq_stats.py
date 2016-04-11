@@ -12,6 +12,7 @@ from pipelines import toolkit as tk
 import textwrap
 import pandas as pd
 import numpy as np
+import pybedtools
 import matplotlib.pylab as plt
 import seaborn as sns
 
@@ -115,13 +116,9 @@ plots_dir = os.path.join(results_dir, "plots")
 prj = Project("metadata/project_config.yaml")
 prj.add_sample_sheet()
 
-samples = [s for s in prj.samples if s.library != "RNA-seq" and s.cell_line == "CLL"]
-samples = [s for s in prj.samples if s.library == "ChIPmentation" and s.cell_line == "CLL"]
-
-
 # GET DUPLICATES IN MITOCHONDRIAL GENOME ONLY
 # Submit job marking duplicates for each sample
-for sample in samples:
+for sample in prj.samples:
     dups_log = os.path.join(sample.paths.sample_root, sample.name + ".dupLog.txt")
 
     cmd = tk.slurmHeader("_".join([sample.name, "mitochondria_duplicates"]), "/home/arendeiro/scratch/mitoLog.txt", cpusPerTask=4)
@@ -175,6 +172,10 @@ for sample in prj.samples:
         s["usable"] = s["total_reads"] - s["duplicates"] if not e else None
         s["%usable"] = (s["usable"] / s["total_reads"]) * 100 if not e else None
 
+        # Number of peaks
+        if sample.library == "ATAC-seq":
+            s["peaks"] = len(pybedtools.BedTool(sample.peaks))
+        # FRiP
         s["frip"] = parse_FRiP(sample.frip, s)
 
         if pd.isnull(s["frip"]):
@@ -196,16 +197,16 @@ for sample in prj.samples:
 df = df.replace(to_replace="None", value=np.nan)
 
 # order columns
-df = df[["name", "total_reads", "duplicates", "%duplicates", "total MT", "% MT", "%dups MT", "%dups nuclear", "usable", "%usable", "frip"]]
+df = df[["name", "total_reads", "duplicates", "%duplicates", "total MT", "% MT", "%dups MT", "%dups nuclear", "usable", "%usable", "peaks", "frip"]]
 
 # save table
-df.to_csv(os.path.join(plots_dir, "seq_stats.mitochondria_duplicates.csv"), index=False)
+df.to_csv(os.path.join("/home/arendeiro", "seq_stats.mitochondria_duplicates.csv"), index=False)
 
 # PLOT
 df2 = df[df.name.str.contains("ATAC-seq")].sort(["total_reads"], ascending=False)
 # stripplot on a grid
 g = sns.PairGrid(df2, x_vars=df2.columns[1:], y_vars=["name"], size=30, aspect=.15)
-g.map(sns.stripplot, size=10, orient="h", palette="Reds_r", edgecolor="gray")
+g.map(sns.stripplot, size=10, orient="h", palette="copper", edgecolor="gray")
 
 for i, ax in enumerate(g.axes.flat):
     # Make the grid horizontal instead of vertical
@@ -216,7 +217,7 @@ for i, ax in enumerate(g.axes.flat):
     if i in [2, 4, 5, 6, 8]:
         ax.set_xlim(0, 100)
 
-    if i == 9:
+    if i == 10:
         ax.set_xlim(0, 0.4)
 
 sns.despine(left=True, bottom=True)

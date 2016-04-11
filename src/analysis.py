@@ -2361,6 +2361,283 @@ def classification_random(analysis, sel_samples, labels, trait, n=100):
         "cll_peaks.%s-random_significant.classification.random_forest.loocv.ROC_PRC.svg" % trait), bbox_inches="tight")
 
 
+def differential_peaks_DESeq(counts_matrix, experiment_matrix, variable, output_prefix, alpha=0.05):
+    """
+    """
+    import rpy2.robjects as robj
+    from rpy2.robjects import pandas2ri
+    pandas2ri.activate()
+
+    run = robj.r("""
+        run = function(countData, colData, variable, output_prefix, alpha) {
+            library(DESeq2)
+            dds <- DESeqDataSetFromMatrix(countData = countData, colData = colData, design = as.formula((paste("~", variable))))
+            dds <- DESeq(dds)
+
+            # pairwise combinations
+            combs = combn(unique(colData[, variable]), 2)
+
+            # keep track of output files
+            result_files = list()
+
+            for (i in 1:ncol(combs)) {
+
+                cond1 = as.character(combs[1, i])
+                cond2 = as.character(combs[2, i])
+                contrast = c(variable, cond1, cond2)
+
+                # get results
+                res <- results(dds, contrast=contrast, alpha=alpha)
+                res <- as.data.frame(res)
+
+                # append to results
+                comparison_name = paste(cond1, cond2, sep="-")
+                output_name = paste0(output_prefix, ".", comparison_name, ".csv")
+                res["comparison"] = comparison_name
+                write.table(res, output_name, sep=",")
+                result_files[i] = output_name
+            }
+        return(result_files)
+        }
+    """)
+
+    # replace names
+    counts_matrix.columns = ["S" + str(i) for i in range(len(counts_matrix.columns))]
+    experiment_matrix.index = ["S" + str(i) for i in range(len(experiment_matrix.index))]
+
+    result_files = run(counts_matrix, experiment_matrix, variable, output_prefix, alpha)
+
+    # concatenate all files
+    results = pd.DataFrame()
+    for result_file in map(list, result_files):
+        df = pd.read_csv(result_file[0])
+
+        results = results.append(df)
+
+    return results
+
+
+def deseq_ml_comparison(analysis, samples, trait):
+    """
+    Compare regions got from ML approach with statistical approach (DEseq)
+    """
+    sel_samples = [s for s in samples if not pd.isnull(getattr(s, trait))]
+
+    # Get matrix of counts
+    counts_matrix = analysis.coverage[[s.name for s in sel_samples]]
+
+    # Get experiment matrix
+    experiment_matrix = pd.DataFrame([sample.as_series() for sample in sel_samples], index=[sample.name for sample in sel_samples])
+
+    experiment_matrix[trait] = experiment_matrix[trait].replace({1.0: "A", 0.0: "B"})
+
+    # Make output dir
+    output_dir = os.path.join(analysis.data_dir, "deseq_ml_comparison")
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Run DESeq2 analysis on IGHV mutation status
+    diff = differential_peaks_DESeq(
+        counts_matrix,
+        experiment_matrix,
+        "IGHV",
+        output_prefix=output_dir + "/deseq2-",
+        alpha=0.01)
+
+    deseq_table = pd.read_csv("data_submission/deseq_ml_comparison/deseq2-.A-B.csv").reset_index(drop=True)
+
+    df = analysis.coverage.copy().reset_index(drop=True)
+    for col in ['baseMean', 'log2FoldChange', 'padj']:
+        df[col] = deseq_table[col]
+
+    fig, axis = plt.subplots(3, figsize=(6, 10))
+
+    # Extract significant based on p-value and fold-change
+    diff = df[(abs(df["log2FoldChange"]) > 1) & (df["padj"] < 0.01)]
+    # get means
+    counts_matrix_p = analysis.coverage_qnorm[[s.name for s in sel_samples if getattr(s, trait) == 1]]
+    counts_matrix_n = analysis.coverage_qnorm[[s.name for s in sel_samples if getattr(s, trait) == 0]]
+
+    # Scatter plot
+    axis[0].scatter(counts_matrix_p.mean(1), counts_matrix_n.mean(1), alpha=0.1)
+    axis[0].scatter(counts_matrix_p.mean(1).ix[diff.index], counts_matrix_n.mean(1).ix[diff.index], alpha=0.1, color="red")
+
+    # Volcano plot
+    axis[1].scatter(df["log2FoldChange"], -np.log10(df['padj']), alpha=0.1)
+    axis[1].scatter(diff["log2FoldChange"], -np.log10(diff['padj']), alpha=0.1, color="red")
+    axis[1].set_xlim(-3, 3)
+
+    # MA plot
+    axis[2].scatter(np.log2(df["baseMean"]), df["log2FoldChange"], alpha=0.1)
+    axis[2].scatter(np.log2(diff["baseMean"]), diff["log2FoldChange"], alpha=0.1, color="red")
+    axis[2].set_xlim(-2, 15)
+    axis[2].set_ylim(-3, 3)
+
+    fig.savefig(os.path.join(output_dir, "scatter_volcano_ma_plots.png"), bbox_inches="tight")
+
+    # Compare significant regions
+    # load ML approach
+    ml = pd.read_csv(os.path.join(analysis.data_dir, "cll_peaks.IGHV_significant.classification.random_forest.loocv.dataframe.csv"))
+    ml["id"] = ml.apply(lambda x: x["chrom"] + "-" + str(x["start"]) + ":" + str(x["end"]), axis=1)
+
+    # for several thresholds, plot overlap between sets
+    overlap = pd.DataFrame()
+    for i in range(21):
+        for j in range(15):
+            diff = df[(abs(df["log2FoldChange"]) > i / 10.) & (df["padj"] < 1. / 10 ** j)]
+            a = ml[['chrom', 'start', 'end']]
+            b = diff[['chrom', 'start', 'end']]
+            overlap = overlap.append(pd.Series((
+                i / 10.,
+                (1. / 10 ** j),
+                a.merge(b).shape[0],
+                diff.shape[0])), ignore_index=True)
+    overlap.columns = ['fc', 'p', 'overlap', "size"]
+    overlap['overlap'] /= ml.shape[0]
+
+    fig, axis = plt.subplots(2, figsize=(22, 16))
+    overlap_pivot = pd.pivot_table(overlap, index="p", columns="fc", values="overlap")
+    sns.heatmap(overlap_pivot, annot=True, ax=axis[0])
+    overlap_pivot = pd.pivot_table(overlap, index="p", columns="fc", values="size")
+    sns.heatmap(overlap_pivot, annot=True, ax=axis[1])
+    fig.savefig(os.path.join(output_dir, "overlap.stat.png"), bbox_inches="tight")
+
+    # Investigate regions
+    diff = df[(abs(df["log2FoldChange"]) > 1) & (df["padj"] < 0.01)]
+    diff["id"] = diff.apply(lambda x: x["chrom"] + "-" + str(x["start"]) + ":" + str(x["end"]), axis=1)
+
+    diff_m = diff[diff["log2FoldChange"] > 0]
+    diff_u = diff[diff["log2FoldChange"] < 0]
+
+    annotated = analysis.coverage_qnorm_annotated.copy()
+    annotated["id"] = annotated.apply(lambda x: x["chrom"] + "-" + str(x["start"]) + ":" + str(x["end"]), axis=1)
+
+    # Investigate regions exclusive to each approach
+    # ML-specific
+    ml_specific = diff[~diff['id'].isin(ml['id'])]
+    ml_specific = annotated[annotated['id'].isin(ml_specific['id'])]
+    ml_specific.to_csv(os.path.join(output_dir, "ml_specific_regions.csv"), index=False)
+    characterize_regions_structure(df=ml_specific, prefix="ml_specific_regions", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "ml_specific_regions"))
+    characterize_regions_function(df=ml_specific, prefix="ml_specific_regions", output_dir=os.path.join(output_dir, "ml_specific_regions"))
+    # uCLL
+    ml_specific = diff_u[~diff_u['id'].isin(ml['id'])]
+    ml_specific = annotated[annotated['id'].isin(ml_specific['id'])]
+    ml_specific.to_csv(os.path.join(output_dir, "ml_specific_regions.uCLL-specific.csv"), index=False)
+    characterize_regions_structure(df=ml_specific, prefix="ml_specific_regions.uCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "ml_specific_regions.uCLL"))
+    characterize_regions_function(df=ml_specific, prefix="ml_specific_regions.uCLL", output_dir=os.path.join(output_dir, "ml_specific_regions.uCLL"))
+    # mCLL
+    ml_specific = diff_m[~diff_m['id'].isin(ml['id'])]
+    ml_specific = annotated[annotated['id'].isin(ml_specific['id'])]
+    ml_specific.to_csv(os.path.join(output_dir, "ml_specific_regions.mCLL-specific.csv"), index=False)
+    characterize_regions_structure(df=ml_specific, prefix="ml_specific_regions.mCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "ml_specific_regions.mCLL"))
+    characterize_regions_function(df=ml_specific, prefix="ml_specific_regions.mCLL", output_dir=os.path.join(output_dir, "ml_specific_regions.mCLL"))
+
+    # DESeq2-specific
+    deseq_specific = ml[~ml['id'].isin(diff['id'])]
+    deseq_specific = annotated[annotated['id'].isin(deseq_specific['id'])]
+    deseq_specific.to_csv(os.path.join(output_dir, "deseq_specific_regions.csv"), index=False)
+    characterize_regions_structure(df=df, prefix="deseq_specific_regions", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_specific_regions"))
+    characterize_regions_function(df=df, prefix="deseq_specific_regions", output_dir=os.path.join(output_dir, "deseq_specific_regions"))
+    # uCLL
+    deseq_specific = diff_u[~diff_u['id'].isin(ml['id'])]
+    deseq_specific = annotated[annotated['id'].isin(deseq_specific['id'])]
+    deseq_specific.to_csv(os.path.join(output_dir, "deseq_specific_regions.uCLL-specific.csv"), index=False)
+    characterize_regions_structure(df=df, prefix="deseq_specific_regions.uCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_specific_regions.uCLL"))
+    characterize_regions_function(df=df, prefix="deseq_specific_regions.uCLL", output_dir=os.path.join(output_dir, "deseq_specific_regions.uCLL"))
+    # mCLL
+    deseq_specific = diff_m[~diff_m['id'].isin(ml['id'])]
+    deseq_specific = annotated[annotated['id'].isin(deseq_specific['id'])]
+    deseq_specific.to_csv(os.path.join(output_dir, "deseq_specific_regions.mCLL-specific.csv"), index=False)
+    characterize_regions_structure(df=df, prefix="deseq_specific_regions.mCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_specific_regions.mCLL"))
+    characterize_regions_function(df=df, prefix="deseq_specific_regions.mCLL", output_dir=os.path.join(output_dir, "deseq_specific_regions.mCLL"))
+
+    # Investigate regions common to both approaches
+    shared = diff[diff['id'].isin(ml['id'])]
+    shared = annotated[annotated['id'].isin(shared['id'])]
+    shared.to_csv(os.path.join(output_dir, "deseq-ml_shared_regions.csv"), index=False)
+    characterize_regions_structure(df=df, prefix="deseq-ml_shared_regions", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions"))
+    characterize_regions_function(df=df, prefix="deseq-ml_shared_regions", output_dir=os.path.join(output_dir, "deseq-ml_shared_regions"))
+    # uCLL
+    shared = diff_u[~diff_u['id'].isin(ml['id'])]
+    shared = annotated[annotated['id'].isin(shared['id'])]
+    shared.to_csv(os.path.join(output_dir, "deseq-ml_shared_regions.uCLL-specific.csv"), index=False)
+    characterize_regions_structure(df=df, prefix="deseq-ml_shared_regions.uCLL-specific", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.uCLL-specific"))
+    characterize_regions_function(df=df, prefix="deseq-ml_shared_regions.uCLL-specific", output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.uCLL-specific"))
+    # mCLL
+    shared = diff_m[~diff_m['id'].isin(ml['id'])]
+    shared = annotated[annotated['id'].isin(shared['id'])]
+    shared.to_csv(os.path.join(output_dir, "deseq-ml_shared_regions.mCLL-specific.csv"), index=False)
+    characterize_regions_structure(df=df, prefix="deseq-ml_shared_regions.mCLL-specific", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.mCLL-specific"))
+    characterize_regions_function(df=df, prefix="deseq-ml_shared_regions.mCLL-specific", output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.mCLL-specific"))
+
+    #
+
+    #
+
+    #
+
+    #
+
+    # Other statistical approach
+    from scipy.stats import mannwhitneyu
+    from statsmodels.sandbox.stats.multicomp import multipletests
+
+    # Get matrix of counts
+    counts_matrix_p = analysis.coverage_qnorm[[s.name for s in sel_samples if getattr(s, trait) == 1]]
+    counts_matrix_n = analysis.coverage_qnorm[[s.name for s in sel_samples if getattr(s, trait) == 0]]
+
+    p_values = list()
+    fold_change = list()
+    for i in range(counts_matrix.shape[0]):
+        p_values.append(mannwhitneyu(counts_matrix_p.ix[i], counts_matrix_n.ix[i])[1])
+        fold_change.append(np.log2(counts_matrix_p.ix[i].mean() / counts_matrix_n.ix[i].mean()))
+
+    corr_p_values = multipletests(np.array(p_values), method="fdr_bh")[1]
+    fold_change = np.array(fold_change)
+
+    # put into dataframe
+    df_stat = analysis.coverage_qnorm.copy()
+    df_stat["log2FoldChange"] = fold_change
+    df_stat["padj"] = corr_p_values
+    df_stat["baseMean"] = analysis.coverage_qnorm[[s.name for s in sel_samples]].mean(1)
+
+    # for several thresholds, plot overlap between sets
+    overlap_stat = pd.DataFrame()
+    for i in range(21):
+        for j in range(15):
+            diff = df_stat[(abs(df_stat["log2FoldChange"]) > i / 10.) & (df_stat["padj"] < 1. / 10 ** j)]
+            a = ml[['chrom', 'start', 'end']]
+            b = diff[['chrom', 'start', 'end']]
+            overlap_stat = overlap_stat.append(pd.Series((
+                i / 10.,
+                (1. / 10 ** j),
+                a.merge(b).shape[0],
+                diff.shape[0])), ignore_index=True)
+    overlap_stat.columns = ['fc', 'p', 'overlap_stat', "size"]
+    overlap_stat['overlap'] /= ml.shape[0]
+
+    fig, axis = plt.subplots(2, figsize=(22, 16))
+    overlap_pivot = pd.pivot_table(overlap_stat, index="p", columns="fc", values="overlap")
+    sns.heatmap(overlap_pivot, annot=True, ax=axis[0])
+    overlap_pivot = pd.pivot_table(overlap_stat, index="p", columns="fc", values="size")
+    sns.heatmap(overlap_pivot, annot=True, ax=axis[1])
+    fig.savefig(os.path.join(output_dir, "overlap.stat.png"), bbox_inches="tight")
+
+    #
+
+    # Extract significant based on p-value and fold-change
+    diff = df_stat[(abs(df_stat["log2FoldChange"]) > 1) & (df_stat["padj"] < 0.01)]
+
+    fig, axis = plt.subplots(2, figsize=(12, 10))
+    # Volcano plot
+    axis[0].scatter(df_stat["log2FoldChange"], -np.log10(df_stat['padj']), alpha=0.1)
+    axis[0].scatter(diff["log2FoldChange"], -np.log10(diff['padj']), alpha=0.1, color="red")
+    # MA plot
+    axis[1].scatter(np.log2(df_stat["baseMean"]), df_stat["log2FoldChange"], alpha=0.1)
+    axis[1].scatter(np.log2(diff["baseMean"]), diff["log2FoldChange"], alpha=0.1, color="red")
+    fig.savefig(os.path.join(output_dir, "volcano_ma_plots.stat.png"), bbox_inches="tight")
+
+
 def unsupervised(analysis, samples):
     """
     Run trait classification (with independent validation if possible for that trait)
@@ -2626,6 +2903,9 @@ def parse_ame(ame_dir):
 
 
 def characterize_regions_structure(df, prefix, output_dir, universe_df=None):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
     # use all cll sites as universe
     if universe_df is None:
         universe_df = pd.read_csv(os.path.join("data", "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
@@ -2683,6 +2963,9 @@ def characterize_regions_structure(df, prefix, output_dir, universe_df=None):
 
 
 def characterize_regions_function(df, output_dir, prefix, data_dir="data", universe_file=None):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
     # use all cll sites as universe
     if universe_file is None:
         universe_file = os.path.join(data_dir, "cll_peaks.bed")
@@ -2720,9 +3003,9 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
 
     # seq2pathway
     try:
-        results = seq2pathway(tsv_file, go_term_mapping)
+        # results = seq2pathway(tsv_file, go_term_mapping)
         results_file = os.path.join(output_dir, "%s_regions.seq2pathway.csv" % prefix)
-        results.to_csv(results_file, index=False)
+        # results.to_csv(results_file, index=False)
     except:
         print("seq2pathway analysis for %s failed!" % prefix)
 
@@ -2740,7 +3023,8 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
     output_file = os.path.join(output_dir, "%s_regions.goverlap.tsv" % prefix)
     # test enrichements of closest gene function: GO, KEGG, OMIM
     try:
-        goverlap(genes_file, universe_genes_file, output_file)
+        pass
+        # goverlap(genes_file, universe_genes_file, output_file)
     except:
         print("Goverlap analysis for %s failed!" % prefix)
 
@@ -3995,12 +4279,12 @@ def main():
             data_dir=os.path.join(".", "data_submission"),
             plots_dir=os.path.join(".", "results", "plots"),
             samples=prj.samples,
-            pickle_file=os.path.join(".", "data", "analysis.pickle")
+            pickle_file=os.path.join(".", "data_submission", "analysis.pickle")
         )
         # pair analysis and Project
         analysis.prj = prj
     else:
-        analysis = pickle.load(open(os.path.join(".", "data", "analysis.pickle"), 'rb'))
+        analysis = pickle.load(open(os.path.join(".", "data_submission", "analysis.pickle"), 'rb'))
 
     # Create subsets of samples
     atac_seq_samples = [sample for sample in analysis.samples if sample.library == "ATAC-seq"]
