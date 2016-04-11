@@ -2508,6 +2508,8 @@ def deseq_ml_comparison(analysis, samples, trait):
 
     diff_m = diff[diff["log2FoldChange"] > 0]
     diff_u = diff[diff["log2FoldChange"] < 0]
+    ml_m = ml[ml["direction"] == 1]
+    ml_u = ml[ml["direction"] == -1]
 
     annotated = analysis.coverage_qnorm_annotated.copy()
     annotated["id"] = annotated.apply(lambda x: x["chrom"] + "-" + str(x["start"]) + ":" + str(x["end"]), axis=1)
@@ -2536,39 +2538,39 @@ def deseq_ml_comparison(analysis, samples, trait):
     deseq_specific = ml[~ml['id'].isin(diff['id'])]
     deseq_specific = annotated[annotated['id'].isin(deseq_specific['id'])]
     deseq_specific.to_csv(os.path.join(output_dir, "deseq_specific_regions.csv"), index=False)
-    characterize_regions_structure(df=df, prefix="deseq_specific_regions", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_specific_regions"))
-    characterize_regions_function(df=df, prefix="deseq_specific_regions", output_dir=os.path.join(output_dir, "deseq_specific_regions"))
+    characterize_regions_structure(df=deseq_specific, prefix="deseq_specific_regions", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_specific_regions"))
+    characterize_regions_function(df=deseq_specific, prefix="deseq_specific_regions", output_dir=os.path.join(output_dir, "deseq_specific_regions"))
     # uCLL
-    deseq_specific = diff_u[~diff_u['id'].isin(ml['id'])]
+    deseq_specific = ml_u[~ml_u['id'].isin(diff['id'])]
     deseq_specific = annotated[annotated['id'].isin(deseq_specific['id'])]
     deseq_specific.to_csv(os.path.join(output_dir, "deseq_specific_regions.uCLL-specific.csv"), index=False)
-    characterize_regions_structure(df=df, prefix="deseq_specific_regions.uCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_specific_regions.uCLL"))
-    characterize_regions_function(df=df, prefix="deseq_specific_regions.uCLL", output_dir=os.path.join(output_dir, "deseq_specific_regions.uCLL"))
+    characterize_regions_structure(df=deseq_specific, prefix="deseq_specific_regions.uCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_specific_regions.uCLL"))
+    characterize_regions_function(df=deseq_specific, prefix="deseq_specific_regions.uCLL", output_dir=os.path.join(output_dir, "deseq_specific_regions.uCLL"))
     # mCLL
-    deseq_specific = diff_m[~diff_m['id'].isin(ml['id'])]
+    deseq_specific = ml_m[~ml_m['id'].isin(diff['id'])]
     deseq_specific = annotated[annotated['id'].isin(deseq_specific['id'])]
     deseq_specific.to_csv(os.path.join(output_dir, "deseq_specific_regions.mCLL-specific.csv"), index=False)
-    characterize_regions_structure(df=df, prefix="deseq_specific_regions.mCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_specific_regions.mCLL"))
-    characterize_regions_function(df=df, prefix="deseq_specific_regions.mCLL", output_dir=os.path.join(output_dir, "deseq_specific_regions.mCLL"))
+    characterize_regions_structure(df=deseq_specific, prefix="deseq_specific_regions.mCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_specific_regions.mCLL"))
+    characterize_regions_function(df=deseq_specific, prefix="deseq_specific_regions.mCLL", output_dir=os.path.join(output_dir, "deseq_specific_regions.mCLL"))
 
     # Investigate regions common to both approaches
     shared = diff[diff['id'].isin(ml['id'])]
     shared = annotated[annotated['id'].isin(shared['id'])]
     shared.to_csv(os.path.join(output_dir, "deseq-ml_shared_regions.csv"), index=False)
-    characterize_regions_structure(df=df, prefix="deseq-ml_shared_regions", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions"))
-    characterize_regions_function(df=df, prefix="deseq-ml_shared_regions", output_dir=os.path.join(output_dir, "deseq-ml_shared_regions"))
+    characterize_regions_structure(df=shared, prefix="deseq-ml_shared_regions", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions"))
+    characterize_regions_function(df=shared, prefix="deseq-ml_shared_regions", output_dir=os.path.join(output_dir, "deseq-ml_shared_regions"))
     # uCLL
     shared = diff_u[~diff_u['id'].isin(ml['id'])]
     shared = annotated[annotated['id'].isin(shared['id'])]
     shared.to_csv(os.path.join(output_dir, "deseq-ml_shared_regions.uCLL-specific.csv"), index=False)
-    characterize_regions_structure(df=df, prefix="deseq-ml_shared_regions.uCLL-specific", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.uCLL-specific"))
-    characterize_regions_function(df=df, prefix="deseq-ml_shared_regions.uCLL-specific", output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.uCLL-specific"))
+    characterize_regions_structure(df=shared, prefix="deseq-ml_shared_regions.uCLL-specific", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.uCLL-specific"))
+    characterize_regions_function(df=shared, prefix="deseq-ml_shared_regions.uCLL-specific", output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.uCLL-specific"))
     # mCLL
     shared = diff_m[~diff_m['id'].isin(ml['id'])]
     shared = annotated[annotated['id'].isin(shared['id'])]
     shared.to_csv(os.path.join(output_dir, "deseq-ml_shared_regions.mCLL-specific.csv"), index=False)
-    characterize_regions_structure(df=df, prefix="deseq-ml_shared_regions.mCLL-specific", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.mCLL-specific"))
-    characterize_regions_function(df=df, prefix="deseq-ml_shared_regions.mCLL-specific", output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.mCLL-specific"))
+    characterize_regions_structure(df=shared, prefix="deseq-ml_shared_regions.mCLL-specific", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.mCLL-specific"))
+    characterize_regions_function(df=shared, prefix="deseq-ml_shared_regions.mCLL-specific", output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.mCLL-specific"))
 
     #
 
