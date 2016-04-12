@@ -2480,6 +2480,16 @@ def deseq_ml_comparison(analysis, samples, trait):
     ml = pd.read_csv(os.path.join(analysis.data_dir, "cll_peaks.IGHV_significant.classification.random_forest.loocv.dataframe.csv"))
     ml["id"] = ml.apply(lambda x: x["chrom"] + "-" + str(x["start"]) + ":" + str(x["end"]), axis=1)
 
+    # Annotate ml with DESEq2 stats
+    df1 = ml[[
+        'id', "gene_name",
+        'support', u'mean', u'variance', u'std_deviation', u'dispersion',
+        'qv2', u'fold_change', u'change', u'direction', u'importance']]
+
+    df2 = df[["id", "baseMean", "log2FoldChange", "padj"]]
+    # save
+    df1.merge(df2, on=["id"]).to_csv(os.path.join(output_dir, "ml_regions.annotated_with_DEseq_stats.csv"), index=False)
+
     # for several thresholds, plot overlap between sets
     overlap = pd.DataFrame()
     for i in range(21):
@@ -2572,9 +2582,117 @@ def deseq_ml_comparison(analysis, samples, trait):
     characterize_regions_structure(df=shared, prefix="deseq-ml_shared_regions.mCLL-specific", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.mCLL-specific"))
     characterize_regions_function(df=shared, prefix="deseq-ml_shared_regions.mCLL-specific", output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.mCLL-specific"))
 
-    #
+    # Visualize set intersection
+    import pyupset as pyu
+
+    counts_matrix = analysis.coverage
+    counts_matrix["id"] = counts_matrix.apply(lambda x: x["chrom"] + "-" + str(x["start"]) + ":" + str(x["end"]), axis=1)
+    df["id"] = df.apply(lambda x: x["chrom"] + "-" + str(x["start"]) + ":" + str(x["end"]), axis=1)
+
+    diff = df[(abs(df["log2FoldChange"]) > 1) & (df["padj"] < 0.01)]
+    data_dict = {
+        # "all": counts_matrix,
+        "deseq_all": diff,
+        "deseq_uCLL": diff[diff["log2FoldChange"] < 0],
+        "deseq_mCLL": diff[diff["log2FoldChange"] > 0],
+        "ml_all": ml,
+        "ml_uCLL": ml[ml["direction"] == -1],
+        "ml_mCLL": ml[ml["direction"] == 1]
+    }
+
+    pyu.plot(data_dict, unique_keys=['id'], inters_size_bounds=(1, 1e10))
+    plt.savefig(os.path.join(output_dir, "set_intersection.all-ml-deseq.svg"), bbox_inches="tight")
 
     #
+    total = df
+
+    total["deseq_all"] = total["id"].isin(diff["id"]) + 0
+    total["deseq_uCLL"] = total["id"].isin(diff[diff["log2FoldChange"] < 0]["id"]) + 0
+    total["deseq_mCLL"] = total["id"].isin(diff[diff["log2FoldChange"] > 0]["id"]) + 0
+    total["ml_all"] = total["id"].isin(ml["id"]) + 0
+    total["ml_uCLL"] = total["id"].isin(ml[ml["direction"] == -1]["id"]) + 0
+    total["ml_mCLL"] = total["id"].isin(ml[ml["direction"] == 1]["id"]) + 0
+
+    total[["id", "deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"]].to_csv(os.path.join(output_dir, "upsetr_sets.csv"))
+
+    """
+    df = read.csv2("~/cll-chromatin/data_submission/deseq_ml_comparison/upsetr_sets.csv", sep=",")
+    upset(df, sets=c("deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"), order.by="freq")
+
+    library("venneuler")
+    pdf("~/vens.pdf")
+    combs = list(
+        c("deseq_all", "deseq_uCLL", "deseq_mCLL"),
+        c("ml_all", "ml_uCLL", "ml_mCLL"),
+        c("deseq_all", "deseq_uCLL", "ml_uCLL"),
+        c("ml_all", "deseq_uCLL", "ml_uCLL"),
+        c("deseq_all", "deseq_mCLL", "ml_mCLL"),
+        c("ml_all", "deseq_mCLL", "ml_mCLL")
+    )
+    for (comb in combs){
+        plot(venneuler(df[, comb]))
+        vd$labels = paste(comb, "\n", colSums(df[comb]))
+        plot(vd)
+    }
+    dev.off()
+    """
+
+    # Reporting the statistical difference of regions found in the machine learning approach
+
+    deseq_table = pd.read_csv("data_submission/deseq_ml_comparison/deseq2-.A-B.csv").reset_index(drop=True)
+    df = analysis.coverage.copy().reset_index(drop=True)
+    for col in ['baseMean', 'log2FoldChange', 'padj']:
+        df[col] = deseq_table[col]
+    df["id"] = df.apply(lambda x: x["chrom"] + "-" + str(x["start"]) + ":" + str(x["end"]), axis=1)
+
+    # filter for regions found in ML approach
+    df_ml = df[df["id"].isin(ml["id"])]
+
+    diff = df[(abs(df["log2FoldChange"]) > 1) & (df["padj"] < 0.01)]
+    df_ml_diff = df_ml[(abs(df_ml["log2FoldChange"]) > 1) & (df_ml["padj"] < 0.01)]
+
+    # get means
+    counts_matrix_p = analysis.coverage_qnorm[[s.name for s in sel_samples if getattr(s, trait) == 1]]
+    counts_matrix_n = analysis.coverage_qnorm[[s.name for s in sel_samples if getattr(s, trait) == 0]]
+    counts_matrix_p_deseq = analysis.coverage_qnorm[[s.name for s in sel_samples if getattr(s, trait) == 1]].ix[diff.index]
+    counts_matrix_n_deseq = analysis.coverage_qnorm[[s.name for s in sel_samples if getattr(s, trait) == 0]].ix[diff.index]
+    counts_matrix_p_ml = analysis.coverage_qnorm[[s.name for s in sel_samples if getattr(s, trait) == 1]].ix[df_ml.index]
+    counts_matrix_n_ml = analysis.coverage_qnorm[[s.name for s in sel_samples if getattr(s, trait) == 0]].ix[df_ml.index]
+
+    fig, axis = plt.subplots(1, 3, figsize=(17, 4))
+
+    # Scatter plot
+    axis[0].scatter(counts_matrix_p.mean(1), counts_matrix_n.mean(1), alpha=0.05, color="grey")
+    axis[0].scatter(counts_matrix_p_ml.mean(1), counts_matrix_n_ml.mean(1), alpha=0.1, color="green")
+    axis[0].scatter(counts_matrix_p_deseq.mean(1), counts_matrix_n_deseq.mean(1), alpha=0.1, color="red")
+    axis[0].scatter(counts_matrix_p.mean(1).ix[df_ml_diff.index], counts_matrix_n.mean(1).ix[df_ml_diff.index], alpha=0.1, color="yellow")
+
+    # Volcano plot
+    axis[1].scatter(df["log2FoldChange"], -np.log10(df['padj']), alpha=0.05, color="grey")
+    axis[1].scatter(df_ml["log2FoldChange"], -np.log10(df_ml['padj']), alpha=0.1, color="green")
+    axis[1].scatter(diff["log2FoldChange"], -np.log10(diff['padj']), alpha=0.1, color="red")
+    axis[1].scatter(df_ml_diff["log2FoldChange"], -np.log10(df_ml_diff['padj']), alpha=0.1, color="yellow")
+    axis[1].set_xlim(-3, 3)
+
+    # MA plot
+    axis[2].scatter(np.log2(df["baseMean"]), df["log2FoldChange"], alpha=0.05, color="grey")
+    axis[2].scatter(np.log2(df_ml["baseMean"]), df_ml["log2FoldChange"], alpha=0.1, color="green")
+    axis[2].scatter(np.log2(diff["baseMean"]), diff["log2FoldChange"], alpha=0.1, color="red")
+    axis[2].scatter(np.log2(df_ml_diff["baseMean"]), df_ml_diff["log2FoldChange"], alpha=0.1, color="yellow")
+    axis[2].set_xlim(-2, 15)
+    axis[2].set_ylim(-3, 3)
+
+    sns.despine(fig)
+
+    axis[0].set_xlabel("mCLL mean accessibility")
+    axis[0].set_ylabel("uCLL mean accessibility")
+    axis[1].set_xlabel("fold change (mCLL / uCLL)")
+    axis[1].set_ylabel("-log10(adjusted p-value)")
+    axis[2].set_xlabel("mean intensity")
+    axis[2].set_ylabel("fold change (mCLL / uCLL)")
+
+    fig.savefig(os.path.join(output_dir, "scatter_volcano_ma_plots.all-ml-deseq.png"), bbox_inches="tight", dpi=600)
+    fig.savefig(os.path.join(output_dir, "scatter_volcano_ma_plots.all-ml-deseq.svg"), bbox_inches="tight")
 
     #
 
