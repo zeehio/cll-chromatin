@@ -2504,13 +2504,15 @@ def deseq_ml_comparison(analysis, samples, trait):
                 diff.shape[0])), ignore_index=True)
     overlap.columns = ['fc', 'p', 'overlap', "size"]
     overlap['overlap'] /= ml.shape[0]
+    overlap['overlap'] *= 100
 
     fig, axis = plt.subplots(2, figsize=(22, 16))
     overlap_pivot = pd.pivot_table(overlap, index="p", columns="fc", values="overlap")
-    sns.heatmap(overlap_pivot, annot=True, ax=axis[0])
+    sns.heatmap(overlap_pivot, annot=True, fmt=".0f", ax=axis[0])
     overlap_pivot = pd.pivot_table(overlap, index="p", columns="fc", values="size")
-    sns.heatmap(overlap_pivot, annot=True, ax=axis[1])
+    sns.heatmap(overlap_pivot, annot=True, fmt=".0f", ax=axis[1])
     fig.savefig(os.path.join(output_dir, "overlap.stat.png"), bbox_inches="tight")
+    fig.savefig(os.path.join(output_dir, "overlap.stat.svg"), bbox_inches="tight")
 
     # Investigate regions
     diff = df[(abs(df["log2FoldChange"]) > 1) & (df["padj"] < 0.01)]
@@ -2526,60 +2528,84 @@ def deseq_ml_comparison(analysis, samples, trait):
 
     # Investigate regions exclusive to each approach
     # ML-specific
-    ml_specific = diff[~diff['id'].isin(ml['id'])]
+    ml_specific = ml[~ml['id'].isin(diff['id'])]
     ml_specific = annotated[annotated['id'].isin(ml_specific['id'])]
     ml_specific.to_csv(os.path.join(output_dir, "ml_specific_regions.csv"), index=False)
-    characterize_regions_structure(df=ml_specific, prefix="ml_specific_regions", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "ml_specific_regions"))
+    # characterize_regions_structure(df=ml_specific, prefix="ml_specific_regions", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "ml_specific_regions"))
     characterize_regions_function(df=ml_specific, prefix="ml_specific_regions", output_dir=os.path.join(output_dir, "ml_specific_regions"))
+    # # all ML regions
     # uCLL
-    ml_specific = diff_u[~diff_u['id'].isin(ml['id'])]
+    mla = annotated[annotated['id'].isin(ml_u['id'])]
+    mla.to_csv(os.path.join(output_dir, "mla_regions.uCLL.csv"), index=False)
+    # characterize_regions_structure(df=mla, prefix="mla_regions.uCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "mla_regions.uCLL"))
+    characterize_regions_function(df=mla, prefix="mla_regions.uCLL", output_dir=os.path.join(output_dir, "mla_regions.uCLL"))
+    # mCLL
+    mla = annotated[annotated['id'].isin(ml_m['id'])]
+    mla.to_csv(os.path.join(output_dir, "mla_regions.mCLL.csv"), index=False)
+    # characterize_regions_structure(df=mla, prefix="mla_regions.mCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "mla_regions.mCLL"))
+    characterize_regions_function(df=mla, prefix="mla_regions.mCLL", output_dir=os.path.join(output_dir, "mla_regions.mCLL"))
+
+    # uCLL
+    ml_specific = ml_u[~ml_u['id'].isin(diff_u['id'])]
     ml_specific = annotated[annotated['id'].isin(ml_specific['id'])]
     ml_specific.to_csv(os.path.join(output_dir, "ml_specific_regions.uCLL-specific.csv"), index=False)
-    characterize_regions_structure(df=ml_specific, prefix="ml_specific_regions.uCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "ml_specific_regions.uCLL"))
+    # characterize_regions_structure(df=ml_specific, prefix="ml_specific_regions.uCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "ml_specific_regions.uCLL"))
     characterize_regions_function(df=ml_specific, prefix="ml_specific_regions.uCLL", output_dir=os.path.join(output_dir, "ml_specific_regions.uCLL"))
     # mCLL
-    ml_specific = diff_m[~diff_m['id'].isin(ml['id'])]
+    ml_specific = ml_m[~ml_m['id'].isin(diff_m['id'])]
     ml_specific = annotated[annotated['id'].isin(ml_specific['id'])]
     ml_specific.to_csv(os.path.join(output_dir, "ml_specific_regions.mCLL-specific.csv"), index=False)
-    characterize_regions_structure(df=ml_specific, prefix="ml_specific_regions.mCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "ml_specific_regions.mCLL"))
+    # characterize_regions_structure(df=ml_specific, prefix="ml_specific_regions.mCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "ml_specific_regions.mCLL"))
     characterize_regions_function(df=ml_specific, prefix="ml_specific_regions.mCLL", output_dir=os.path.join(output_dir, "ml_specific_regions.mCLL"))
 
     # DESeq2-specific
-    deseq_specific = ml[~ml['id'].isin(diff['id'])]
+    deseq_specific = diff[~diff['id'].isin(ml['id'])]
     deseq_specific = annotated[annotated['id'].isin(deseq_specific['id'])]
     deseq_specific.to_csv(os.path.join(output_dir, "deseq_specific_regions.csv"), index=False)
-    characterize_regions_structure(df=deseq_specific, prefix="deseq_specific_regions", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_specific_regions"))
+    # characterize_regions_structure(df=deseq_specific, prefix="deseq_specific_regions", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_specific_regions"))
     characterize_regions_function(df=deseq_specific, prefix="deseq_specific_regions", output_dir=os.path.join(output_dir, "deseq_specific_regions"))
+    # # all DESeq2 regions
     # uCLL
-    deseq_specific = ml_u[~ml_u['id'].isin(diff['id'])]
+    deseq = annotated[annotated['id'].isin(diff_u['id'])]
+    deseq.to_csv(os.path.join(output_dir, "deseq_regions.uCLL.csv"), index=False)
+    # characterize_regions_structure(df=deseq, prefix="deseq_regions.uCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_regions.uCLL"))
+    characterize_regions_function(df=deseq, prefix="deseq_regions.uCLL", output_dir=os.path.join(output_dir, "deseq_regions.uCLL"))
+    # mCLL
+    deseq = annotated[annotated['id'].isin(diff_m['id'])]
+    deseq.to_csv(os.path.join(output_dir, "deseq_regions.mCLL.csv"), index=False)
+    # characterize_regions_structure(df=deseq, prefix="deseq_regions.mCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_regions.mCLL"))
+    characterize_regions_function(df=deseq, prefix="deseq_regions.mCLL", output_dir=os.path.join(output_dir, "deseq_regions.mCLL"))
+
+    # uCLL
+    deseq_specific = diff_u[~diff_u['id'].isin(ml_u['id'])]
     deseq_specific = annotated[annotated['id'].isin(deseq_specific['id'])]
     deseq_specific.to_csv(os.path.join(output_dir, "deseq_specific_regions.uCLL-specific.csv"), index=False)
-    characterize_regions_structure(df=deseq_specific, prefix="deseq_specific_regions.uCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_specific_regions.uCLL"))
+    # characterize_regions_structure(df=deseq_specific, prefix="deseq_specific_regions.uCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_specific_regions.uCLL"))
     characterize_regions_function(df=deseq_specific, prefix="deseq_specific_regions.uCLL", output_dir=os.path.join(output_dir, "deseq_specific_regions.uCLL"))
     # mCLL
-    deseq_specific = ml_m[~ml_m['id'].isin(diff['id'])]
+    deseq_specific = diff_m[~diff_m['id'].isin(ml_m['id'])]
     deseq_specific = annotated[annotated['id'].isin(deseq_specific['id'])]
     deseq_specific.to_csv(os.path.join(output_dir, "deseq_specific_regions.mCLL-specific.csv"), index=False)
-    characterize_regions_structure(df=deseq_specific, prefix="deseq_specific_regions.mCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_specific_regions.mCLL"))
+    # characterize_regions_structure(df=deseq_specific, prefix="deseq_specific_regions.mCLL", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq_specific_regions.mCLL"))
     characterize_regions_function(df=deseq_specific, prefix="deseq_specific_regions.mCLL", output_dir=os.path.join(output_dir, "deseq_specific_regions.mCLL"))
 
     # Investigate regions common to both approaches
     shared = diff[diff['id'].isin(ml['id'])]
     shared = annotated[annotated['id'].isin(shared['id'])]
     shared.to_csv(os.path.join(output_dir, "deseq-ml_shared_regions.csv"), index=False)
-    characterize_regions_structure(df=shared, prefix="deseq-ml_shared_regions", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions"))
+    # characterize_regions_structure(df=shared, prefix="deseq-ml_shared_regions", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions"))
     characterize_regions_function(df=shared, prefix="deseq-ml_shared_regions", output_dir=os.path.join(output_dir, "deseq-ml_shared_regions"))
     # uCLL
-    shared = diff_u[~diff_u['id'].isin(ml['id'])]
+    shared = diff_u[diff_u['id'].isin(ml_u['id'])]
     shared = annotated[annotated['id'].isin(shared['id'])]
     shared.to_csv(os.path.join(output_dir, "deseq-ml_shared_regions.uCLL-specific.csv"), index=False)
-    characterize_regions_structure(df=shared, prefix="deseq-ml_shared_regions.uCLL-specific", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.uCLL-specific"))
+    # characterize_regions_structure(df=shared, prefix="deseq-ml_shared_regions.uCLL-specific", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.uCLL-specific"))
     characterize_regions_function(df=shared, prefix="deseq-ml_shared_regions.uCLL-specific", output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.uCLL-specific"))
     # mCLL
-    shared = diff_m[~diff_m['id'].isin(ml['id'])]
+    shared = diff_m[diff_m['id'].isin(ml_m['id'])]
     shared = annotated[annotated['id'].isin(shared['id'])]
     shared.to_csv(os.path.join(output_dir, "deseq-ml_shared_regions.mCLL-specific.csv"), index=False)
-    characterize_regions_structure(df=shared, prefix="deseq-ml_shared_regions.mCLL-specific", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.mCLL-specific"))
+    # characterize_regions_structure(df=shared, prefix="deseq-ml_shared_regions.mCLL-specific", universe_df=analysis.coverage_qnorm_annotated, output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.mCLL-specific"))
     characterize_regions_function(df=shared, prefix="deseq-ml_shared_regions.mCLL-specific", output_dir=os.path.join(output_dir, "deseq-ml_shared_regions.mCLL-specific"))
 
     # Visualize set intersection
@@ -2604,6 +2630,7 @@ def deseq_ml_comparison(analysis, samples, trait):
     plt.savefig(os.path.join(output_dir, "set_intersection.all-ml-deseq.svg"), bbox_inches="tight")
 
     #
+    diff = df[(abs(df["log2FoldChange"]) > 1) & (df["padj"] < 0.01)]
     total = df
 
     total["deseq_all"] = total["id"].isin(diff["id"]) + 0
@@ -2613,15 +2640,77 @@ def deseq_ml_comparison(analysis, samples, trait):
     total["ml_uCLL"] = total["id"].isin(ml[ml["direction"] == -1]["id"]) + 0
     total["ml_mCLL"] = total["id"].isin(ml[ml["direction"] == 1]["id"]) + 0
 
-    total[["id", "deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"]].to_csv(os.path.join(output_dir, "upsetr_sets.csv"))
+    total[["id", "deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"]].to_csv(os.path.join(output_dir, "upsetr_sets_001_1.csv"))
+
+    diff = df[(df["padj"] < 0.01)]
+    total = df
+
+    total["deseq_all"] = total["id"].isin(diff["id"]) + 0
+    total["deseq_uCLL"] = total["id"].isin(diff[diff["log2FoldChange"] < 0]["id"]) + 0
+    total["deseq_mCLL"] = total["id"].isin(diff[diff["log2FoldChange"] > 0]["id"]) + 0
+    total["ml_all"] = total["id"].isin(ml["id"]) + 0
+    total["ml_uCLL"] = total["id"].isin(ml[ml["direction"] == -1]["id"]) + 0
+    total["ml_mCLL"] = total["id"].isin(ml[ml["direction"] == 1]["id"]) + 0
+
+    total[["id", "deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"]].to_csv(os.path.join(output_dir, "upsetr_sets_001_0.csv"))
+
+    diff = df[(abs(df["log2FoldChange"]) > 0.5) & (df["padj"] < 0.01)]
+    total = df
+
+    total["deseq_all"] = total["id"].isin(diff["id"]) + 0
+    total["deseq_uCLL"] = total["id"].isin(diff[diff["log2FoldChange"] < 0]["id"]) + 0
+    total["deseq_mCLL"] = total["id"].isin(diff[diff["log2FoldChange"] > 0]["id"]) + 0
+    total["ml_all"] = total["id"].isin(ml["id"]) + 0
+    total["ml_uCLL"] = total["id"].isin(ml[ml["direction"] == -1]["id"]) + 0
+    total["ml_mCLL"] = total["id"].isin(ml[ml["direction"] == 1]["id"]) + 0
+
+    total[["id", "deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"]].to_csv(os.path.join(output_dir, "upsetr_sets_001_05.csv"))
+
+    diff = df[(abs(df["log2FoldChange"]) > 1) & (df["padj"] < 0.05)]
+    total = df
+
+    total["deseq_all"] = total["id"].isin(diff["id"]) + 0
+    total["deseq_uCLL"] = total["id"].isin(diff[diff["log2FoldChange"] < 0]["id"]) + 0
+    total["deseq_mCLL"] = total["id"].isin(diff[diff["log2FoldChange"] > 0]["id"]) + 0
+    total["ml_all"] = total["id"].isin(ml["id"]) + 0
+    total["ml_uCLL"] = total["id"].isin(ml[ml["direction"] == -1]["id"]) + 0
+    total["ml_mCLL"] = total["id"].isin(ml[ml["direction"] == 1]["id"]) + 0
+
+    total[["id", "deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"]].to_csv(os.path.join(output_dir, "upsetr_sets_005_1.csv"))
+
+    diff = df[(df["padj"] < 0.05)]
+    total = df
+
+    total["deseq_all"] = total["id"].isin(diff["id"]) + 0
+    total["deseq_uCLL"] = total["id"].isin(diff[diff["log2FoldChange"] < 0]["id"]) + 0
+    total["deseq_mCLL"] = total["id"].isin(diff[diff["log2FoldChange"] > 0]["id"]) + 0
+    total["ml_all"] = total["id"].isin(ml["id"]) + 0
+    total["ml_uCLL"] = total["id"].isin(ml[ml["direction"] == -1]["id"]) + 0
+    total["ml_mCLL"] = total["id"].isin(ml[ml["direction"] == 1]["id"]) + 0
+
+    total[["id", "deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"]].to_csv(os.path.join(output_dir, "upsetr_sets_005_0.csv"))
+
+    diff = df[(abs(df["log2FoldChange"]) > 0.5) & (df["padj"] < 0.05)]
+    total = df
+
+    total["deseq_all"] = total["id"].isin(diff["id"]) + 0
+    total["deseq_uCLL"] = total["id"].isin(diff[diff["log2FoldChange"] < 0]["id"]) + 0
+    total["deseq_mCLL"] = total["id"].isin(diff[diff["log2FoldChange"] > 0]["id"]) + 0
+    total["ml_all"] = total["id"].isin(ml["id"]) + 0
+    total["ml_uCLL"] = total["id"].isin(ml[ml["direction"] == -1]["id"]) + 0
+    total["ml_mCLL"] = total["id"].isin(ml[ml["direction"] == 1]["id"]) + 0
+
+    total[["id", "deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"]].to_csv(os.path.join(output_dir, "upsetr_sets_005_05.csv"))
 
     """
-    df = read.csv2("~/cll-chromatin/data_submission/deseq_ml_comparison/upsetr_sets.csv", sep=",")
-    upset(df, sets=c("deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"), order.by="freq")
+    df = read.csv2("~/upsetr_sets_005_1.csv", sep=",")
+    # upset(df, sets=c("deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"), order.by="freq")
 
     library("venneuler")
-    pdf("~/vens.pdf")
+    pdf("~/upsetr_sets_005_1.pdf")
     combs = list(
+        c("deseq_all", "ml_all"),
+        c("deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"),
         c("deseq_all", "deseq_uCLL", "deseq_mCLL"),
         c("ml_all", "ml_uCLL", "ml_mCLL"),
         c("deseq_all", "deseq_uCLL", "ml_uCLL"),
@@ -2630,8 +2719,8 @@ def deseq_ml_comparison(analysis, samples, trait):
         c("ml_all", "deseq_mCLL", "ml_mCLL")
     )
     for (comb in combs){
-        plot(venneuler(df[, comb]))
-        vd$labels = paste(comb, "\n", colSums(df[comb]))
+        vd = venneuler(df[, comb])
+        vd$labels = paste(comb, "\n", colSums(df[, comb]))
         plot(vd)
     }
     dev.off()
@@ -2660,41 +2749,52 @@ def deseq_ml_comparison(analysis, samples, trait):
     counts_matrix_n_ml = analysis.coverage_qnorm[[s.name for s in sel_samples if getattr(s, trait) == 0]].ix[df_ml.index]
 
     fig, axis = plt.subplots(1, 3, figsize=(17, 4))
+    pallete = sns.color_palette("Paired", 10)
 
     # Scatter plot
     axis[0].scatter(counts_matrix_p.mean(1), counts_matrix_n.mean(1), alpha=0.05, color="grey")
-    axis[0].scatter(counts_matrix_p_ml.mean(1), counts_matrix_n_ml.mean(1), alpha=0.1, color="green")
-    axis[0].scatter(counts_matrix_p_deseq.mean(1), counts_matrix_n_deseq.mean(1), alpha=0.1, color="red")
-    axis[0].scatter(counts_matrix_p.mean(1).ix[df_ml_diff.index], counts_matrix_n.mean(1).ix[df_ml_diff.index], alpha=0.1, color="yellow")
+    axis[0].scatter(counts_matrix_p_ml.mean(1), counts_matrix_n_ml.mean(1), alpha=0.3, color=pallete[1])
+    axis[0].scatter(counts_matrix_p_deseq.mean(1), counts_matrix_n_deseq.mean(1), alpha=0.3, color=pallete[3])
+    axis[0].scatter(counts_matrix_p.mean(1).ix[df_ml_diff.index], counts_matrix_n.mean(1).ix[df_ml_diff.index], alpha=0.3, color=pallete[7])
 
     # Volcano plot
     axis[1].scatter(df["log2FoldChange"], -np.log10(df['padj']), alpha=0.05, color="grey")
-    axis[1].scatter(df_ml["log2FoldChange"], -np.log10(df_ml['padj']), alpha=0.1, color="green")
-    axis[1].scatter(diff["log2FoldChange"], -np.log10(diff['padj']), alpha=0.1, color="red")
-    axis[1].scatter(df_ml_diff["log2FoldChange"], -np.log10(df_ml_diff['padj']), alpha=0.1, color="yellow")
+    axis[1].scatter(df_ml["log2FoldChange"], -np.log10(df_ml['padj']), alpha=0.3, color=pallete[1])
+    axis[1].scatter(diff["log2FoldChange"], -np.log10(diff['padj']), alpha=0.3, color=pallete[3])
+    axis[1].scatter(df_ml_diff["log2FoldChange"], -np.log10(df_ml_diff['padj']), alpha=0.3, color=pallete[7])
     axis[1].set_xlim(-3, 3)
 
     # MA plot
     axis[2].scatter(np.log2(df["baseMean"]), df["log2FoldChange"], alpha=0.05, color="grey")
-    axis[2].scatter(np.log2(df_ml["baseMean"]), df_ml["log2FoldChange"], alpha=0.1, color="green")
-    axis[2].scatter(np.log2(diff["baseMean"]), diff["log2FoldChange"], alpha=0.1, color="red")
-    axis[2].scatter(np.log2(df_ml_diff["baseMean"]), df_ml_diff["log2FoldChange"], alpha=0.1, color="yellow")
+    axis[2].scatter(np.log2(df_ml["baseMean"]), df_ml["log2FoldChange"], alpha=0.3, color=pallete[1])
+    axis[2].scatter(np.log2(diff["baseMean"]), diff["log2FoldChange"], alpha=0.3, color=pallete[3])
+    axis[2].scatter(np.log2(df_ml_diff["baseMean"]), df_ml_diff["log2FoldChange"], alpha=0.3, color=pallete[7])
     axis[2].set_xlim(-2, 15)
     axis[2].set_ylim(-3, 3)
 
     sns.despine(fig)
 
-    axis[0].set_xlabel("mCLL mean accessibility")
-    axis[0].set_ylabel("uCLL mean accessibility")
-    axis[1].set_xlabel("fold change (mCLL / uCLL)")
-    axis[1].set_ylabel("-log10(adjusted p-value)")
-    axis[2].set_xlabel("mean intensity")
-    axis[2].set_ylabel("fold change (mCLL / uCLL)")
+    for ax in axis:
+        ax.get_xaxis().set_ticks([])
+        ax.get_yaxis().set_ticks([])
+    for ax in axis:
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
 
     fig.savefig(os.path.join(output_dir, "scatter_volcano_ma_plots.all-ml-deseq.png"), bbox_inches="tight", dpi=600)
-    fig.savefig(os.path.join(output_dir, "scatter_volcano_ma_plots.all-ml-deseq.svg"), bbox_inches="tight")
+    # fig.savefig(os.path.join(output_dir, "scatter_volcano_ma_plots.all-ml-deseq.svg"), bbox_inches="tight")
 
     #
+
+    # Distribution of fold-change and p-values of machine learning regions
+
+    fig, axis = plt.subplots(2)
+    sns.distplot(df_ml["log2FoldChange"], ax=axis[0])
+    sns.distplot(diff["log2FoldChange"], ax=axis[0])
+    sns.distplot((-np.log10(df_ml['padj'])).dropna(), ax=axis[1])
+    sns.distplot(-np.log10(diff['padj']), ax=axis[1])
+    sns.despine(fig)
+    fig.savefig(os.path.join(output_dir, "distplot.fold_change-p_value.ml_regions.svg"), bbox_inches="tight", dpi=600)
 
     #
 
@@ -3883,6 +3983,304 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
                     df.append(pd.Series([ratio, direction, group1, group2, v]))
         pd.DataFrame(df).to_csv(os.path.join(
             analysis.plots_dir, "cll.%s-specific_regions.chromatin_ratios.%sp_values.csv" % (trait, "extended." if extend else "")), index=False)
+
+
+def ilustrate_regions_gene_expression(analysis):
+    """
+    """
+    # load DEGs
+    expression = pd.read_csv(os.path.join(analysis.data_dir, "gene_expression.differential.uCLL-mCLL_results.csv"), index_col=0)
+    expression["log2FoldChange"] = -expression["log2FoldChange"]
+    expression["padj"] = -np.log10(expression["padj"])
+
+    expression = expression.dropna(axis=0, subset=["log2FoldChange", "padj"])
+
+    # load ML approach
+    ml = pd.read_csv(os.path.join(analysis.data_dir, "cll_peaks.IGHV_significant.classification.random_forest.loocv.dataframe.csv"))
+    ml["id"] = ml.apply(lambda x: x["chrom"] + "-" + str(x["start"]) + ":" + str(x["end"]), axis=1)
+
+    regions = pd.merge(
+        ml,
+        analysis.gene_annotation, on=["chrom", "start", "end"])
+
+    index_all = pd.Series(regions[~regions['ensembl_gene_id'].isnull()]['ensembl_gene_id'].unique())
+    index_u = pd.Series(regions[(~regions['ensembl_gene_id'].isnull()) & (regions["direction"] == -1)]['ensembl_gene_id'].unique())
+    index_m = pd.Series(regions[(~regions['ensembl_gene_id'].isnull()) & (regions["direction"] == 1)]['ensembl_gene_id'].unique())
+
+    fig, axis = plt.subplots(2)
+    # Volcano plot
+    axis[0].scatter(
+        expression.ix[index_u[index_u.isin(expression.index)]]["log2FoldChange"],
+        expression.ix[index_u[index_u.isin(expression.index)]]["padj"], color=sns.color_palette("colorblind")[0], s=120)
+    axis[0].scatter(
+        expression.ix[index_m[index_m.isin(expression.index)]]["log2FoldChange"],
+        expression.ix[index_m[index_m.isin(expression.index)]]["padj"], color=sns.color_palette("colorblind")[1], s=120)
+    axis[0].vlines(-1, 0, 6)
+    axis[0].vlines(1, 0, 6)
+    axis[0].hlines(-np.log10(0.05), -6, 6)
+
+    # plot fold_change of gene expression for genes with regions assocaited in each direction (m/uCLL)
+    sns.distplot(expression.ix[index_u[index_u.isin(expression.index)]]["log2FoldChange"], ax=axis[1])
+    sns.distplot(expression.ix[index_m[index_m.isin(expression.index)]]["log2FoldChange"], ax=axis[1])
+    sns.distplot(expression.ix[index_all[index_all.isin(expression.index)]]["log2FoldChange"], ax=axis[1])
+    axis[1].vlines(expression.ix[index_all[index_all.isin(expression.index)]]["log2FoldChange"].mean(), 0, 1)
+    axis[1].vlines(expression.ix[index_u[index_u.isin(expression.index)]]["log2FoldChange"].mean(), 0, 1)
+    axis[1].vlines(expression.ix[index_m[index_m.isin(expression.index)]]["log2FoldChange"].mean(), 0, 1)
+
+    axis[0].set_ylim((-0.2, 4))
+    axis[0].set_xlim((-6, 6))
+    axis[1].set_xlim((-6, 6))
+
+    sns.despine(fig)
+
+    fig.savefig(os.path.join(analysis.plots_dir, "IGHV_regions_differential_expression_genes.svg"), bbox_inches="tight")
+
+    # get % percentage of genes that are differentially expressed
+    u = expression.ix[index_u[index_u.isin(expression.index)]]
+    m = expression.ix[index_m[index_m.isin(expression.index)]]
+    t_u = u["padj"].dropna().shape[0]
+    t_m = m["padj"].dropna().shape[0]
+    p_u = u[(u["padj"] > 1.3) & (abs(u["log2FoldChange"]) > 1)].shape[0] / float(t_u) * 100
+    p_m = m[(m["padj"] > 1.3) & (abs(m["log2FoldChange"]) > 1)].shape[0] / float(t_m) * 100
+
+    print(p_u, p_m)
+
+
+def motif_enrichment(analysis):
+    """
+    """
+    def get_window_around_center(matrix, bp):
+        """
+        Make window with bp bps around center of region in matrix.
+        """
+        centers = matrix.apply(lambda x: ((x["end"] - x["start"]) / 2.) + x['start'], axis=1).round().astype(int)
+        starts = (centers - (bp / 2.)).round().astype(int)
+        ends = (centers + (bp / 2.)).round().astype(int)
+        starts.name = "start"
+        ends.name = "end"
+
+        return pd.DataFrame([matrix["chrom"], starts, ends]).T
+
+    def bed_to_fasta(bed_file, fasta_file):
+        cmd = "bedtools getfasta -fi ~/resources/genomes/hg19/hg19.fa -bed {0} -fo {1}".format(bed_file, fasta_file)
+        os.system(cmd)
+
+    def make_background(output_dir, input_fasta, model, output_fasta, seq_lengths, set_size):
+        """
+        Create 0th and 1st order Markov background sequences.
+        """
+        from pipelines import toolkit as tk
+        import textwrap
+
+        if type(seq_lengths) is not int:
+            seq_lengths = 250
+
+        cmd = tk.slurmHeader(
+            "make_background",
+            os.path.join(output_dir, "make_background.log"),
+            cpusPerTask=2, time='10:00:00', queue="shortq", memPerCpu=4000)
+
+        cmd += """
+        /cm/shared/apps/meme/4.10.1/bin/fasta-get-markov -m 1 < {} > {}
+        """.format(input_fasta, model)
+
+        cmd += """
+        /cm/shared/apps/meme/4.10.1/bin/gendb --type 3 --bfile {0} --order 1 --minseq {1} --maxseq {2} {3} > {4}
+        """.format(model, seq_lengths - 10, seq_lengths + 10, int(set_size), output_fasta)
+
+        cmd += tk.slurmFooter()
+
+        # write job to file
+        job_file = os.path.join(output_dir, "make_background.sh")
+        with open(job_file, 'w') as handle:
+            handle.writelines(textwrap.dedent(cmd))
+
+        tk.slurmSubmitJob(job_file)
+
+    def meme_ame(input_fasta, output_dir, background_fasta):
+        """
+        Run MEME-AME.
+        """
+        from pipelines import toolkit as tk
+        import textwrap
+
+        cmd = tk.slurmHeader(
+            "ame_motif_overrepresentation" + "_" + input_fasta,
+            os.path.join(output_dir, "ame_motif_overrepresentation.log"),
+            cpusPerTask=2, time='10:00:00', queue="shortq", memPerCpu=4000)
+
+        cmd += """
+        /cm/shared/apps/meme/4.10.1/bin/ame --bgformat 1 --scoring avg --method ranksum --pvalue-report-threshold 0.05 \
+        --control {} -o {} {} ~/resources/motifs/motif_databases/HUMAN/HOCOMOCOv9.meme
+        """.format(background_fasta, output_dir, input_fasta)
+
+        cmd += tk.slurmFooter()
+
+        # write job to file
+        job_file = os.path.join(output_dir, "ame_motif_overrepresentation.sh")
+        with open(job_file, 'w') as handle:
+            handle.writelines(textwrap.dedent(cmd))
+
+        tk.slurmSubmitJob(job_file)
+
+    def parse_ame(ame_dir):
+        """
+        Parse MEME-AME results.
+        """
+        with open(os.path.join(ame_dir, "ame.txt"), 'r') as handle:
+            lines = handle.readlines()
+
+        output = list()
+        for line in lines:
+            # skip header lines
+            if line[0] not in [str(i) for i in range(10)]:
+                continue
+
+            # get motif string and the first half of it (simple name)
+            motif = line.strip().split(" ")[5].split("_")[0]
+            # get corrected p-value
+            q_value = line.strip().split(" ")[-2]
+            # append
+            output.append((motif, q_value))
+
+        return output
+
+    # Load up the data
+    # ML
+    ML = pd.read_csv(os.path.join(analysis.data_dir, "cll_peaks.IGHV_significant.classification.random_forest.loocv.dataframe.csv"))
+    ML["id"] = ML.apply(lambda x: x["chrom"] + ":" + str(x["start"]) + "-" + str(x["end"]), axis=1)
+    ML = ML.set_index("id")
+
+    # DESEQ
+    deseq_table = pd.read_csv("data_submission/deseq_ml_comparison/deseq2-.A-B.csv").reset_index(drop=True)
+    DESEQ = analysis.coverage.copy().reset_index(drop=True)
+    for col in ['baseMean', 'log2FoldChange', 'padj']:
+        DESEQ[col] = deseq_table[col]
+    DESEQ = DESEQ[(abs(DESEQ["log2FoldChange"]) > 1) & (DESEQ["padj"] < 0.01)]
+    DESEQ["id"] = DESEQ.apply(lambda x: x["chrom"] + ":" + str(x["start"]) + "-" + str(x["end"]), axis=1)
+    DESEQ = DESEQ.set_index("id")
+
+    # Label groups identically between ML and DESEQ
+    ML["group"] = ML.apply(lambda x: "uCLL" if x["direction"] == -1 else "mCLL", axis=1)
+    DESEQ["group"] = DESEQ.apply(lambda x: "uCLL" if x["log2FoldChange"] < 0 else "mCLL", axis=1)
+
+    # Root output folder
+    output_dir = os.path.join(analysis.data_dir, "motif_enrichment")
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Build matrix of experiments
+    df = pd.DataFrame(columns=[
+        "set_name", "method", "group", "set_size", "seq_lengths",
+        "length_type", "foreground_bed", "foreground_fasta", "background_fasta", "ame_dir"]
+    )
+    methods = ["ML", "DESEQ"]
+    groups = ["all", "uCLL", "mCLL"]
+    sizes = range(50, 2050, 50)
+
+    for method in methods:
+        for group in groups:
+            for size in sizes:
+                # subset data as required
+                if group == "all":
+                    data = eval(method)
+                else:
+                    data = eval(method)[eval(method)['group'] == group]
+
+                # Build series with experiment attributes
+                s = pd.Series(name="_".join([method, group, str(size) if size is not "all" else "original"]))
+                if size == "all":
+                    s["length_type"] = "original"
+                    s["seq_lengths"] = "variable"
+                else:
+                    s["length_type"] = "uniform"
+                    s["seq_lengths"] = size
+                s["set_name"] = s.name
+                s["method"] = method
+                s["group"] = group
+                s["set_size"] = data.shape[0]
+                s["foreground_bed"] = os.path.join(output_dir, s.name + ".foreground.bed")
+                s["foreground_fasta"] = os.path.join(output_dir, s.name + ".foreground.fasta")
+                s["background_fasta"] = os.path.join(output_dir, s.name + ".background.fasta")
+                s["background_model"] = os.path.join(output_dir, s.name + ".background.model")
+                s["ame_dir"] = os.path.join(output_dir, s.name)
+                if not os.path.exists(s["ame_dir"]):
+                    os.makedirs(s["ame_dir"])
+
+                # get regions as required
+                if size == "all":
+                    bed = data[["chrom", "start", "end"]]
+                else:
+                    # get window according to size
+                    bed = get_window_around_center(data, size)
+
+                # save as bedfile
+                bed.to_csv(s["foreground_bed"], index=False, header=False, sep="\t")
+
+                # append to dataframe
+                df = df.append(s)
+
+    # Save experiment matrix
+    df.to_csv(os.path.join(output_dir, "experiment_matrix.csv"))
+
+    # Bed to Fasta
+    for name, s in df.iterrows():
+        bed_to_fasta(s["foreground_bed"], s["foreground_fasta"])
+
+    # Make backgrounds
+    for name, s in df.iterrows():
+        make_background(s["ame_dir"], s["foreground_fasta"], s["background_model"], s["background_fasta"], s["seq_lengths"], s["set_size"])
+
+    # Run all motif analysis
+    for name, s in df.iterrows():
+        meme_ame(s["foreground_fasta"], s["ame_dir"], s["background_fasta"])
+
+    # Collect all motif analysis
+    results = dict()
+    for name, s in df.iterrows():
+        results[s.name] = parse_ame(s["ame_dir"])
+
+    res = pd.DataFrame([pd.Series(dict(res), name=name) for name, res in results.items()]).fillna(0.05).astype(float)
+
+    df.replace(np.inf, np.nan)
+
+    res2 = -np.log10(0.1 + res)
+
+    # Compare somehow
+
+    sns.heatmap(res2)
+    sns.clustermap(res2)
+
+    sns.clustermap(res2.corr())
+    sns.clustermap(res2.T.corr())
+
+    # find varying conditions
+    res3 = res[res.var(1) > 0.0001]  # filter comparisons
+    res3 = res3[res3.columns[res3.var(0) > 0.00002]]  # filter TFs
+    sns.clustermap(res3)
+
+    # filter conditions which give less high scores ubiquitously
+    res3.ix[res3.index[(res3.mean(1) < 0.9)]]
+
+    # group by comparison
+
+    res2.iloc[res2.index.str.contains("DESEQ"), :]
+
+    res4 = res2.iloc[~res2.index.str.contains("all"), :]
+
+    res4 = res2.iloc[res2.index.str.contains("ML"), :]
+    sns.clustermap(res4.iloc[~res4.index.str.contains("all"), :])
+
+    res4 = res2.iloc[res2.index.str.contains("DESEQ"), :]
+    sns.clustermap(res4.iloc[~res4.index.str.contains("all"), :])
+
+    # Get most dissimilar pair of vectors between uCLL and mCLL with same parameters
+    cols = ['set_name', 'method', 'group', 'set_size', 'seq_lengths', 'length_type']
+    df2 = df[cols].join(res2)
+
+    corrs = dict()
+    for comp, s in df2[~df2.index.str.contains("all")].groupby(['method', 'set_size', 'seq_lengths', 'length_type']):
+        corrs[comp] = s[s.columns[~s.columns.isin(cols)]].T.corr().iloc[1, 1]
 
 
 def characterize_regions_expression(analysis, traits, extend=False):
