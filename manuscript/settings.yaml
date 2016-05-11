@@ -20,7 +20,7 @@ natbib-options:
     - super
     - comma
 csl: scholdoc.csl
-css: scholmd.min.css
+css: scholmd.css
 
 # This commands have to be added manually for Nature-style citations:
 # \usepackage[super,comma]{natbib}
