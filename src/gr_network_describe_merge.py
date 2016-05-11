@@ -34,27 +34,38 @@ def name_to_sample_id(name):
     return name.split("_")[3]
 
 
-def annotate_igvh_mutations(samples, clinical):
-    new_samples = list()
-
-    for sample in samples:
-        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
-            _id = name_to_sample_id(sample.name)
-            if clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 1:
-                sample.mutated = True
-            elif clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 2:
-                sample.mutated = False
-            else:
-                sample.mutated = None
-        else:
-            sample.mutated = None
-        new_samples.append(sample)
-    return new_samples
-
-
-def annotate_treatments(samples, clinical):
+def annotate_clinical_traits(samples):
     """
-    Annotate samples with timepoint, treatment_status, treatment_type
+    Annotate samples with clinical traits.
+    """
+    # Annotate traits
+    chemo_drugs = ["Chlor", "Chlor R", "B Of", "BR", "CHOPR"]  # Chemotherapy
+    target_drugs = ["Alemtuz", "Ibrutinib"]  # targeted treatments
+    muts = ["del13", "del11", "tri12", "del17"]  # chrom abnorms
+    muts += ["SF3B1", "ATM", "NOTCH1", "BIRC3", "BCL2", "TP53", "MYD88", "CHD2", "NFKIE"]  # mutations
+    for s in samples:
+        # Gender
+        s.gender = 1 if s.patient_gender == "M" else 0 if s.patient_gender == "F" else pd.np.nan
+        # IGHV mutation status
+        s.IGHV = s.ighv_mutation_status
+
+    # Annotate samples which are under treament but with different types
+    for sample in samples:
+        if not sample.under_treatment:
+            sample.chemo_treated = pd.np.nan
+            sample.target_treated = pd.np.nan
+        else:
+            sample.chemo_treated = 1 if sample.treatment_regimen in chemo_drugs else 0
+            sample.target_treated = 1 if sample.treatment_regimen in target_drugs else 0
+        for mut in muts:
+            setattr(sample, mut, 1 if sample.mutations is not pd.np.nan and mut in str(sample.mutations) else 0)
+
+    return samples
+
+
+def annotate_disease_treatments(samples):
+    """
+    Annotate samples with timepoint, treatment_status, treatment_regimen
     """
     def string_to_date(string):
         if type(string) is str:
@@ -69,128 +80,52 @@ def annotate_treatments(samples, clinical):
     new_samples = list()
 
     for sample in samples:
-        if sample.cellLine == "CLL":
-            # get sample id
-            sample_id = name_to_sample_id(sample.name)
-
-            # get corresponding series from "clinical"
-            sample_c = clinical[clinical['sample_id'] == sample_id].squeeze()
-
+        if sample.cell_line == "CLL":
             # Get sample collection date
-            sample.collection_date = string_to_date(sample_c['sample_collection_date'])
+            sample.collection_date = string_to_date(sample.sample_collection_date)
             # Get diagnosis date
-            sample.diagnosis_date = string_to_date(sample_c['diagnosis_date'])
+            sample.diagnosis_date = string_to_date(sample.diagnosis_date)
             # Get diagnosis disease
-            sample.diagnosis_disease = sample_c['diagnosis_disease'] if type(sample_c['diagnosis_disease']) is str else None
+            sample.primary_CLL = 1 if sample.diagnosis_disease == "CLL" else 0  # binary label useful for later
+
             # Get time since diagnosis
             sample.time_since_diagnosis = sample.collection_date - sample.diagnosis_date
 
-            # Get all treatment dates
-            treatment_dates = [string_to_date(date) for date in sample_c[["treatment_%i_date" % (x) for x in range(1, 5)]].squeeze()]
-            # Get treatment end date
-            treatment_end_date = string_to_date(clinical[(clinical['sample_id'] == sample_id)][["treatment_end_date"]])
-            # Check if there are earlier "timepoints"
-            earlier_dates = [treatment_date for treatment_date in treatment_dates if treatment_date < sample.collection_date]
-
-            # Annotate samples with active treatment
-            for treatment_date in treatment_dates:
-                # if one of the treatment dates is earlier
-                if treatment_date < sample.collection_date:
-                    # this sample was not collected at diagnosis time
-                    sample.diagnosis_collection = False
-                    # and no treatment end date in between, mark as under treatment
-                    if treatment_end_date is pd.NaT:
-                        sample.treatment_active = True
-                    else:
-                        if treatment_date < treatment_end_date < sample.collection_date:
-                            sample.treatment_active = False
-                        elif treatment_date < sample.collection_date < treatment_end_date:
-                            sample.treatment_active = True
-            # if there were no treatments before collection, consider untreated
-            if not hasattr(sample, "treatment_active"):
-                sample.treatment_active = False
-                # if there were no treatments before collection, and collection was within 30 days of diagnosis, tag as collected at diagnosis
-                if sample.time_since_diagnosis is not pd.NaT:
-                    if abs(sample.time_since_diagnosis) < pd.to_timedelta(30, unit="days"):
-                        sample.diagnosis_collection = True
-            if not hasattr(sample, "diagnosis_collection"):
-                sample.diagnosis_collection = False
-
             # Annotate treatment type, time since treatment
-            if sample.treatment_active:
-                if len(earlier_dates) > 0:
-                    # Find out which earlier "timepoint" is closest and annotate treatment and response
-                    previous_dates = [date for date in clinical[(clinical['sample_id'] == sample_id)][["treatment_%i_date" % (x) for x in range(1, 5)]].squeeze()]
-                    closest_date = previous_dates[np.argmin([abs(date - sample.collection_date) for date in earlier_dates])]
-
-                    # Annotate previous treatment date
-                    sample.previous_treatment_date = string_to_date(closest_date)
-                    # Annotate time since treatment
-                    sample.time_since_treatment = sample.collection_date - string_to_date(closest_date)
-
-                    # Get closest clinical "timepoint", annotate response
-                    closest_timepoint = [tp for tp in range(1, 5) if closest_date == sample_c["treatment_%i_date" % tp]][0]
-
-                    sample.treatment_type = sample_c['treatment_%i_regimen' % closest_timepoint]
-                    sample.treatment_response = sample_c['treatment_%i_response' % closest_timepoint]
-
-            # Annotate relapses
-            # are there previous timepoints with good response?
-            # Get previous clinical "timepoints", annotate response
-            if len(earlier_dates) > 0:
-                closest_timepoint = [tp for tp in range(1, 5) if closest_date == sample_c["treatment_%i_date" % tp]][0]
-
-                # Annotate with previous known response
-                sample.previous_response = sample_c['treatment_%i_response' % closest_timepoint]
-
-                # if prior had bad response, mark current as relapse
-                if sample_c['treatment_%i_response' % closest_timepoint] in ["CR", "GR"]:
-                    sample.relapse = True
-                else:
-                    sample.relapse = False
-            else:
-                sample.relapse = False
-
-        # If any attribute is not set, set to None
-        for attr in ['diagnosis_collection', 'diagnosis_date', 'diagnosis_disease', 'time_since_treatment', 'treatment_type',
-                     'treatment_response', "treatment_active", "previous_treatment_date", "previous_response", 'relapse']:
-            if not hasattr(sample, attr):
-                setattr(sample, attr, None)
+            if sample.under_treatment:
+                sample.time_since_treatment = sample.collection_date - string_to_date(sample.treatment_date)
 
         # Append sample
         new_samples.append(sample)
     return new_samples
 
 
-def annotate_gender(samples, clinical):
+def annotate_samples(samples, attrs):
+    """
+    Annotate samples with all available traits.
+    """
     new_samples = list()
-
     for sample in samples:
-        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
-            _id = name_to_sample_id(sample.name)
-            if clinical.loc[clinical['sample_id'] == _id, 'patient_gender'].tolist()[0] == "F":
-                sample.patient_gender = "F"
-            elif clinical.loc[clinical['sample_id'] == _id, 'patient_gender'].tolist()[0] == "M":
-                sample.patient_gender = "M"
-            else:
-                sample.patient_gender = None
-        else:
-            sample.patient_gender = None
+        # If any attribute is not set, set to NaN
+        for attr in attrs:
+            if not hasattr(sample, attr):
+                setattr(sample, attr, pd.np.nan)
         new_samples.append(sample)
-    return new_samples
 
-
-def annotate_mutations(samples, clinical):
-    new_samples = list()
-
+    # read in file with IGHV group of samples selected for ChIPmentation
+    selected = pd.read_csv(os.path.join("metadata", "selected_samples.tsv"), sep="\t").astype(str)
+    # annotate samples with the respective IGHV group
     for sample in samples:
-        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
-            _id = name_to_sample_id(sample.name)
-            sample.mutations = clinical[clinical['sample_id'] == _id]['mutations'].tolist()[0]
+        group = selected[
+            (selected["patient_id"].astype(str) == str(sample.patient_id)) &
+            (selected["sample_id"].astype(str) == str(sample.sample_id))
+        ]["sample_cluster"]
+        if len(group) == 1:
+            sample.ighv_group = group.squeeze()
         else:
-            sample.mutations = None
-        new_samples.append(sample)
-    return new_samples
+            sample.ighv_group = pd.np.nan
+
+    return annotate_clinical_traits(annotate_disease_treatments(new_samples))
 
 
 def create_graph(network_file):
@@ -472,26 +407,15 @@ sex_genes = pd.read_csv("sex_genes.csv")['name'].unique().tolist()
 expression_genes = pd.read_csv(os.path.join(data_dir, "cll_expression_matrix.log2.csv"))
 # map ensembl to genesymbol
 # add gene name and ensemble_gene_id
-ensembl_gtn = pd.read_table(os.path.join(data_dir, "ensemblToGeneName.txt"), header=None)
+ensembl_gtn = pd.read_table(os.path.join(data_dir, "external", "ensemblToGeneName.txt"), header=None)
 ensembl_gtn.columns = ['ensembl_transcript_id', 'gene_name']
-ensembl_gtp = pd.read_table(os.path.join(data_dir, "ensGtp.txt"), header=None)[[0, 1]]
+ensembl_gtp = pd.read_table(os.path.join(data_dir, "external", "ensGtp.txt"), header=None)[[0, 1]]
 ensembl_gtp.columns = ['ensembl_gene_id', 'ensembl_transcript_id']
-gene_annotation = pd.merge(ensembl_gtn, ensembl_gtp, how="left")[["gene_name", "ensembl_gene_id"]].drop_duplicates()
-expression_genes = pd.merge(expression_genes, gene_annotation, how="left")
-
-# visualize expression distribution
-sns.distplot(expression_genes["median"])
-
-# set expression threshold
-expression_genes_filtered = expression_genes[expression_genes['median'] >= 1]
-
-# get only expressed TFs
-new_graph_file = os.path.join("/home/arendeiro/cll-patients/netwx/merged-samples_all_all.piq.TF-gene_interactions.filtered.tsv")
-tfs = pd.read_table(new_graph_file)['TF'].drop_duplicates()
-expressed_tfs = tfs[tfs.isin(expression_genes_filtered["gene_name"])].tolist()
+gene_annotation = pd.merge(ensembl_gtn, ensembl_gtp, how="left")[["gene_name", "external", "ensembl_gene_id"]].drop_duplicates()
 
 # simpler ighv network comparison
-new_graph_file = os.path.join("/home/arendeiro/cll-patients/netwx/merged-samples_all_all.piq.TF-gene_interactions.filtered.tsv")
+new_graph_file = os.path.join("merged-samples_all_all.piq.TF-gene_interactions.filtered.tsv")
+tfs = pd.read_table(new_graph_file)['TF'].drop_duplicates()
 G = create_graph(new_graph_file)
 
 # degree of all nodes
@@ -510,17 +434,17 @@ nx.write_gexf(g, "merged-samples_all_all.piq.TF-gene_interactions.filtered.top.g
 
 
 # IGHV comparison
-u = pd.read_csv("netwx/merged-samples_mutated_False.piq.TF-gene_interactions.tsv", sep="\t")
+u = pd.read_csv("merged-samples_mutated_False.piq.TF-gene_interactions.tsv", sep="\t")
 u = u[u['interaction_score'] > 1]
-u.to_csv("netwx/merged-samples_mutated_False.piq.TF-gene_interactions.filtered.tsv", sep="\t", index=False)
-m = pd.read_csv("netwx/merged-samples_mutated_True.piq.TF-gene_interactions.tsv", sep="\t")
+u.to_csv("merged-samples_mutated_False.piq.TF-gene_interactions.filtered.tsv", sep="\t", index=False)
+m = pd.read_csv("merged-samples_mutated_True.piq.TF-gene_interactions.tsv", sep="\t")
 m = m[m['interaction_score'] > 1]
-m.to_csv("netwx/merged-samples_mutated_True.piq.TF-gene_interactions.filtered.tsv", sep="\t", index=False)
+m.to_csv("merged-samples_mutated_True.piq.TF-gene_interactions.filtered.tsv", sep="\t", index=False)
 
-graph_file = os.path.join("netwx", "merged-samples_mutated_False.piq.TF-gene_interactions.filtered.tsv")
+graph_file = os.path.join("merged-samples_mutated_False.piq.TF-gene_interactions.filtered.tsv")
 uG = create_graph(graph_file)
 
-graph_file = os.path.join("netwx", "merged-samples_mutated_True.piq.TF-gene_interactions.filtered.tsv")
+graph_file = os.path.join("merged-samples_mutated_True.piq.TF-gene_interactions.filtered.tsv")
 mG = create_graph(graph_file)
 
 # remove sex genes
@@ -563,7 +487,7 @@ plt.plot([0, 4], [0, 4], '--')
 diff = df['u'] - df['m']
 
 # write differential results
-diff.to_csv(os.path.join("netwx", "merged-samples.TF-gene_interactions.IGHV_differential.csv"), index=True)
+diff.to_csv(os.path.join("merged-samples.TF-gene_interactions.IGHV_differential.csv"), index=True)
 
 
 # coverage_qnorm_annotated = pd.read_csv(os.path.join("data", "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
@@ -594,6 +518,7 @@ axis.scatter(diff.rank(ascending=False, method='first'), diff, linewidth=0, colo
 fig.savefig("all_fc.rank_fc.svg", bbox_inches="tight")
 
 # cll genes' change
+cllgenes = pd.read_csv(os.path.join("metadata", "gene_lists", "bcell_cll_genelist.tsv"), sep="\t")["gene_name"]
 diffcll = diff.ix[cllgenes]
 diffcll.sort(ascending=False)
 fig, axis = plt.subplots(1)
@@ -671,92 +596,6 @@ nx.set_node_attributes(g, 'absfold_change', absfc_dict)
 nx.write_gexf(g, "netx.fold_change.string.gexf")
 
 
-# Test enrichment of oncogenes/tumour suppressors in lists
-from scipy.stats import fisher_exact
-# read in tumour suppresor list
-ts = pd.read_table("tumour_suppressors.txt", header=None)[0].tolist()
-onc = pd.read_table("oncogenes.txt", header=None)[0].tolist()
-
-# store results
-df2 = pd.DataFrame()
-# read in tumour suppresor list
-# uCLL
-print("uCLL")
-a = len([i for i in diff[diff > 1].index if i in onc])
-b = len([i for i in diff[diff > 1].index if i not in onc])
-c = len([i for i in diff[diff < 1].index if i in onc])
-d = len([i for i in diff[diff < 1].index if i not in onc])
-o, p = fisher_exact([[a, b], [c, d]])
-df2 = df2.append(pd.Series([a / float(b), o, p, "onc", "u"]), ignore_index=True)
-
-a = len([i for i in diff[diff > 1].index if i in ts])
-b = len([i for i in diff[diff > 1].index if i not in ts])
-c = len([i for i in diff[diff < 1].index if i in ts])
-d = len([i for i in diff[diff < 1].index if i not in ts])
-o, p = fisher_exact([[a, b], [c, d]])
-df2 = df2.append(pd.Series([a / float(b), o, p, "ts", "u"]), ignore_index=True)
-
-# mCLL
-print("mCLL")
-a = len([i for i in diff[diff < -1].index if i in onc])
-b = len([i for i in diff[diff < -1].index if i not in onc])
-c = len([i for i in diff[diff > -1].index if i in onc])
-d = len([i for i in diff[diff > -1].index if i not in onc])
-o, p = fisher_exact([[a, b], [c, d]])
-df2 = df2.append(pd.Series([a / float(b), o, p, "onc", "m"]), ignore_index=True)
-
-a = len([i for i in diff[diff < -1].index if i in ts])
-b = len([i for i in diff[diff < -1].index if i not in ts])
-c = len([i for i in diff[diff > -1].index if i in ts])
-d = len([i for i in diff[diff > -1].index if i not in ts])
-o, p = fisher_exact([[a, b], [c, d]])
-df2 = df2.append(pd.Series([a / float(b), o, p, "ts", "m"]), ignore_index=True)
-df2.columns = ["count", "odds", "pvalue", "comparison", "cluster"]
-
-fig, axis = plt.subplots(1)
-sns.barplot('cluster', 'count', hue='comparison', data=df2, ax=axis)
-fig.savefig("oncogene_tumour-suppressors.enrichment.svg")
-
-
-# Exclusive nodes
-fc[fc.isnull()]
-
-ex = fc[fc.isnull()].index.tolist()
-
-orphans = dict()
-for gene in ex:
-    if gene in unode_degree.index:
-        orphans[gene] = unode_degree.ix[gene]
-    if gene in mnode_degree.index:
-        orphans[gene] = -mnode_degree.ix[gene]
-
-orphans = pd.Series(orphans)
-orphans.sort()
-
-sns.distplot(orphans)
-plt.savefig("orphans.distplot.svg", bbox_inches="tight")
-
-plt.scatter(orphans.rank(ascending=False, method='first'), orphans)
-plt.savefig("orphans.rank_degree.svg", bbox_inches="tight")
-
-
-# Exclusive interactions
-
-# simpler ighv network comparison
-graph_file = os.path.join(data_dir, "merged-samples_mutated_False.piq.TF-gene_interactions.filtered.tsv")
-uG = create_graph(graph_file)
-
-graph_file = os.path.join(data_dir, "merged-samples_mutated_True.piq.TF-gene_interactions.filtered.tsv")
-mG = create_graph(graph_file)
-
-
-uI = set(["-".join([i, j]) for i, j in uG.edges()])
-mI = set(["-".join([i, j]) for i, j in mG.edges()])
-
-uE = uI.difference(mI)
-mE = mI.difference(uI)
-
-
 # CD19-CLL comparison
 # Load up joint CLL network
 new_graph_file = os.path.join("/home/arendeiro/cll-patients/netwx/merged-samples_all_all.piq.TF-gene_interactions.filtered.tsv")
@@ -807,29 +646,6 @@ sns.despine()
 plt.savefig(os.path.join(
     plots_dir, "cll-cd19_network.structure_comparison.net.svg"),
     bbox_inches='tight')
-
-
-descG_f = descG[1].ix[expressed_tfs].reset_index()
-descG_f["group"] = "CLL"
-
-descGcd19_f = descGcd19[1].ix[expressed_tfs].reset_index()
-descGcd19_f["group"] = "CD19"
-
-melted = pd.concat([
-    pd.melt(descG_f, ['group', 'index']),
-    pd.melt(descGcd19_f, ['group', 'index'])
-])
-
-g = sns.FacetGrid(melted, row="group", col="variable", legend_out=True, margin_titles=True, sharey=False)
-g.map(sns.boxplot, "index", "value")
-sns.despine()
-plt.savefig(os.path.join(
-    plots_dir, "cll-cd19_network.structure_comparison.nodes.svg"),
-    bbox_inches='tight')
-
-melted.to_csv(
-    os.path.join(
-        plots_dir, "cll-cd19_network.structure_comparison.csv"), index=False)
 
 
 # CD19+ degree of all nodes
