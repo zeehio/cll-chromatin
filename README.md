@@ -5,7 +5,7 @@ Chromatin accessibility maps of chronic lymphocytic leukemia identify subtype-sp
 
 <sup>\*</sup>Shared first authors
 
-**Paper**: [http://dx.doi.org/10.1038/nmeth.3542](http://dx.doi.org/10.1038/nmeth.3542)
+**Paper**: [http://dx.doi.org/](http://dx.doi.org/)
 
 **Website**: [cll-chromatin.computational-epigenetics.org](http://cll-chromatin.computational-epigenetics.org)
 
@@ -30,7 +30,7 @@ this requires in general a full latex installation.
 
 #### Analysis
 
-The [`data`](data/external/) directory contains most of the output of the whole analysis.
+In the [paper website](http://cll-chromatin.computational-epigenetics.org) you can find most of the output of the whole analysis.
 
 Here are a few steps needed to reproduce it (more than I'd want to, I admit):
 
@@ -41,9 +41,9 @@ If you wish to reproduce the processing of the raw data (access has to be reques
 
 1. Apply for access to the raw data from [EGA](https://www.ebi.ac.uk/ega/datasets/).
 2. Download the data localy.
-3. Prepare [Looper](https://github.com/epigen/looper) configuration files similar to [these](metadata/project_config_file.yaml) that fit your local system.
+3. Prepare [Looper](https://github.com/epigen/looper) configuration files similar to [these](metadata/project_config.yaml) that fit your local system.
 4. Run samples through the pipeline: `make preprocessing` or `looper -c metadata/project_config_file.yaml`
-5. Get external files (genome annotations mostly): `make external_files` or use the files in [data/external](data/external/).
+5. Get external files (genome annotations mostly): `make external_files` or use the files in the [paper website](http://cll-chromatin.computational-epigenetics.org) (`external` folder).
 6. Run the analysis: `make analysis`
 
 Additionaly, processed (bigWig and narrowPeak files together with a gene expression matrix) are available from [GEO with accession number GSE81274](http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE81274).
