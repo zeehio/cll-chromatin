@@ -24,7 +24,7 @@ metadata:
   # Typically, this project config file is stored with the project metadata
   # sample_annotation: one-row-per-sample metadata
   sample_annotation: /scratch/lab_bock/shared/projects/cll-chromatin/metadata/annotation.csv
-  merge_table: /scratch/lab_bock/shared/projects/cll-chromatin/metadata/merge_table.csv
+  merge_table:
 
 data_sources:
   # specify the ABSOLUTE PATH of input files using variable path expressions
@@ -54,9 +54,9 @@ compute:
   #submission_command: sh
 
 trackhubs:
-  trackhub_dir: /data/groups/lab_bock/public_html/arendeiro/cll-patients/
+  trackhub_dir: /data/groups/lab_bock/public_html/arendeiro/cll-chromatin/
   # url: if you include this, the make_trackhubs will produce a link to your track hub in the project folder.
-  url: http://biomedical-sequencing.at/bocklab/arendeiro/
+  url: http://biomedical-sequencing.at/bocklab/arendeiro/cll-chromatin/
 
 username: arendeiro
 email: arendeiro@cemm.oeaw.ac.at

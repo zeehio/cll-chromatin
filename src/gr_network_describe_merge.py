@@ -468,11 +468,31 @@ plots_dir = os.path.join(results_dir, "plots")
 # list of sex chromosome genes
 sex_genes = pd.read_csv("sex_genes.csv")['name'].unique().tolist()
 
-# simpler ighv network comparison
-new_graph_file = os.path.join("netx/merged-samples_all_all.piq.TF-gene_interactions.filtered.tsv")
-G = create_graph(new_graph_file)
+# get gene expression
+expression_genes = pd.read_csv(os.path.join(data_dir, "cll_expression_matrix.log2.csv"))
+# map ensembl to genesymbol
+# add gene name and ensemble_gene_id
+ensembl_gtn = pd.read_table(os.path.join(data_dir, "ensemblToGeneName.txt"), header=None)
+ensembl_gtn.columns = ['ensembl_transcript_id', 'gene_name']
+ensembl_gtp = pd.read_table(os.path.join(data_dir, "ensGtp.txt"), header=None)[[0, 1]]
+ensembl_gtp.columns = ['ensembl_gene_id', 'ensembl_transcript_id']
+gene_annotation = pd.merge(ensembl_gtn, ensembl_gtp, how="left")[["gene_name", "ensembl_gene_id"]].drop_duplicates()
+expression_genes = pd.merge(expression_genes, gene_annotation, how="left")
 
-tfs = pd.read_table(new_graph_file)['TF'].unique().tolist()
+# visualize expression distribution
+sns.distplot(expression_genes["median"])
+
+# set expression threshold
+expression_genes_filtered = expression_genes[expression_genes['median'] >= 1]
+
+# get only expressed TFs
+new_graph_file = os.path.join("/home/arendeiro/cll-patients/netwx/merged-samples_all_all.piq.TF-gene_interactions.filtered.tsv")
+tfs = pd.read_table(new_graph_file)['TF'].drop_duplicates()
+expressed_tfs = tfs[tfs.isin(expression_genes_filtered["gene_name"])].tolist()
+
+# simpler ighv network comparison
+new_graph_file = os.path.join("/home/arendeiro/cll-patients/netwx/merged-samples_all_all.piq.TF-gene_interactions.filtered.tsv")
+G = create_graph(new_graph_file)
 
 # degree of all nodes
 d = pd.Series(G.degree())
@@ -490,19 +510,39 @@ nx.write_gexf(g, "merged-samples_all_all.piq.TF-gene_interactions.filtered.top.g
 
 
 # IGHV comparison
-graph_file = os.path.join(data_dir, "merged-samples_mutated_False.piq.TF-gene_interactions.filtered.tsv")
+u = pd.read_csv("netwx/merged-samples_mutated_False.piq.TF-gene_interactions.tsv", sep="\t")
+u = u[u['interaction_score'] > 1]
+u.to_csv("netwx/merged-samples_mutated_False.piq.TF-gene_interactions.filtered.tsv", sep="\t", index=False)
+m = pd.read_csv("netwx/merged-samples_mutated_True.piq.TF-gene_interactions.tsv", sep="\t")
+m = m[m['interaction_score'] > 1]
+m.to_csv("netwx/merged-samples_mutated_True.piq.TF-gene_interactions.filtered.tsv", sep="\t", index=False)
+
+graph_file = os.path.join("netwx", "merged-samples_mutated_False.piq.TF-gene_interactions.filtered.tsv")
 uG = create_graph(graph_file)
 
-graph_file = os.path.join(data_dir, "merged-samples_mutated_True.piq.TF-gene_interactions.filtered.tsv")
+graph_file = os.path.join("netwx", "merged-samples_mutated_True.piq.TF-gene_interactions.filtered.tsv")
 mG = create_graph(graph_file)
 
-g = uG.subgraph(d[d > 200].index)
-nx.set_node_attributes(g, 'abs_degree', {n: int(d.to_dict()[n]) for n in g.nodes()})
-nx.write_gexf(g, "merged-samples_mutated_False.piq.TF-gene_interactions.filtered.top.gexf")
+# remove sex genes
+uG.remove_nodes_from(sex_genes)
+mG.remove_nodes_from(sex_genes)
 
-g = mG.subgraph(d[d > 200].index)
+# remove outgoing nodes of non expressed TFs
+# uG.remove_edges_from(uG.out_edges(expressed_tfs))
+# mG.remove_edges_from(mG.out_edges(expressed_tfs))
+
+d = pd.Series(uG.degree())
+g = uG.subgraph(d[d > 20].index)
+# g = uG
 nx.set_node_attributes(g, 'abs_degree', {n: int(d.to_dict()[n]) for n in g.nodes()})
-nx.write_gexf(g, "merged-samples_mutated_True.piq.TF-gene_interactions.filtered.top.gexf")
+nx.write_gexf(g, "merged-samples_mutated_False.piq.TF-gene_interactions.filtered.filtered_gene_exp.top.gexf")
+nx.write_gexf(uG, "merged-samples_mutated_False.piq.TF-gene_interactions.filtered.filtered_gene_exp.gexf")
+
+d = pd.Series(mG.degree())
+g = mG.subgraph(d[d > 20].index)
+nx.set_node_attributes(g, 'abs_degree', {n: int(d.to_dict()[n]) for n in g.nodes()})
+nx.write_gexf(g, "merged-samples_mutated_True.piq.TF-gene_interactions.filtered.filtered_gene_exp.top.gexf")
+nx.write_gexf(mG, "merged-samples_mutated_True.piq.TF-gene_interactions.filtered.filtered_gene_exp.gexf")
 
 
 unode_degree = pd.Series(uG.degree(), name="degree")
@@ -521,6 +561,10 @@ plt.plot([0, 4], [0, 4], '--')
 
 # let's look at the difference now
 diff = df['u'] - df['m']
+
+# write differential results
+diff.to_csv(os.path.join("netwx", "merged-samples.TF-gene_interactions.IGHV_differential.csv"), index=True)
+
 
 # coverage_qnorm_annotated = pd.read_csv(os.path.join("data", "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t")
 # names = coverage_qnorm_annotated.columns[coverage_qnorm_annotated.columns.str.contains("CLL")]
@@ -711,3 +755,109 @@ mI = set(["-".join([i, j]) for i, j in mG.edges()])
 
 uE = uI.difference(mI)
 mE = mI.difference(uI)
+
+
+# CD19-CLL comparison
+# Load up joint CLL network
+new_graph_file = os.path.join("/home/arendeiro/cll-patients/netwx/merged-samples_all_all.piq.TF-gene_interactions.filtered.tsv")
+G = create_graph(new_graph_file)
+
+# Load up CD19 network
+out_dir = os.path.abspath(os.path.join(data_dir, "external", "CD19_DNase"))
+foots_dir = os.path.join(out_dir, "footprints")
+label = "CD19_DNase"
+graph_file = os.path.join(foots_dir, label + ".piq.TF-gene_interactions.filtered.tsv")
+cd19G = create_graph(graph_file)
+
+# get node degree
+cll_node_degree = pd.Series(G.degree(), name="degree")
+cd19_node_degree = pd.Series(cd19G.degree(), name="degree")
+
+# Compare nodes
+df = pd.DataFrame([cll_node_degree, cd19_node_degree]).T
+df.columns = ['cll', 'cd19']
+# normalize
+df = df.apply(lambda x: (x - x.mean() / x.std()), axis=0)
+
+# handle nodes not detected in both
+# df = np.log2(1 + df.fillna(0))  # assume no binding
+df = np.log2(1 + df.dropna())  # exclude genes
+
+plt.scatter(df['cll'], df['cd19'])
+plt.plot([0, 14], [0, 14], '--')
+
+# let's look at the difference now
+diff = df['cll'] - df['cd19']
+
+
+# Describe structure of CD19 and CLL networks
+descG = describe_graph(G)
+descGcd19 = describe_graph(cd19G)
+plot_graph_attributes()
+
+descG[0]["group"] = "CLL"
+descGcd19[0]["group"] = "CD19"
+
+desc = pd.DataFrame([descG[0], descGcd19[0]])
+melted = pd.melt(desc, ['group'])
+
+g = sns.FacetGrid(melted, col="variable", col_wrap=4, legend_out=True, margin_titles=True, sharey=False)
+g.map(sns.barplot, "group", "value")
+sns.despine()
+plt.savefig(os.path.join(
+    plots_dir, "cll-cd19_network.structure_comparison.net.svg"),
+    bbox_inches='tight')
+
+
+descG_f = descG[1].ix[expressed_tfs].reset_index()
+descG_f["group"] = "CLL"
+
+descGcd19_f = descGcd19[1].ix[expressed_tfs].reset_index()
+descGcd19_f["group"] = "CD19"
+
+melted = pd.concat([
+    pd.melt(descG_f, ['group', 'index']),
+    pd.melt(descGcd19_f, ['group', 'index'])
+])
+
+g = sns.FacetGrid(melted, row="group", col="variable", legend_out=True, margin_titles=True, sharey=False)
+g.map(sns.boxplot, "index", "value")
+sns.despine()
+plt.savefig(os.path.join(
+    plots_dir, "cll-cd19_network.structure_comparison.nodes.svg"),
+    bbox_inches='tight')
+
+melted.to_csv(
+    os.path.join(
+        plots_dir, "cll-cd19_network.structure_comparison.csv"), index=False)
+
+
+# CD19+ degree of all nodes
+
+import matplotlib
+pd.set_option("date_dayfirst", True)
+sns.set(context="paper", style="white")
+sns.set_style({'font.family': 'sans-serif', 'font.sans-serif': ['Helvetica']})
+sns.set_palette(sns.color_palette("colorblind"))
+matplotlib.rcParams["svg.fonttype"] = "none"
+matplotlib.rc('font', **{'family': 'sans-serif', 'sans-serif': ['Helvetica']})
+matplotlib.rc('text', usetex=False)
+
+tfs = pd.read_table(new_graph_file)['TF'].drop_duplicates().tolist()
+d = pd.Series(cd19G.degree())
+d.sort()
+fig, axis = plt.subplots(1)
+colors = ["#d7191c" if i in tfs else "#669fb8" for i in d.index]
+axis.scatter(d.rank(ascending=False, method='first'), np.log2(d), linewidth=0, color=colors)
+sns.despine()
+fig.savefig(os.path.join(
+    plots_dir, "cd19_network.node_degree.svg"), bbox_inches="tight")
+
+d = pd.Series(G.degree())
+d.sort()
+fig, axis = plt.subplots(1)
+colors = ["#d7191c" if i in tfs else "#669fb8" for i in d.index]
+axis.scatter(d.rank(ascending=False, method='first'), np.log2(d), linewidth=0, color=colors)
+sns.despine()
+fig.savefig(os.path.join(
+    plots_dir, "cll_network.node_degree.svg"), bbox_inches="tight")

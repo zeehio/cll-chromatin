@@ -126,7 +126,7 @@ for sample in prj.samples:
     sambamba index -t 4 {0}
     """.format(sample.mapped)
     cmd += """
-    sambamba slice {0} chrM | sambamba markdup -t 4 /dev/stdin /home/arendeiro/scratch/{1}.dups.rmMe 2>  {2}
+    sambamba slice {0} chrM | sambamba markdup -t 4 /dev/stdin /home/arendeiro/scratch/{1}.dups.rmMe 2> {2}
     """.format(sample.mapped, sample.name, dups_log)
     cmd += tk.slurmFooter()
 
@@ -159,7 +159,7 @@ for sample in prj.samples:
 
         if e or mtE:
             print(sample.name, e, mtE)
-            continue
+            break
 
         s["name"] = sample.name if not e else None
         s["total_reads"] = float(allDups["single-ends"]) + (float(allDups["paired-ends"]) * 2) if not e else None
@@ -199,9 +199,6 @@ df = df.replace(to_replace="None", value=np.nan)
 # order columns
 df = df[["name", "total_reads", "duplicates", "%duplicates", "total MT", "% MT", "%dups MT", "%dups nuclear", "usable", "%usable", "peaks", "frip"]]
 
-# save table
-df.to_csv(os.path.join("/home/arendeiro", "seq_stats.mitochondria_duplicates.csv"), index=False)
-
 # PLOT
 df2 = df[df.name.str.contains("ATAC-seq")].sort(["total_reads"], ascending=False)
 # stripplot on a grid
@@ -224,3 +221,13 @@ sns.despine(left=True, bottom=True)
 
 # save plot
 plt.savefig(os.path.join(plots_dir, "seq_stats.mitochondria_duplicates.svg"), bbox_inches="tight")
+
+
+# Convert reads to fragments
+cols = ["total_reads", "duplicates", "total MT", "usable"]
+
+for col in cols:
+    df[col] = (df[col] / 2.).round()
+
+# save table
+df.to_csv(os.path.join("/home/arendeiro", "seq_stats.mitochondria_duplicates.csv"), index=False)

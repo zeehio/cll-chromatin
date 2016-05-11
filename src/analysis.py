@@ -4,16 +4,10 @@
 This is the main script of the cll-patients project.
 """
 
-# %logstart  # log ipython session
-
-import matplotlib
-matplotlib.use('Agg')
-matplotlib.rcParams['backend'] = "Agg"
-# import recipy
 from argparse import ArgumentParser
 import os
 import sys
-from pipelines.models import Project
+from looper.models import Project
 import pybedtools
 import matplotlib
 import matplotlib.pyplot as plt
@@ -24,11 +18,7 @@ import parmap
 import pysam
 import numpy as np
 import pandas as pd
-# import dask.dataframe as dd
-try:  # stupid bug, importing it twice works
-    from sklearn import cross_validation
-except AttributeError:
-    from sklearn import cross_validation
+from sklearn import cross_validation
 from sklearn.preprocessing import normalize
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
@@ -108,7 +98,7 @@ class Analysis(object):
 
         # Filter
         # remove blacklist regions
-        blacklist = pybedtools.BedTool(os.path.join(self.data_dir, "wgEncodeDacMapabilityConsensusExcludable.bed"))
+        blacklist = pybedtools.BedTool(os.path.join(self.data_dir, "external", "wgEncodeDacMapabilityConsensusExcludable.bed"))
         # remove chrM peaks and save
         sites.intersect(v=True, b=blacklist).filter(lambda x: x.chrom != 'chrM').saveas(os.path.join(self.data_dir, "cll_peaks.bed"))
 
@@ -323,7 +313,7 @@ class Analysis(object):
         Needs files downloaded by prepare_external_files.py
         """
         # create bedtool with hg19 TSS positions
-        hg19_ensembl_tss = pybedtools.BedTool(os.path.join(self.data_dir, "ensembl_tss.bed"))
+        hg19_ensembl_tss = pybedtools.BedTool(os.path.join(self.data_dir, "external", "ensembl_tss.bed"))
         # get closest TSS of each cll peak
         closest = self.sites.closest(hg19_ensembl_tss, d=True).to_dataframe()[['chrom', 'start', 'end', 'thickStart', 'blockCount']]
 
@@ -332,10 +322,10 @@ class Analysis(object):
         gene_annotation.columns = ['chrom', 'start', 'end', 'ensembl_transcript_id', 'distance']
 
         # add gene name and ensemble_gene_id
-        ensembl_gtn = pd.read_table(os.path.join(self.data_dir, "ensemblToGeneName.txt"), header=None)
+        ensembl_gtn = pd.read_table(os.path.join(self.data_dir, "external", "ensemblToGeneName.txt"), header=None)
         ensembl_gtn.columns = ['ensembl_transcript_id', 'gene_name']
 
-        ensembl_gtp = pd.read_table(os.path.join(self.data_dir, "ensGtp.txt"), header=None)[[0, 1]]
+        ensembl_gtp = pd.read_table(os.path.join(self.data_dir, "external", "ensGtp.txt"), header=None)[[0, 1]]
         ensembl_gtp.columns = ['ensembl_gene_id', 'ensembl_transcript_id']
 
         gene_annotation = pd.merge(gene_annotation, ensembl_gtn, how="left")
@@ -363,7 +353,7 @@ class Analysis(object):
 
         for i, region in enumerate(regions):
             region_name = region.replace(".bed", "").replace("ensembl_", "")
-            r = pybedtools.BedTool(os.path.join(self.data_dir, region))
+            r = pybedtools.BedTool(os.path.join(self.data_dir, "external", region))
             if region_name == "genes":
                 region_name = "intergenic"
                 df = self.sites.intersect(r, wa=True, f=0.2, v=True).to_dataframe()
@@ -401,7 +391,7 @@ class Analysis(object):
         Needs files downloaded by prepare_external_files.py
         """
         # create bedtool with CD19 chromatin states
-        states_cd19 = pybedtools.BedTool(os.path.join(self.data_dir, "E032_15_coreMarks_mnemonics.bed"))
+        states_cd19 = pybedtools.BedTool(os.path.join(self.data_dir, "external", "E032_15_coreMarks_mnemonics.bed"))
 
         # create background
         # shuffle regions in genome to create background (keep them in the same chromossome)
@@ -522,44 +512,6 @@ class Analysis(object):
         self.coverage_qnorm_annotated['fold_change'] = self.coverage_qnorm_annotated[[sample.name for sample in samples]].apply(lambda x: x.max() - x.min(), axis=1)
 
         self.coverage_qnorm_annotated.to_csv(os.path.join(self.data_dir, "cll_peaks.coverage_qnorm.log2.annotated.tsv"), sep="\t", index=False)
-
-    def variability(self):
-        # Variable region analysis
-        df = self.coverage_qnorm_annotated
-        # separate in three groups
-        out = dict()
-        out[1] = df[df['dispersion'] < 0.35]
-        out[2] = df[
-            (df['dispersion'] > 0.35) &
-            (df['dispersion'] < 0.9)]
-        out[3] = df[df['dispersion'] > 0.9]
-        out[4] = df[df['dispersion'] > 1.5]
-
-        # get regions of groups, write bed file
-        out[1][['chrom', 'start', 'end']].to_csv("f1.bed", index=False, sep="\t", header=False)
-        out[2][['chrom', 'start', 'end']].to_csv("f2.bed", index=False, sep="\t", header=False)
-        out[3][['chrom', 'start', 'end']].to_csv("f3.bed", index=False, sep="\t", header=False)
-        out[4][['chrom', 'start', 'end']].to_csv("f4.bed", index=False, sep="\t", header=False)
-
-        # universe
-        df[['chrom', 'start', 'end']].to_csv("universe.bed", index=False, sep="\t", header=False)
-
-        # run lola
-        lola("f4.bed", "universe.bed", "data/variability-4")
-        lola("f3.bed", "universe.bed", "data/variability-3")
-        lola("f2.bed", "universe.bed", "data/variability-2")
-        lola("f1.bed", "universe.bed", "data/variability-1")
-
-        # get genes of groups
-        out2 = dict()
-        out2[1] = out[1]['gene_name'].unique()
-        out2[2] = out[2]['gene_name'].unique()
-        out2[3] = out[3]['gene_name'].unique()
-        out2[4] = out[4]['gene_name'].unique()
-        # write gene names to file
-        for i, d in out2.items():
-            with open("f%i-genes.txt" % i, 'w') as handle:
-                handle.writelines("\n".join(d.tolist()))
 
     def gene_oppeness_across_samples(self, samples):
         """
@@ -1321,8 +1273,12 @@ class Analysis(object):
         fig2.savefig(os.path.join(self.plots_dir, "gene_expression.differential_regions.accessibility.svg"), bbox_inches="tight")
 
     def correlate_expression_spanish_cohort(self):
+        """
+        Here I attempted to use publicly available RNA-seq data from CLL patients to correlate it with accessibility.
+        This analysis was NOT included in the manuscript.
+        """
         # get expression
-        expression_matrix = pd.read_csv(os.path.join("data", "CLL.geneReadcount.txt"), sep=" ")
+        expression_matrix = pd.read_csv(os.path.join("data", "external", "CLL.geneReadcount.txt"), sep=" ")
         expression_matrix.index = expression_matrix['geneid']
         # get values from numbered samples (n=98)
         expression_values = expression_matrix[[n for n in expression_matrix.columns if "X" == n[0]]]
@@ -1660,6 +1616,10 @@ class Analysis(object):
         plt.savefig(os.path.join(self.plots_dir, "norm_counts_per_sample.support_vs_qv2.filtered.svg"), bbox_inches="tight")
 
     def plot_qv2_fit(self):
+        """
+        Inspect how mean accessibility is related with variability.
+        Inspired by fit of distribution of squared coefficient of variation values in RNA-seq data.
+        """
         from scipy.optimize import curve_fit
         from scipy import stats
 
@@ -1669,8 +1629,8 @@ class Analysis(object):
             """
             return a * np.exp(-b * x) + c
 
-        X = np.array(self.rpkm['mean'])
-        Y = np.array(self.rpkm['qv2'])
+        X = np.array(self.coverage_qnorm_annotated['mean'])
+        Y = np.array(self.coverage_qnorm_annotated['qv2'])
 
         ci = 0.99
         # Convert to percentile point of the normal distribution.
@@ -1710,7 +1670,7 @@ class Analysis(object):
         axis[1].set_xlabel("mean")
         axis[1].set_ylabel("residuals")
 
-        plt.savefig(os.path.join(self.plots_dir, "rpkm_per_sample.qv2_vs_mean.fit_residuals.svg"), bbox_inches="tight")
+        plt.savefig(os.path.join(self.plots_dir, "qv2_vs_mean.fit_residuals.svg"), bbox_inches="tight")
 
 
 def add_args(parser):
@@ -1719,7 +1679,7 @@ def add_args(parser):
     """
     # Behaviour
     parser.add_argument("-g", "--generate", dest="generate", action="store_true",
-                        help="Should we generate data and plots? Default=False")
+                        help="Should we (re)generate data or just make plots? Default=False")
 
     return parser
 
@@ -1746,7 +1706,8 @@ def count_reads_in_intervals(bam, intervals):
 
 def normalize_quantiles(array):
     """
-    array with samples in the columns and probes across the rows
+    Quantile normalization implemented in Python code.
+    NOT used in the analysis.
     """
     n_array = np.zeros_like(array)
 
@@ -1758,6 +1719,9 @@ def normalize_quantiles(array):
 
 
 def normalize_quantiles_r(array):
+    """
+    Quantile normalization with R's preprocessCore package.
+    """
     # install package
     # R
     # source('http://bioconductor.org/biocLite.R')
@@ -1773,6 +1737,9 @@ def normalize_quantiles_r(array):
 
 
 def normalize_variation_r(array):
+    """
+    Variance stabilization normalization with R's limma package.
+    """
     import rpy2.robjects as robjects
     import rpy2.robjects.numpy2ri
     rpy2.robjects.numpy2ri.activate()
@@ -1800,6 +1767,10 @@ def name_to_sample_id(name):
 
 
 def samples_to_color(samples, trait="IGHV"):
+    """
+    Get color strings for each sample in samples depending
+    on specific traits of the samples.
+    """
     # unique color per patient
     if trait == "patient":
         patients = set([sample.patient_id for sample in samples])
@@ -1875,6 +1846,9 @@ def samples_to_color(samples, trait="IGHV"):
 
 
 def all_sample_colors(samples, order=""):
+    """
+    Get color strings for all available traits in samples.
+    """
     return [
         samples_to_color(samples, "patient"),
         samples_to_color(samples, "gender"),
@@ -1886,6 +1860,9 @@ def all_sample_colors(samples, order=""):
 
 
 def samples_to_symbol(samples, method="unique"):
+    """
+    Get individual symbols (for plotting) for either each patient, or each sample.
+    """
     from itertools import cycle
     valid = ['D', 'H', '^', 'd', 'h', 'o', 'p', 's', 'v']
     c = cycle([x for x in matplotlib.markers.MarkerStyle.markers.items() if x[0] in valid])
@@ -1905,6 +1882,9 @@ def samples_to_symbol(samples, method="unique"):
 
 
 def annotate_clinical_traits(samples):
+    """
+    Annotate samples with clinical traits.
+    """
     # Annotate traits
     chemo_drugs = ["Chlor", "Chlor R", "B Of", "BR", "CHOPR"]  # Chemotherapy
     target_drugs = ["Alemtuz", "Ibrutinib"]  # targeted treatments
@@ -1968,6 +1948,9 @@ def annotate_disease_treatments(samples):
 
 
 def annotate_samples(samples, attrs):
+    """
+    Annotate samples with all available traits.
+    """
     new_samples = list()
     for sample in samples:
         # If any attribute is not set, set to NaN
@@ -1993,6 +1976,10 @@ def annotate_samples(samples, attrs):
 
 
 def pca_r(x, colors, output_pdf):
+    """
+    PCA in the R implementation and plotting.
+    """
+
     import rpy2.robjects as robj
     import pandas.rpy.common as com
 
@@ -2043,7 +2030,7 @@ def pca_r(x, colors, output_pdf):
 
 def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
     """
-    Use a machine learning approach for sample classification based on known sample attributes.
+    Use a learning classifier on samples based on known sample attributes.
     Extract features most important to separate samples and investigate those.
     """
     print("Trait:%s" % trait)
@@ -2235,10 +2222,9 @@ def classify_samples(analysis, sel_samples, labels, trait, rerun=False):
         plt.close("all")
 
 
-def classification_random(analysis, sel_samples, labels, trait, n=100):
+def classification_random(analysis, sel_samples, labels, trait, n=1000):
     """
-    Use a machine learning approach for sample classification based on known sample attributes.
-    Extract features most important to separate samples and investigate those.
+    Use a learning classifier on samples with shuffled sample attributes (labels).
     """
     print("Trait:%s" % trait)
     print("%i samples with trait annotated" % len(sel_samples))
@@ -2363,6 +2349,7 @@ def classification_random(analysis, sel_samples, labels, trait, n=100):
 
 def differential_peaks_DESeq(counts_matrix, experiment_matrix, variable, output_prefix, alpha=0.05):
     """
+    Perform differential analysis using DESeq2.
     """
     import rpy2.robjects as robj
     from rpy2.robjects import pandas2ri
@@ -2419,7 +2406,7 @@ def differential_peaks_DESeq(counts_matrix, experiment_matrix, variable, output_
 
 def deseq_ml_comparison(analysis, samples, trait):
     """
-    Compare regions got from ML approach with statistical approach (DEseq)
+    Compare regions got from ML approach with statistical approach (DEseq).
     """
     sel_samples = [s for s in samples if not pd.isnull(getattr(s, trait))]
 
@@ -2437,15 +2424,14 @@ def deseq_ml_comparison(analysis, samples, trait):
         os.makedirs(output_dir)
 
     # Run DESeq2 analysis on IGHV mutation status
-    diff = differential_peaks_DESeq(
+    deseq_table = differential_peaks_DESeq(
         counts_matrix,
         experiment_matrix,
         "IGHV",
         output_prefix=output_dir + "/deseq2-",
         alpha=0.01)
 
-    deseq_table = pd.read_csv("data_submission/deseq_ml_comparison/deseq2-.A-B.csv").reset_index(drop=True)
-
+    # Add DESeq2 values to coverage matrix
     df = analysis.coverage.copy().reset_index(drop=True)
     for col in ['baseMean', 'log2FoldChange', 'padj']:
         df[col] = deseq_table[col]
@@ -2489,6 +2475,18 @@ def deseq_ml_comparison(analysis, samples, trait):
     df2 = df[["id", "baseMean", "log2FoldChange", "padj"]]
     # save
     df1.merge(df2, on=["id"]).to_csv(os.path.join(output_dir, "ml_regions.annotated_with_DEseq_stats.csv"), index=False)
+
+    # Annotate DESEq with chromatin stats (Supplementary Table)
+    deseq_out = analysis.coverage_qnorm_annotated
+    deseq_out = pd.merge(deseq_out, diff, on=['chrom', 'start', 'end'])[
+        ['chrom', 'start', 'end', 'support', u'mean', u'variance', u'dispersion', "gene_name", "genomic_region", "chromatin_state", "log2FoldChange", "padj"]]
+    # label direction
+    deseq_out["direction"] = deseq_out["log2FoldChange"].apply(lambda x: "mCLL" if x > 0 else "uCLL")
+    # label overlap
+    diff["id"] = diff.apply(lambda x: x["chrom"] + "-" + str(x["start"]) + ":" + str(x["end"]), axis=1)
+    deseq_out["id"] = deseq_out.apply(lambda x: x["chrom"] + "-" + str(x["start"]) + ":" + str(x["end"]), axis=1)
+    deseq_out["overlap"] = deseq_out["id"].isin(ml["id"])
+    deseq_out.to_csv(os.path.join(output_dir, "deseq_regions.annotated_with_DEseq_stats.csv"), index=False)
 
     # for several thresholds, plot overlap between sets
     overlap = pd.DataFrame()
@@ -2629,106 +2627,7 @@ def deseq_ml_comparison(analysis, samples, trait):
     pyu.plot(data_dict, unique_keys=['id'], inters_size_bounds=(1, 1e10))
     plt.savefig(os.path.join(output_dir, "set_intersection.all-ml-deseq.svg"), bbox_inches="tight")
 
-    #
-    diff = df[(abs(df["log2FoldChange"]) > 1) & (df["padj"] < 0.01)]
-    total = df
-
-    total["deseq_all"] = total["id"].isin(diff["id"]) + 0
-    total["deseq_uCLL"] = total["id"].isin(diff[diff["log2FoldChange"] < 0]["id"]) + 0
-    total["deseq_mCLL"] = total["id"].isin(diff[diff["log2FoldChange"] > 0]["id"]) + 0
-    total["ml_all"] = total["id"].isin(ml["id"]) + 0
-    total["ml_uCLL"] = total["id"].isin(ml[ml["direction"] == -1]["id"]) + 0
-    total["ml_mCLL"] = total["id"].isin(ml[ml["direction"] == 1]["id"]) + 0
-
-    total[["id", "deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"]].to_csv(os.path.join(output_dir, "upsetr_sets_001_1.csv"))
-
-    diff = df[(df["padj"] < 0.01)]
-    total = df
-
-    total["deseq_all"] = total["id"].isin(diff["id"]) + 0
-    total["deseq_uCLL"] = total["id"].isin(diff[diff["log2FoldChange"] < 0]["id"]) + 0
-    total["deseq_mCLL"] = total["id"].isin(diff[diff["log2FoldChange"] > 0]["id"]) + 0
-    total["ml_all"] = total["id"].isin(ml["id"]) + 0
-    total["ml_uCLL"] = total["id"].isin(ml[ml["direction"] == -1]["id"]) + 0
-    total["ml_mCLL"] = total["id"].isin(ml[ml["direction"] == 1]["id"]) + 0
-
-    total[["id", "deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"]].to_csv(os.path.join(output_dir, "upsetr_sets_001_0.csv"))
-
-    diff = df[(abs(df["log2FoldChange"]) > 0.5) & (df["padj"] < 0.01)]
-    total = df
-
-    total["deseq_all"] = total["id"].isin(diff["id"]) + 0
-    total["deseq_uCLL"] = total["id"].isin(diff[diff["log2FoldChange"] < 0]["id"]) + 0
-    total["deseq_mCLL"] = total["id"].isin(diff[diff["log2FoldChange"] > 0]["id"]) + 0
-    total["ml_all"] = total["id"].isin(ml["id"]) + 0
-    total["ml_uCLL"] = total["id"].isin(ml[ml["direction"] == -1]["id"]) + 0
-    total["ml_mCLL"] = total["id"].isin(ml[ml["direction"] == 1]["id"]) + 0
-
-    total[["id", "deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"]].to_csv(os.path.join(output_dir, "upsetr_sets_001_05.csv"))
-
-    diff = df[(abs(df["log2FoldChange"]) > 1) & (df["padj"] < 0.05)]
-    total = df
-
-    total["deseq_all"] = total["id"].isin(diff["id"]) + 0
-    total["deseq_uCLL"] = total["id"].isin(diff[diff["log2FoldChange"] < 0]["id"]) + 0
-    total["deseq_mCLL"] = total["id"].isin(diff[diff["log2FoldChange"] > 0]["id"]) + 0
-    total["ml_all"] = total["id"].isin(ml["id"]) + 0
-    total["ml_uCLL"] = total["id"].isin(ml[ml["direction"] == -1]["id"]) + 0
-    total["ml_mCLL"] = total["id"].isin(ml[ml["direction"] == 1]["id"]) + 0
-
-    total[["id", "deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"]].to_csv(os.path.join(output_dir, "upsetr_sets_005_1.csv"))
-
-    diff = df[(df["padj"] < 0.05)]
-    total = df
-
-    total["deseq_all"] = total["id"].isin(diff["id"]) + 0
-    total["deseq_uCLL"] = total["id"].isin(diff[diff["log2FoldChange"] < 0]["id"]) + 0
-    total["deseq_mCLL"] = total["id"].isin(diff[diff["log2FoldChange"] > 0]["id"]) + 0
-    total["ml_all"] = total["id"].isin(ml["id"]) + 0
-    total["ml_uCLL"] = total["id"].isin(ml[ml["direction"] == -1]["id"]) + 0
-    total["ml_mCLL"] = total["id"].isin(ml[ml["direction"] == 1]["id"]) + 0
-
-    total[["id", "deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"]].to_csv(os.path.join(output_dir, "upsetr_sets_005_0.csv"))
-
-    diff = df[(abs(df["log2FoldChange"]) > 0.5) & (df["padj"] < 0.05)]
-    total = df
-
-    total["deseq_all"] = total["id"].isin(diff["id"]) + 0
-    total["deseq_uCLL"] = total["id"].isin(diff[diff["log2FoldChange"] < 0]["id"]) + 0
-    total["deseq_mCLL"] = total["id"].isin(diff[diff["log2FoldChange"] > 0]["id"]) + 0
-    total["ml_all"] = total["id"].isin(ml["id"]) + 0
-    total["ml_uCLL"] = total["id"].isin(ml[ml["direction"] == -1]["id"]) + 0
-    total["ml_mCLL"] = total["id"].isin(ml[ml["direction"] == 1]["id"]) + 0
-
-    total[["id", "deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"]].to_csv(os.path.join(output_dir, "upsetr_sets_005_05.csv"))
-
-    """
-    df = read.csv2("~/upsetr_sets_005_1.csv", sep=",")
-    # upset(df, sets=c("deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"), order.by="freq")
-
-    library("venneuler")
-    pdf("~/upsetr_sets_005_1.pdf")
-    combs = list(
-        c("deseq_all", "ml_all"),
-        c("deseq_all", "deseq_uCLL", "deseq_mCLL", "ml_all", "ml_uCLL", "ml_mCLL"),
-        c("deseq_all", "deseq_uCLL", "deseq_mCLL"),
-        c("ml_all", "ml_uCLL", "ml_mCLL"),
-        c("deseq_all", "deseq_uCLL", "ml_uCLL"),
-        c("ml_all", "deseq_uCLL", "ml_uCLL"),
-        c("deseq_all", "deseq_mCLL", "ml_mCLL"),
-        c("ml_all", "deseq_mCLL", "ml_mCLL")
-    )
-    for (comb in combs){
-        vd = venneuler(df[, comb])
-        vd$labels = paste(comb, "\n", colSums(df[, comb]))
-        plot(vd)
-    }
-    dev.off()
-    """
-
     # Reporting the statistical difference of regions found in the machine learning approach
-
-    deseq_table = pd.read_csv("data_submission/deseq_ml_comparison/deseq2-.A-B.csv").reset_index(drop=True)
     df = analysis.coverage.copy().reset_index(drop=True)
     for col in ['baseMean', 'log2FoldChange', 'padj']:
         df[col] = deseq_table[col]
@@ -2781,12 +2680,11 @@ def deseq_ml_comparison(analysis, samples, trait):
         ax.set_xticklabels([])
         ax.set_yticklabels([])
 
-    fig.savefig(os.path.join(output_dir, "scatter_volcano_ma_plots.all-ml-deseq.png"), bbox_inches="tight", dpi=600)
-    # fig.savefig(os.path.join(output_dir, "scatter_volcano_ma_plots.all-ml-deseq.svg"), bbox_inches="tight")
+    fig.savefig(os.path.join(output_dir, "scatter_volcano_ma_plots.all-ml-deseq.svg"), bbox_inches="tight")
 
     #
 
-    # Distribution of fold-change and p-values of machine learning regions
+    # Distribution of fold-change and p-values of machine learning regions (for reviewer)
 
     fig, axis = plt.subplots(2)
     sns.distplot(df_ml["log2FoldChange"], ax=axis[0])
@@ -2796,72 +2694,10 @@ def deseq_ml_comparison(analysis, samples, trait):
     sns.despine(fig)
     fig.savefig(os.path.join(output_dir, "distplot.fold_change-p_value.ml_regions.svg"), bbox_inches="tight", dpi=600)
 
-    #
-
-    # Other statistical approach
-    from scipy.stats import mannwhitneyu
-    from statsmodels.sandbox.stats.multicomp import multipletests
-
-    # Get matrix of counts
-    counts_matrix_p = analysis.coverage_qnorm[[s.name for s in sel_samples if getattr(s, trait) == 1]]
-    counts_matrix_n = analysis.coverage_qnorm[[s.name for s in sel_samples if getattr(s, trait) == 0]]
-
-    p_values = list()
-    fold_change = list()
-    for i in range(counts_matrix.shape[0]):
-        p_values.append(mannwhitneyu(counts_matrix_p.ix[i], counts_matrix_n.ix[i])[1])
-        fold_change.append(np.log2(counts_matrix_p.ix[i].mean() / counts_matrix_n.ix[i].mean()))
-
-    corr_p_values = multipletests(np.array(p_values), method="fdr_bh")[1]
-    fold_change = np.array(fold_change)
-
-    # put into dataframe
-    df_stat = analysis.coverage_qnorm.copy()
-    df_stat["log2FoldChange"] = fold_change
-    df_stat["padj"] = corr_p_values
-    df_stat["baseMean"] = analysis.coverage_qnorm[[s.name for s in sel_samples]].mean(1)
-
-    # for several thresholds, plot overlap between sets
-    overlap_stat = pd.DataFrame()
-    for i in range(21):
-        for j in range(15):
-            diff = df_stat[(abs(df_stat["log2FoldChange"]) > i / 10.) & (df_stat["padj"] < 1. / 10 ** j)]
-            a = ml[['chrom', 'start', 'end']]
-            b = diff[['chrom', 'start', 'end']]
-            overlap_stat = overlap_stat.append(pd.Series((
-                i / 10.,
-                (1. / 10 ** j),
-                a.merge(b).shape[0],
-                diff.shape[0])), ignore_index=True)
-    overlap_stat.columns = ['fc', 'p', 'overlap_stat', "size"]
-    overlap_stat['overlap'] /= ml.shape[0]
-
-    fig, axis = plt.subplots(2, figsize=(22, 16))
-    overlap_pivot = pd.pivot_table(overlap_stat, index="p", columns="fc", values="overlap")
-    sns.heatmap(overlap_pivot, annot=True, ax=axis[0])
-    overlap_pivot = pd.pivot_table(overlap_stat, index="p", columns="fc", values="size")
-    sns.heatmap(overlap_pivot, annot=True, ax=axis[1])
-    fig.savefig(os.path.join(output_dir, "overlap.stat.png"), bbox_inches="tight")
-
-    #
-
-    # Extract significant based on p-value and fold-change
-    diff = df_stat[(abs(df_stat["log2FoldChange"]) > 1) & (df_stat["padj"] < 0.01)]
-
-    fig, axis = plt.subplots(2, figsize=(12, 10))
-    # Volcano plot
-    axis[0].scatter(df_stat["log2FoldChange"], -np.log10(df_stat['padj']), alpha=0.1)
-    axis[0].scatter(diff["log2FoldChange"], -np.log10(diff['padj']), alpha=0.1, color="red")
-    # MA plot
-    axis[1].scatter(np.log2(df_stat["baseMean"]), df_stat["log2FoldChange"], alpha=0.1)
-    axis[1].scatter(np.log2(diff["baseMean"]), diff["log2FoldChange"], alpha=0.1, color="red")
-    fig.savefig(os.path.join(output_dir, "volcano_ma_plots.stat.png"), bbox_inches="tight")
-
 
 def unsupervised(analysis, samples):
     """
-    Run trait classification (with independent validation if possible for that trait)
-    on all samples with known annotation of the trait.
+    Unsupervised exploration of the data (PCA).
     """
     from sklearn.decomposition import PCA
 
@@ -2905,79 +2741,6 @@ def unsupervised(analysis, samples):
     fig, axis = plt.subplots(1, figsize=(12, 12))
     axis.scatter(xx[0], xx[1], s=50, color=samples_to_color(samples, "IGHV"))
     fig.savefig(os.path.join(analysis.plots_dir, "cll_peaks.all_sites.pca.pc1_vs_pc2.main.svg"), bbox_inches="tight")
-
-
-def state_enrichment_overlap(n=100):
-    cll_peaks = "~/cll_peaks.bed"
-    all_states = "all_states_all_lines.bed"
-
-    # states of interest:
-    # get names of all states
-    states = pd.read_csv(all_states, sep="\t", header=None)[3].unique().tolist()
-
-    # loop through states, merge intervals, count number intersepting CLL peaks, and not intersepting
-    cll_ints = pybedtools.BedTool(cll_peaks)
-
-    df = pd.DataFrame()
-    for state in states[-3:]:
-        state_bed = "{0}.bed".format(state)
-        os.system("grep {0} {1} > {2}".format(state, all_states, state_bed))
-
-        # merge all intervals (of the same type across cell types)
-        state_ints = pybedtools.BedTool(state_bed).sort().merge()
-
-        total = len(state_ints)
-        pos = len(state_ints.intersect(cll_ints))
-
-        # get mean of `n` shuffled cll sites
-        background = list()
-        for i in range(n):
-            background.append(len(state_ints.intersect(cll_ints.shuffle(genome='hg19', chrom=True))))
-
-        # append to df
-        df = df.append(pd.Series([total, pos, np.round(np.mean(background))]), ignore_index=True)
-    df.index = states
-    df.columns = ['total', 'pos', 'background']
-
-    df['state'] = df.index
-
-    df.to_csv("chrom_state_overlap_all.csv", index=False)
-
-    df2 = pd.melt(df, id_vars='state')
-
-    df2.sort(['variable', 'value'], inplace=True)
-
-    fig, axis = plt.subplots(1)
-    sns.barplot(data=df2, x='state', y='value', hue='variable', ax=axis)
-    fig.savefig("chrom_state_overlap_all.svg", bbox_inches='tight')
-
-    # fraction of total
-    df['posF'] = df['pos'] / df['total']
-    df['backgroundF'] = df['background'] / df['total']
-    df3 = pd.melt(df[["state", "posF", "backgroundF"]], id_vars='state')
-    df3.sort(['variable', 'value'], inplace=True)
-
-    fig, axis = plt.subplots(1)
-    sns.barplot(data=df3, x='state', y='value', hue='variable', ax=axis)
-    fig.savefig("chrom_state_overlap_all.fraction_total.svg", bbox_inches='tight')
-
-    # fraction of total enriched over background
-    df['foldF'] = df['posF'] / df['backgroundF']
-    df4 = pd.melt(df[["state", "foldF"]], id_vars='state')
-    df4.sort(['variable', 'value'], inplace=True)
-
-    fig, axis = plt.subplots(1)
-    sns.barplot(data=df4, x='state', y='value', hue='variable', ax=axis)
-    fig.savefig("chrom_state_overlap_all.fraction_total.enriched.svg", bbox_inches='tight')
-
-    # same with log2
-    df['foldFlog'] = np.log2(df['foldF'])
-    df5 = pd.melt(df[["state", "foldFlog"]], id_vars='state')
-    df5.sort(['variable', 'value'], inplace=True)
-
-    fig, axis = plt.subplots(1)
-    sns.barplot(data=df5, x='state', y='value', hue='variable', ax=axis)
-    fig.savefig("chrom_state_overlap_all.fraction_total.enriched.log.svg", bbox_inches='tight')
 
 
 def bed_to_fasta(bed_file, fasta_file):
@@ -3102,7 +2865,9 @@ def meme_ame(input_fasta, output_dir, background_fasta=None):
 
 
 def parse_ame(ame_dir):
-
+    """
+    MEME-AME output parser
+    """
     with open(os.path.join(ame_dir, "ame.txt"), 'r') as handle:
         lines = handle.readlines()
 
@@ -3123,6 +2888,9 @@ def parse_ame(ame_dir):
 
 
 def characterize_regions_structure(df, prefix, output_dir, universe_df=None):
+    """
+    Characterize regions of interest based on their genomic location, chromatin state, variability, etc...
+    """
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
@@ -3183,6 +2951,9 @@ def characterize_regions_structure(df, prefix, output_dir, universe_df=None):
 
 
 def characterize_regions_function(df, output_dir, prefix, data_dir="data", universe_file=None):
+    """
+    Characterize regions of interest based on their function: Region overlap, GO terms, pathways, TF motifs.
+    """
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
@@ -3190,7 +2961,7 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
     if universe_file is None:
         universe_file = os.path.join(data_dir, "cll_peaks.bed")
     # get go term mapping
-    go_term_mapping = os.path.join(data_dir, "goID_goName.csv")
+    go_term_mapping = os.path.join(data_dir, "external", "goID_goName.csv")
 
     # make output dirs
     lola_output = os.path.join(output_dir, "lola")
@@ -3223,9 +2994,9 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
 
     # seq2pathway
     try:
-        # results = seq2pathway(tsv_file, go_term_mapping)
+        results = seq2pathway(tsv_file, go_term_mapping)
         results_file = os.path.join(output_dir, "%s_regions.seq2pathway.csv" % prefix)
-        # results.to_csv(results_file, index=False)
+        results.to_csv(results_file, index=False)
     except:
         print("seq2pathway analysis for %s failed!" % prefix)
 
@@ -3243,8 +3014,7 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
     output_file = os.path.join(output_dir, "%s_regions.goverlap.tsv" % prefix)
     # test enrichements of closest gene function: GO, KEGG, OMIM
     try:
-        pass
-        # goverlap(genes_file, universe_genes_file, output_file)
+        goverlap(genes_file, universe_genes_file, output_file)
     except:
         print("Goverlap analysis for %s failed!" % prefix)
 
@@ -3258,7 +3028,7 @@ def characterize_regions_function(df, output_dir, prefix, data_dir="data", unive
 
 def characterize_regions(analysis, traits, nmin=100):
     """
-    Characterize structural-, functionally and in the chromatin regions trait-specific regions.
+    Characterize structural-, functionally trait-specific regions.
     """
     all_chrom_counts = Counter(analysis.coverage_qnorm_annotated['chrom'])
 
@@ -3402,7 +3172,7 @@ def characterize_regions(analysis, traits, nmin=100):
             gos2 = gos2.append(go)
 
     # Save data
-    output_dir = os.path.join("results/plots", "trait_specific")
+    output_dir = os.path.join(analysis.plots_dir, "trait_specific")
     structures.to_csv(os.path.join(output_dir, "trait_specific_regions.region_enrichment.csv"), index=False)
     lolas.to_csv(os.path.join(output_dir, "trait_specific_regions.lola_enrichment.csv"), index=False)
     gos.to_csv(os.path.join(output_dir, "trait_specific_regions.goterm_enrichment.csv"), index=False)
@@ -3621,7 +3391,7 @@ def join_trait_specific_regions(analysis, traits):
             print("Trait %s did not generate any associated regions" % trait)
 
     # # Save whole dataframe as csv
-    features.to_csv(os.path.join(analysis.data_dir, "cll.trait-specific_regions.csv"), index=False)
+    features.to_csv(os.path.join(analysis.data_dir, "cll_trait-specific_regions.csv"), index=False)
 
 
 def characterize_regions_chromatin(analysis, traits, extend=False):
@@ -3672,8 +3442,8 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
         coverage["end"] = [int(x[2]) for x in ints]
 
         # save to disk
-        coverage.to_csv(os.path.join("data", "cll_peaks.raw_coverage.histmods.%i_extended.tsv" % diameter), sep="\t", index=True)
-        # coverage = pd.read_csv(os.path.join("data", "cll_peaks.raw_coverage.histmods.%i_extended.tsv" % diameter), sep="\t", index_col=0)
+        coverage.to_csv(os.path.join(analysis.data_dir, "cll_peaks.raw_coverage.histmods.%i_extended.tsv" % diameter), sep="\t", index=True)
+        # coverage = pd.read_csv(os.path.join(analysis.data_dir, "cll_peaks.raw_coverage.histmods.%i_extended.tsv" % diameter), sep="\t", index_col=0)
 
         # normalize and log2
         to_norm = coverage.iloc[:, :len(samples)]
@@ -3686,7 +3456,7 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
         coverage_qnorm = np.log2(1 + coverage_qnorm)
 
         coverage_qnorm = coverage_qnorm.join(coverage[['chrom', 'start', 'end']])
-        coverage_qnorm.to_csv(os.path.join("data", "cll_peaks.raw_coverage.histmods.%i_extended.qnorm.log2.tsv"), sep="\t", index=False)
+        coverage_qnorm.to_csv(os.path.join(analysis.data_dir, "cll_peaks.raw_coverage.histmods.%i_extended.qnorm.log2.tsv"), sep="\t", index=False)
 
         return coverage_qnorm
 
@@ -3721,7 +3491,7 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
     # samples
     samples = analysis.samples
     # read in dataframe with counts over CLL ATAC-seq peaks
-    features = pd.read_csv(os.path.join(analysis.data_dir, "cll.trait-specific_regions.csv"))
+    features = pd.read_csv(os.path.join(analysis.data_dir, "cll_trait-specific_regions.csv"))
     if extend:
         # alternatively, replace ChIPmentation counts with new read count around peaks (e.g. 1kb)
         chip_samples = [s for s in analysis.samples if s.library == "ChIPmentation"]
@@ -3758,14 +3528,14 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
     # save dataframe with intensities/ratios of chromatin marks per peak
     features.to_csv(os.path.join(
         analysis.data_dir,
-        "cll.trait-specific_regions.%shistone_intensities_ratios.csv" % ("extended." if extend else "")), index=False)
+        "cll_trait-specific_regions.%shistone_intensities_ratios.csv" % ("extended." if extend else "")), index=False)
 
     # extend = True
     # traits = ['IGHV']
     # features = pd.read_csv(os.path.join(
     #     analysis.data_dir,
     #     "trait_specific",
-    #     "cll.trait-specific_regions.%shistone_intensities_ratios.csv" % "extended." if extend else ""))
+    #     "cll_trait-specific_regions.%shistone_intensities_ratios.csv" % "extended." if extend else ""))
 
     # Heatmap accessibility and histone marks
     # for each trait make heatmap with chroamtin marks in each
@@ -4048,7 +3818,14 @@ def ilustrate_regions_gene_expression(analysis):
 
 def motif_enrichment(analysis):
     """
+    Experiment with several tools and parameters of motif enrichment and compare enrichments obtained
+    in regions from the classifier and DESeq2.
     """
+    from pipelines import toolkit as tk
+    import textwrap
+    import re
+    import random
+
     def get_window_around_center(matrix, bp):
         """
         Make window with bp bps around center of region in matrix.
@@ -4061,16 +3838,33 @@ def motif_enrichment(analysis):
 
         return pd.DataFrame([matrix["chrom"], starts, ends]).T
 
-    def bed_to_fasta(bed_file, fasta_file):
-        cmd = "bedtools getfasta -fi ~/resources/genomes/hg19/hg19.fa -bed {0} -fo {1}".format(bed_file, fasta_file)
-        os.system(cmd)
+    def bed_to_fasta(output_dir, bed_file, fasta_file):
+        """
+        Extract fasta sequences from bed coordinates.
+        """
+
+        cmd = tk.slurmHeader(
+            "bed_to_fasta",
+            os.path.join(output_dir, "bed_to_fasta.log"),
+            cpusPerTask=2, time='10:00:00', queue="shortq", memPerCpu=4000)
+
+        cmd += """
+        bedtools getfasta -fi ~/resources/genomes/hg19/hg19.fa -bed {0} -fo {1}
+        """.format(bed_file, fasta_file)
+
+        cmd += tk.slurmFooter()
+
+        # write job to file
+        job_file = os.path.join(output_dir, "bed_to_fasta.sh")
+        with open(job_file, 'w') as handle:
+            handle.writelines(textwrap.dedent(cmd))
+
+        tk.slurmSubmitJob(job_file)
 
     def make_background(output_dir, input_fasta, model, output_fasta, seq_lengths, set_size):
         """
         Create 0th and 1st order Markov background sequences.
         """
-        from pipelines import toolkit as tk
-        import textwrap
 
         if type(seq_lengths) is not int:
             seq_lengths = 250
@@ -4101,8 +3895,6 @@ def motif_enrichment(analysis):
         """
         Run MEME-AME.
         """
-        from pipelines import toolkit as tk
-        import textwrap
 
         cmd = tk.slurmHeader(
             "ame_motif_overrepresentation" + "_" + input_fasta,
@@ -4123,7 +3915,55 @@ def motif_enrichment(analysis):
 
         tk.slurmSubmitJob(job_file)
 
+    def meme_chip(input_fasta, output_dir):
+        """
+        Run MEME-CHIP.
+        """
+
+        cmd = tk.slurmHeader(
+            "meme-chip_motif_discovery" + "_" + input_fasta,
+            os.path.join(output_dir, "meme-chip_motif_discovery.log"),
+            cpusPerTask=2, time='10:00:00', queue="shortq", memPerCpu=4000)
+
+        cmd += """
+        /cm/shared/apps/meme/4.10.1/bin/meme-chip -oc {} \
+        -meme-minsites 10 -meme-minw 6 -meme-maxw 14 \
+        -centrimo-local -centrimo-maxreg 250 \
+        -db ~/resources/motifs/motif_databases/HUMAN/HOCOMOCOv9.meme {}
+        """.format(output_dir, input_fasta)
+
+        cmd += tk.slurmFooter()
+
+        # write job to file
+        job_file = os.path.join(output_dir, "meme-chip_motif_discovery.sh")
+        with open(job_file, 'w') as handle:
+            handle.writelines(textwrap.dedent(cmd))
+
+        tk.slurmSubmitJob(job_file)
+
     def parse_ame(ame_dir):
+        """
+        Parse MEME-AME results.
+        """
+        with open(os.path.join(ame_dir, "ame.txt"), 'r') as handle:
+            lines = handle.readlines()
+
+        output = list()
+        for line in lines:
+            # skip header lines
+            if line[0] not in [str(i) for i in range(10)]:
+                continue
+
+            # get motif string and the first half of it (simple name)
+            motif = line.strip().split(" ")[5].split("_")[0]
+            # get corrected p-value
+            q_value = line.strip().split(" ")[-2]
+            # append
+            output.append((motif, q_value))
+
+        return output
+
+    def parse_meme_chip(ame_dir):
         """
         Parse MEME-AME results.
         """
@@ -4165,7 +4005,7 @@ def motif_enrichment(analysis):
     DESEQ["group"] = DESEQ.apply(lambda x: "uCLL" if x["log2FoldChange"] < 0 else "mCLL", axis=1)
 
     # Root output folder
-    output_dir = os.path.join(analysis.data_dir, "motif_enrichment")
+    output_dir = os.path.abspath(os.path.join(analysis.data_dir, "motif_enrichment"))
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
@@ -4177,55 +4017,81 @@ def motif_enrichment(analysis):
     methods = ["ML", "DESEQ"]
     groups = ["all", "uCLL", "mCLL"]
     sizes = range(50, 2050, 50)
+    comparison_type = ["background", "each_other"]
 
     for method in methods:
         for group in groups:
             for size in sizes:
-                # subset data as required
-                if group == "all":
-                    data = eval(method)
-                else:
-                    data = eval(method)[eval(method)['group'] == group]
+                for comparison in comparison_type:
+                    # subset data as required
+                    if group == "all":
+                        data = eval(method)
+                    else:
+                        data = eval(method)[eval(method)['group'] == group]
 
-                # Build series with experiment attributes
-                s = pd.Series(name="_".join([method, group, str(size) if size is not "all" else "original"]))
-                if size == "all":
-                    s["length_type"] = "original"
-                    s["seq_lengths"] = "variable"
-                else:
-                    s["length_type"] = "uniform"
-                    s["seq_lengths"] = size
-                s["set_name"] = s.name
-                s["method"] = method
-                s["group"] = group
-                s["set_size"] = data.shape[0]
-                s["foreground_bed"] = os.path.join(output_dir, s.name + ".foreground.bed")
-                s["foreground_fasta"] = os.path.join(output_dir, s.name + ".foreground.fasta")
-                s["background_fasta"] = os.path.join(output_dir, s.name + ".background.fasta")
-                s["background_model"] = os.path.join(output_dir, s.name + ".background.model")
-                s["ame_dir"] = os.path.join(output_dir, s.name)
-                if not os.path.exists(s["ame_dir"]):
-                    os.makedirs(s["ame_dir"])
+                    # Build series with experiment attributes
+                    s = pd.Series(name="_".join([method, group, str(size) if size is not "all" else "original", comparison]))
+                    if size == "all":
+                        s["length_type"] = "original"
+                        s["seq_lengths"] = "variable"
+                    else:
+                        s["length_type"] = "uniform"
+                        s["seq_lengths"] = size
+                    s["set_name"] = s.name
+                    s["method"] = method
+                    s["group"] = group
+                    s["comparison_type"] = comparison
+                    s["set_size"] = data.shape[0]
+                    s["foreground_bed"] = os.path.join(output_dir, s.name + ".foreground.bed")
+                    s["foreground_fasta"] = os.path.join(output_dir, s.name + ".foreground.fasta")
+                    s["background_fasta"] = os.path.join(output_dir, s.name if comparison_type == "background" else re.sub("_%s_" % group, "_all_", s.name) + ".background.fasta")
+                    s["background_model"] = os.path.join(output_dir, s.name if comparison_type == "background" else re.sub("_%s_" % group, "_all_", s.name) + ".background.model")
+                    s["ame_dir"] = os.path.join(output_dir, s.name)
+                    if not os.path.exists(s["ame_dir"]):
+                        os.makedirs(s["ame_dir"])
 
-                # get regions as required
-                if size == "all":
-                    bed = data[["chrom", "start", "end"]]
-                else:
-                    # get window according to size
-                    bed = get_window_around_center(data, size)
+                    # get regions as required
+                    if size == "all":
+                        bed = data[["chrom", "start", "end"]]
+                    else:
+                        # get window according to size
+                        bed = get_window_around_center(data, size)
 
-                # save as bedfile
-                bed.to_csv(s["foreground_bed"], index=False, header=False, sep="\t")
+                    # save as bedfile
+                    bed.to_csv(s["foreground_bed"], index=False, header=False, sep="\t")
 
-                # append to dataframe
-                df = df.append(s)
+                    # append to dataframe
+                    df = df.append(s)
+
+    # all
+    data = analysis.coverage_qnorm_annotated
+    # get window according to size
+    bed = get_window_around_center(data, 250)
+    # save as bedfile
+    bed.to_csv(os.path.join(output_dir, "all_peaks.bed"), index=False, header=False, sep="\t")
+    bed_to_fasta(output_dir, os.path.join(output_dir, "all_peaks.bed"), os.path.join(output_dir, "all_peaks.fasta"))
+    make_background(
+        output_dir,
+        os.path.join(output_dir, "all_peaks.fasta"),
+        os.path.join(output_dir, "all_peaks.model"),
+        os.path.join(output_dir, "all_peaks.background.fasta"), 250, data.shape[0])
+    meme_ame(os.path.join(output_dir, "all_peaks.fasta"), output_dir, os.path.join(output_dir, "all_peaks.background.fasta"))
+
+    # each against all
+    for group in ["mCLL", "uCLL"]:
+        s = df.ix["ML_%s_250_background" % group]
+        s["ame_dir"] = s["ame_dir"] + "_againstAll"
+        if not os.path.exists(s["ame_dir"]):
+            os.makedirs(s["ame_dir"])
+        meme_ame(s["foreground_fasta"], s["ame_dir"], os.path.join(output_dir, "all_peaks.fasta"))
 
     # Save experiment matrix
     df.to_csv(os.path.join(output_dir, "experiment_matrix.csv"))
+    df = pd.read_csv(os.path.join(output_dir, "experiment_matrix.csv"), index_col=0)
 
     # Bed to Fasta
     for name, s in df.iterrows():
-        bed_to_fasta(s["foreground_bed"], s["foreground_fasta"])
+        bed_to_fasta(s["ame_dir"], s["foreground_bed"], s["foreground_fasta"])
 
     # Make backgrounds
     for name, s in df.iterrows():
@@ -4234,53 +4100,138 @@ def motif_enrichment(analysis):
     # Run all motif analysis
     for name, s in df.iterrows():
         meme_ame(s["foreground_fasta"], s["ame_dir"], s["background_fasta"])
+        meme_chip(s["foreground_fasta"], s["ame_dir"])
 
     # Collect all motif analysis
     results = dict()
     for name, s in df.iterrows():
         results[s.name] = parse_ame(s["ame_dir"])
 
-    res = pd.DataFrame([pd.Series(dict(res), name=name) for name, res in results.items()]).fillna(0.05).astype(float)
+    res = pd.DataFrame([pd.Series(dict(res), name=name) for name, res in results.items()]).fillna(0.05).astype(np.float128)
 
-    df.replace(np.inf, np.nan)
+    res.join(pd.Series(dict(parse_ame(output_dir)), name="all").fillna(0.05).astype(np.float128))
 
-    res2 = -np.log10(0.1 + res)
+    # for HOCOMOCOv10
+    # # replace IDs with Gene names
+    # tf_ids = pd.read_csv("~/resources/motifs/motif_databases/HUMAN/HOCOMOCOv10.annotation.csv")
+    # tf_ids.index = tf_ids['Model'].apply(lambda x: x.split("_")[0])
 
-    # Compare somehow
+    # mapping = dict(tf_ids["Transcription factor"])
+    # res.columns = [mapping[tf] for tf in res.columns]
 
-    sns.heatmap(res2)
-    sns.clustermap(res2)
+    # save
+    res.to_csv(os.path.join(output_dir, "experiment_results.csv"))
+    res = pd.read_csv(os.path.join(output_dir, "experiment_results.csv"), index_col=0)
 
-    sns.clustermap(res2.corr())
-    sns.clustermap(res2.T.corr())
+    res = res.ix[res.index[res.index.str.contains("background")]]
+    # Post-process
+    res2 = res.replace(0.0, 1e-1000)
+    res2 = -np.log10(res2)
 
-    # find varying conditions
-    res3 = res[res.var(1) > 0.0001]  # filter comparisons
-    res3 = res3[res3.columns[res3.var(0) > 0.00002]]  # filter TFs
-    sns.clustermap(res3)
+    # Compare most relevant ones
+    sns.clustermap(res.ix[
+        ["ML_mCLL_350_background", "ML_uCLL_350_background"] +
+        ["ML_mCLL_300_background", "ML_uCLL_300_background"] +
+        ["ML_mCLL_250_background", "ML_uCLL_250_background"] +
+        ["ML_mCLL_200_background", "ML_uCLL_200_background"]
+    ])
+    plt.savefig(os.path.join(
+        output_dir, "ML.TF_enrichment.svg"),
+        bbox_inches='tight')
+    plt.close('all')
 
-    # filter conditions which give less high scores ubiquitously
-    res3.ix[res3.index[(res3.mean(1) < 0.9)]]
+    sns.clustermap(res2.ix[
+        ["DESEQ_mCLL_350_background", "DESEQ_uCLL_350_background"] +
+        ["DESEQ_mCLL_300_background", "DESEQ_uCLL_300_background"] +
+        ["DESEQ_mCLL_250_background", "DESEQ_uCLL_250_background"] +
+        ["DESEQ_mCLL_200_background", "DESEQ_uCLL_200_background"]
+    ])
+    plt.savefig(os.path.join(
+        output_dir, "DESEQ.TF_enrichment.svg"),
+        bbox_inches='tight')
+    plt.close('all')
 
-    # group by comparison
+    sns.clustermap(res.ix[
+        ["DESEQ_mCLL_350_background", "DESEQ_uCLL_350_background"] +
+        ["DESEQ_mCLL_300_background", "DESEQ_uCLL_300_background"] +
+        ["DESEQ_mCLL_250_background", "DESEQ_uCLL_250_background"] +
+        ["DESEQ_mCLL_200_background", "DESEQ_uCLL_200_background"] +
+        ["ML_mCLL_350_background", "ML_uCLL_350_background"] +
+        ["ML_mCLL_300_background", "ML_uCLL_300_background"] +
+        ["ML_mCLL_250_background", "ML_uCLL_250_background"] +
+        ["ML_mCLL_200_background", "ML_uCLL_200_background"]
+    ])
+    plt.savefig(os.path.join(
+        output_dir, "both_methods.TF_enrichment.svg"),
+        bbox_inches='tight')
+    plt.close('all')
 
-    res2.iloc[res2.index.str.contains("DESEQ"), :]
+    # Make big matrix plot
+    sns.clustermap(res)
+    plt.savefig(os.path.join(
+        output_dir, "both_methods.TF_enrichment.big_map.svg"),
+        bbox_inches='tight')
+    plt.close('all')
 
-    res4 = res2.iloc[~res2.index.str.contains("all"), :]
+    # Make plots with both techniques
+    a = res2.ix[
+        ["ML_mCLL_250_background", "ML_uCLL_250_background"]
+    ]
+    # get motifs which are enriched in at least one comparison
+    aa = a.loc[:, (a > -np.log10(0.05)).any()]
+    sns.clustermap(aa.T.ix[aa.T.mean(1).sort_values(ascending=False).index], col_cluster=False, row_cluster=False, figsize=(5, 20))
+    plt.savefig(os.path.join(
+        output_dir, "ML.TF_enrichment.250.big_values.clustered.svg"),
+        bbox_inches='tight')
+    plt.close('all')
 
-    res4 = res2.iloc[res2.index.str.contains("ML"), :]
-    sns.clustermap(res4.iloc[~res4.index.str.contains("all"), :])
+    b = res2.ix[
+        ["DESEQ_mCLL_250_background", "DESEQ_uCLL_250_background"]
+    ]
+    # get motifs which are enriched in at least one comparison
+    bb = b.loc[:, a.columns]
+    sns.clustermap(b.T.ix[aa.T.mean(1).sort_values(ascending=False).index], col_cluster=False, row_cluster=False, figsize=(5, 20))
+    plt.savefig(os.path.join(
+        output_dir, "DESEQ.TF_enrichment.250.big_values.ordered.svg"),
+        bbox_inches='tight')
+    plt.close('all')
 
-    res4 = res2.iloc[res2.index.str.contains("DESEQ"), :]
-    sns.clustermap(res4.iloc[~res4.index.str.contains("all"), :])
+    aa.T.join(b.T).to_csv(os.path.join(analysis.data_dir, "enriched_motifs.csv"), index=False)
 
-    # Get most dissimilar pair of vectors between uCLL and mCLL with same parameters
-    cols = ['set_name', 'method', 'group', 'set_size', 'seq_lengths', 'length_type']
-    df2 = df[cols].join(res2)
+    fig, axis = plt.subplots(2, sharex=True, sharey=True, figsize=(12, 15))
+    axis[0].scatter(aa.T['ML_mCLL_250_background'], aa.T['ML_uCLL_250_background'])
+    axis[1].scatter(bb.T['DESEQ_mCLL_250_background'], bb.T['DESEQ_uCLL_250_background'])
+    sns.despine(fig)
+    fig.savefig(os.path.join(
+        output_dir, "both.TF_enrichment.250.big_values.scatter.svg"),
+        bbox_inches='tight')
 
-    corrs = dict()
-    for comp, s in df2[~df2.index.str.contains("all")].groupby(['method', 'set_size', 'seq_lengths', 'length_type']):
-        corrs[comp] = s[s.columns[~s.columns.isin(cols)]].T.corr().iloc[1, 1]
+    iss = list()
+
+    fig, axis = plt.subplots(2, sharex=True, sharey=True, figsize=(12, 15))
+    axis[0].scatter(aa.T['ML_mCLL_250_background'], aa.T['ML_uCLL_250_background'])
+    axis[1].scatter(bb.T['DESEQ_mCLL_250_background'], bb.T['DESEQ_uCLL_250_background'])
+    for i, (label, x, y) in enumerate(zip(aa.T.index, aa.T['ML_mCLL_250_background'], aa.T['ML_uCLL_250_background'])):
+        if ((2 < x) and (random.random() > 0.95)) or ((3 < x < 10) and (random.random() > 0.90)) or (x > 10) or (label in ["MECP2", "RUNX2", "MTF1", "MYC", "AP2B"]):
+            iss.append(label)
+            axis[0].annotate(
+                label,
+                xy=(x, y), xytext = (-20, 20),
+                textcoords = 'offset points', ha = 'right', va = 'bottom',
+                bbox = dict(boxstyle='round,pad=0.5', alpha=0.5),
+                arrowprops = dict(arrowstyle='->', connectionstyle='arc3,rad=0'))
+    for i, (label, x, y) in enumerate(zip(bb.T.index, bb.T['DESEQ_mCLL_250_background'], bb.T['DESEQ_uCLL_250_background'])):
+        if label in iss:
+            axis[1].annotate(
+                label,
+                xy=(x, y), xytext = (-20, 20),
+                textcoords = 'offset points', ha = 'right', va = 'bottom',
+                bbox = dict(boxstyle='round,pad=0.5', alpha=0.5),
+                arrowprops = dict(arrowstyle='->', connectionstyle='arc3,rad=0'))
+    sns.despine(fig)
+    fig.savefig(os.path.join(
+        output_dir, "both.TF_enrichment.250.big_values.scatter.labels.svg"),
+        bbox_inches='tight')
 
 
 def characterize_regions_expression(analysis, traits, extend=False):
@@ -4328,7 +4279,7 @@ def characterize_regions_expression(analysis, traits, extend=False):
         return pd.DataFrame(np.log2(((1 + u_s.mean(1)) / (1 + m_s.mean(1)))), columns=["value"]).reset_index()
 
     # read in trait-specific regions
-    features = pd.read_csv(os.path.join(analysis.data_dir, "cll.trait-specific_regions.csv"))
+    features = pd.read_csv(os.path.join(analysis.data_dir, "cll_trait-specific_regions.csv"))
     # Get ensembl_gene ids mapping
     features = pd.merge(
         features,
@@ -4388,7 +4339,7 @@ def characterize_regions_expression(analysis, traits, extend=False):
         # save dataframe with intensities/ratios of chromatin marks per peak
         pd.concat([exp_int, exp_ratio]).to_csv(os.path.join(
             analysis.data_dir,
-            "cll.trait-specific_regions.%s.expression_intensities_ratios.csv" % trait), index=False)
+            "cll_trait-specific_regions.%s.expression_intensities_ratios.csv" % trait), index=False)
 
         g = sns.FacetGrid(exp_int, col="direction", col_wrap=3, legend_out=True, col_order=["all", -1, 1], margin_titles=True)
         g.map(sns.violinplot, "group", "value", split=True)
@@ -4660,7 +4611,7 @@ def characterize_TF_regulation_chromatin(analysis):
     # save
     features.to_csv(os.path.join(
         analysis.data_dir,
-        "cll.differential_reg.histone_intensities_ratios.csv"), index=False)
+        "cll_tfnetx_differential_reg.histone_intensities_ratios.csv"), index=False)
 
     # Plot values
     # subset data and melt dataframe for ploting

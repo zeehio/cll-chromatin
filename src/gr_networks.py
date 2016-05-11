@@ -7,10 +7,9 @@ in ATAC-seq data.
 """
 
 import os
-from pipelines.models import Project
-from pipelines import toolkit as tk
+from looper.models import Project
+from pypiper import ngstk as tk
 import pandas as pd
-import numpy as np
 import textwrap
 import re
 import pybedtools
@@ -36,27 +35,38 @@ def name_to_sample_id(name):
     return name.split("_")[3]
 
 
-def annotate_igvh_mutations(samples, clinical):
-    new_samples = list()
-
-    for sample in samples:
-        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
-            _id = name_to_sample_id(sample.name)
-            if clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 1:
-                sample.mutated = True
-            elif clinical.loc[clinical['sample_id'] == _id, 'igvh_mutation_status'].tolist()[0] == 2:
-                sample.mutated = False
-            else:
-                sample.mutated = None
-        else:
-            sample.mutated = None
-        new_samples.append(sample)
-    return new_samples
-
-
-def annotate_treatments(samples, clinical):
+def annotate_clinical_traits(samples):
     """
-    Annotate samples with timepoint, treatment_status, treatment_type
+    Annotate samples with clinical traits.
+    """
+    # Annotate traits
+    chemo_drugs = ["Chlor", "Chlor R", "B Of", "BR", "CHOPR"]  # Chemotherapy
+    target_drugs = ["Alemtuz", "Ibrutinib"]  # targeted treatments
+    muts = ["del13", "del11", "tri12", "del17"]  # chrom abnorms
+    muts += ["SF3B1", "ATM", "NOTCH1", "BIRC3", "BCL2", "TP53", "MYD88", "CHD2", "NFKIE"]  # mutations
+    for s in samples:
+        # Gender
+        s.gender = 1 if s.patient_gender == "M" else 0 if s.patient_gender == "F" else pd.np.nan
+        # IGHV mutation status
+        s.IGHV = s.ighv_mutation_status
+
+    # Annotate samples which are under treament but with different types
+    for sample in samples:
+        if not sample.under_treatment:
+            sample.chemo_treated = pd.np.nan
+            sample.target_treated = pd.np.nan
+        else:
+            sample.chemo_treated = 1 if sample.treatment_regimen in chemo_drugs else 0
+            sample.target_treated = 1 if sample.treatment_regimen in target_drugs else 0
+        for mut in muts:
+            setattr(sample, mut, 1 if sample.mutations is not pd.np.nan and mut in str(sample.mutations) else 0)
+
+    return samples
+
+
+def annotate_disease_treatments(samples):
+    """
+    Annotate samples with timepoint, treatment_status, treatment_regimen
     """
     def string_to_date(string):
         if type(string) is str:
@@ -71,131 +81,55 @@ def annotate_treatments(samples, clinical):
     new_samples = list()
 
     for sample in samples:
-        if sample.cellLine == "CLL":
-            # get sample id
-            sample_id = name_to_sample_id(sample.name)
-
-            # get corresponding series from "clinical"
-            sample_c = clinical[clinical['sample_id'] == sample_id].squeeze()
-
+        if sample.cell_line == "CLL":
             # Get sample collection date
-            sample.collection_date = string_to_date(sample_c['sample_collection_date'])
+            sample.collection_date = string_to_date(sample.sample_collection_date)
             # Get diagnosis date
-            sample.diagnosis_date = string_to_date(sample_c['diagnosis_date'])
+            sample.diagnosis_date = string_to_date(sample.diagnosis_date)
             # Get diagnosis disease
-            sample.diagnosis_disease = sample_c['diagnosis_disease'] if type(sample_c['diagnosis_disease']) is str else None
+            sample.primary_CLL = 1 if sample.diagnosis_disease == "CLL" else 0  # binary label useful for later
+
             # Get time since diagnosis
             sample.time_since_diagnosis = sample.collection_date - sample.diagnosis_date
 
-            # Get all treatment dates
-            treatment_dates = [string_to_date(date) for date in sample_c[["treatment_%i_date" % (x) for x in range(1, 5)]].squeeze()]
-            # Get treatment end date
-            treatment_end_date = string_to_date(clinical[(clinical['sample_id'] == sample_id)][["treatment_end_date"]])
-            # Check if there are earlier "timepoints"
-            earlier_dates = [treatment_date for treatment_date in treatment_dates if treatment_date < sample.collection_date]
-
-            # Annotate samples with active treatment
-            for treatment_date in treatment_dates:
-                # if one of the treatment dates is earlier
-                if treatment_date < sample.collection_date:
-                    # this sample was not collected at diagnosis time
-                    sample.diagnosis_collection = False
-                    # and no treatment end date in between, mark as under treatment
-                    if treatment_end_date is pd.NaT:
-                        sample.treatment_active = True
-                    else:
-                        if treatment_date < treatment_end_date < sample.collection_date:
-                            sample.treatment_active = False
-                        elif treatment_date < sample.collection_date < treatment_end_date:
-                            sample.treatment_active = True
-            # if there were no treatments before collection, consider untreated
-            if not hasattr(sample, "treatment_active"):
-                sample.treatment_active = False
-                # if there were no treatments before collection, and collection was within 30 days of diagnosis, tag as collected at diagnosis
-                if sample.time_since_diagnosis is not pd.NaT:
-                    if abs(sample.time_since_diagnosis) < pd.to_timedelta(30, unit="days"):
-                        sample.diagnosis_collection = True
-            if not hasattr(sample, "diagnosis_collection"):
-                sample.diagnosis_collection = False
-
             # Annotate treatment type, time since treatment
-            if sample.treatment_active:
-                if len(earlier_dates) > 0:
-                    # Find out which earlier "timepoint" is closest and annotate treatment and response
-                    previous_dates = [date for date in clinical[(clinical['sample_id'] == sample_id)][["treatment_%i_date" % (x) for x in range(1, 5)]].squeeze()]
-                    closest_date = previous_dates[np.argmin([abs(date - sample.collection_date) for date in earlier_dates])]
-
-                    # Annotate previous treatment date
-                    sample.previous_treatment_date = string_to_date(closest_date)
-                    # Annotate time since treatment
-                    sample.time_since_treatment = sample.collection_date - string_to_date(closest_date)
-
-                    # Get closest clinical "timepoint", annotate response
-                    closest_timepoint = [tp for tp in range(1, 5) if closest_date == sample_c["treatment_%i_date" % tp]][0]
-
-                    sample.treatment_type = sample_c['treatment_%i_regimen' % closest_timepoint]
-                    sample.treatment_response = sample_c['treatment_%i_response' % closest_timepoint]
-
-            # Annotate relapses
-            # are there previous timepoints with good response?
-            # Get previous clinical "timepoints", annotate response
-            if len(earlier_dates) > 0:
-                closest_timepoint = [tp for tp in range(1, 5) if closest_date == sample_c["treatment_%i_date" % tp]][0]
-
-                # Annotate with previous known response
-                sample.previous_response = sample_c['treatment_%i_response' % closest_timepoint]
-
-                # if prior had bad response, mark current as relapse
-                if sample_c['treatment_%i_response' % closest_timepoint] in ["CR", "GR"]:
-                    sample.relapse = True
-                else:
-                    sample.relapse = False
-            else:
-                sample.relapse = False
-
-        # If any attribute is not set, set to None
-        for attr in ['diagnosis_collection', 'diagnosis_date', 'diagnosis_disease', 'time_since_treatment', 'treatment_type',
-                     'treatment_response', "treatment_active", "previous_treatment_date", "previous_response", 'relapse']:
-            if not hasattr(sample, attr):
-                setattr(sample, attr, None)
+            if sample.under_treatment:
+                sample.time_since_treatment = sample.collection_date - string_to_date(sample.treatment_date)
 
         # Append sample
         new_samples.append(sample)
     return new_samples
 
 
-def annotate_gender(samples, clinical):
+def annotate_samples(samples, attrs):
+    """
+    Annotate samples with all available traits.
+    """
     new_samples = list()
-
     for sample in samples:
-        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
-            _id = name_to_sample_id(sample.name)
-            if clinical.loc[clinical['sample_id'] == _id, 'patient_gender'].tolist()[0] == "F":
-                sample.patient_gender = "F"
-            elif clinical.loc[clinical['sample_id'] == _id, 'patient_gender'].tolist()[0] == "M":
-                sample.patient_gender = "M"
-            else:
-                sample.patient_gender = None
-        else:
-            sample.patient_gender = None
+        # If any attribute is not set, set to NaN
+        for attr in attrs:
+            if not hasattr(sample, attr):
+                setattr(sample, attr, pd.np.nan)
         new_samples.append(sample)
-    return new_samples
 
-
-def annotate_mutations(samples, clinical):
-    new_samples = list()
-
+    # read in file with IGHV group of samples selected for ChIPmentation
+    selected = pd.read_csv(os.path.join("metadata", "selected_samples.tsv"), sep="\t").astype(str)
+    # annotate samples with the respective IGHV group
     for sample in samples:
-        if sample.cellLine == "CLL" and sample.technique == "ATAC-seq":
-            _id = name_to_sample_id(sample.name)
-            sample.mutations = clinical[clinical['sample_id'] == _id]['mutations'].tolist()[0]
+        group = selected[
+            (selected["patient_id"].astype(str) == str(sample.patient_id)) &
+            (selected["sample_id"].astype(str) == str(sample.sample_id))
+        ]["sample_cluster"]
+        if len(group) == 1:
+            sample.ighv_group = group.squeeze()
         else:
-            sample.mutations = None
-        new_samples.append(sample)
-    return new_samples
+            sample.ighv_group = pd.np.nan
+
+    return annotate_clinical_traits(annotate_disease_treatments(new_samples))
 
 
-def piq_prepare_motifs(motif_file="data/jaspar_human_motifs.txt", n_motifs=366):
+def piq_prepare_motifs(motif_file="data/external/jaspar_human_motifs.txt", n_motifs=366):
     """
     """
     cmds = list()
@@ -248,6 +182,42 @@ def piq_footprint_single(bam_cache, motif_number, tmp_dir, results_dir):
     return cmd
 
 
+def piq_footprint_background_single(bam_cache, background_cache, motif_number, tmp_dir, results_dir):
+    """
+    Footprint using PIQ.
+    """
+    cmd = """
+    Rscript ~/workspace/piq-single/pertf.bg.r"""
+    cmd += " ~/workspace/piq-single/common.r"
+    cmd += " /scratch/users/arendeiro/piq/motif.matches/"
+    cmd += " " + tmp_dir
+    cmd += " " + results_dir
+    cmd += " " + bam_cache
+    cmd += " " + background_cache
+    cmd += " " + str(motif_number)
+    cmd += """
+"""
+    return cmd
+
+
+def piq_footprint_differential_single(bam_cache1, bam_cache2, motif_number, tmp_dir, results_dir):
+    """
+    Footprint using PIQ.
+    """
+    cmd = """
+    Rscript ~/workspace/piq-single/pertf.bg.r"""
+    cmd += " ~/workspace/piq-single/common.r"
+    cmd += " /scratch/users/arendeiro/piq/motif.matches/"
+    cmd += " " + tmp_dir
+    cmd += " " + results_dir
+    cmd += " " + bam_cache1
+    cmd += " " + bam_cache2
+    cmd += " " + str(motif_number)
+    cmd += """
+"""
+    return cmd
+
+
 def run_merged(feature, bam_files, group_label):
     merge_dir = os.path.abspath(os.path.join(data_dir, "_".join(["merged-samples", feature, group_label])))
     if not os.path.exists(merge_dir):
@@ -277,6 +247,38 @@ def run_merged(feature, bam_files, group_label):
     """
     # prepare cache
     cmd += piq_prepare_bams([merged_bam], merged_cache)
+
+    # slurm footer
+    cmd += tk.slurmFooter()
+
+    # write job to file
+    with open(job_file, 'w') as handle:
+        handle.writelines(textwrap.dedent(cmd))
+
+    # append file to jobs
+    return job_file
+
+
+def prepare_background(bam_file):
+    out_dir = os.path.abspath(os.path.join(data_dir, "footprinting_background"))
+    if not os.path.exists(out_dir):
+        os.mkdir(out_dir)
+
+    out_cache = os.path.join(out_dir, "footprinting_background.RData")
+    job_file = os.path.join(out_dir, "footprinting_background.slurm.sh")
+
+    # Build job
+    cmd = tk.slurmHeader(
+        "footprinting_background", os.path.join(out_dir, "slurm.log"),
+        cpusPerTask=24, queue="longq", time="7-12:00:00", memPerCpu=8000
+    )
+
+    # stupid PIQ hard-coded links
+    cmd += """
+    cd /home/arendeiro/workspace/piq-single/
+    """
+    # prepare cache
+    cmd += piq_prepare_bams([bam_file], out_cache)
 
     # slurm footer
     cmd += tk.slurmFooter()
@@ -336,9 +338,9 @@ def footprint(feature, group_label, motif_numbers):
 
 def tfbs_to_gene(bed_file):
     # read in gene body + promoter info
-    promoter_and_genesbody = pybedtools.BedTool("data/ensembl.promoter_and_genesbody.bed")
+    promoter_and_genesbody = pybedtools.BedTool("data/external/ensembl.promoter_and_genesbody.bed")
     # read in TSS info
-    tss = pybedtools.BedTool("data/ensembl.tss.bed")
+    tss = pybedtools.BedTool("data/external/ensembl.tss.bed")
     # columns
     columns = ["chrom", "start", "end", "pwm", "shape", "strand", "score", "purity",
                "chrom_gene", "start_gene", "end_gene", "gene", "transcript", "strand_gene"]
@@ -505,36 +507,16 @@ scratch_dir = os.path.join("/scratch/users/arendeiro/piq")
 results_dir = os.path.join('.', "results")
 plots_dir = os.path.join(results_dir, "plots")
 
-# Get clinical info
-clinical = pd.read_csv(os.path.join("metadata", "clinical_annotation.csv"))
-
 # Start project
-# prj = pickle.load(open("prj.pickle", 'rb'))
-prj = Project("cll-patients")
-prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
+prj = Project("metadata/project_config.yaml")
+prj.add_sample_sheet()
 
-# Annotate with clinical data
-prj.samples = annotate_igvh_mutations(prj.samples, clinical)
-prj.samples = annotate_treatments(prj.samples, clinical)
-prj.samples = annotate_mutations(prj.samples, clinical)
-prj.samples = annotate_gender(prj.samples, clinical)
-
-# Start analysis object
-# only with ATAC-seq samples that passed QC
-samples_to_exclude = [
-    'CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19',
-    'CLL_ATAC-seq_5186_1-5-57350_ATAC17-4_hg19',
-    'CLL_ATAC-seq_4784_1-5-52817_ATAC17-6_hg19',
-    'CLL_ATAC-seq_981_1-5-42480_ATAC16-6_hg19',
-    'CLL_ATAC-seq_5277_1-5-57269_ATAC17-8_hg19',
-    'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19',
-    'CLL_ATAC-seq_5147_1-5-48105_ATAC17-2_hg19',
-    'CLL_ATAC-seq_4621_1-5-36904_ATAC16-2_hg19']  # 'CLL_ATAC-seq_4851_1-5-45960_ATAC29-6_hg19']
-samples = [sample for sample in prj.samples if sample.cellLine == "CLL" and sample.technique == "ATAC-seq" and sample.name not in samples_to_exclude]
-
+# annotated samples with a few more things:
+prj.samples = annotate_samples(prj.samples, prj.sheet.df.columns.tolist())
+samples = prj.samples
 
 # MOTIFS FOR PIQ
-motifs_file = "data/jaspar_human_motifs.txt"
+motifs_file = "data/external/jaspar_human_motifs.txt"
 n_motifs = 366
 
 # prepare motifs for footprinting (done once)
@@ -566,6 +548,9 @@ features = {
 
 jobs = list()
 
+# PREPARE R CACHE FROM BACKGROUND READS
+jobs.append(prepare_background("/scratch/users/arendeiro/PGA1Nextera/PGA_0001_Nextera-2.bam"))
+
 # all CLL samples
 jobs.append(run_merged("all", [sample.filtered for sample in samples], "all"))
 
@@ -578,7 +563,6 @@ for i, (feature, (group1, group2)) in enumerate(features.items()):
     # append file to jobs
     jobs.append(run_merged(feature, g1, str(group1)))
     jobs.append(run_merged(feature, g2, str(group2)))
-
 
 # untreated vs 1st line chemotherapy +~ B cell antibodies
 g1 = [sample.filtered for sample in samples if not sample.treatment_active and not sample.relapse]
@@ -642,7 +626,7 @@ for job in jobs:
 # get motifs
 n_motifs = 366
 motif_numbers = range(1, n_motifs + 1)
-motifs_mapping = "data/jaspar_human_motifs.id_mapping.txt"
+motifs_mapping = "data/external/jaspar_human_motifs.id_mapping.txt"
 df = pd.read_table(motifs_mapping, header=None)
 number2tf = dict(zip(df[0], df[2]))
 
@@ -724,7 +708,7 @@ for sample in samples:
 
 # submit jobs (to footprint)
 try:
-    for job in jobs[500:]:
+    for job in jobs:
         import time
         from subprocess import Popen, PIPE
 

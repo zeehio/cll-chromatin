@@ -76,12 +76,12 @@ os.system("mv {} ../data/{}".format(re.sub(".gz", "", blacklist)))
 
 # Get ensembl genes from grch37 and hg19 chromosomes from UCSC (you get introns this way)
 regions = [
-    "./data/ensembl_tss.bed",
-    "./data/ensembl_tss2kb.bed",
-    "./data/ensembl_utr5.bed",
-    "./data/ensembl_exons.bed",
-    "./data/ensembl_introns.bed",
-    "./data/ensembl_utr3.bed",
+    "data/external/ensembl_tss.bed",
+    "data/external/ensembl_tss2kb.bed",
+    "data/external/ensembl_utr5.bed",
+    "data/external/ensembl_exons.bed",
+    "data/external/ensembl_introns.bed",
+    "data/external/ensembl_utr3.bed",
 ]
 
 # remove annotation after Ensembl transcriptID
@@ -97,7 +97,7 @@ for i, region in enumerate(regions[1:]):
         genes = r
     else:
         genes.cat(r)
-genes.sort().saveas("./data/ensembl_genes.bed")
+genes.sort().saveas("data/external/ensembl_genes.bed")
 
 # Make bed file
 genes = pd.read_csv("data/ensGene.txt", sep="\t", header=None)
@@ -105,14 +105,14 @@ genes = genes[[2, 4, 5, 12, 1, 3]]
 genes.columns = ['chrom', 'start', 'end', 'gene', 'transcript', 'strand']
 
 # Annotate with gene names
-names = pd.read_csv("data/ensemblToGeneName.txt", sep="\t", header=None)
+names = pd.read_csv("data/external/ensemblToGeneName.txt", sep="\t", header=None)
 names.columns = ['transcript', 'name']
 annotation = pd.merge(genes, names)
-annotation.to_csv("data/GRCh37_hg19_ensembl_genes.bed", sep="\t", index=False, header=False)
+annotation.to_csv("data/external/GRCh37_hg19_ensembl_genes.bed", sep="\t", index=False, header=False)
 
 # Get TSSs
 tsss = annotation.apply(get_tss, axis=1)
-tsss.to_csv("../data/GRCh37_hg19_ensembl_genes.tss.bed", sep="\t", index=False, header=False)
+tsss.to_csv(".data/external/GRCh37_hg19_ensembl_genes.tss.bed", sep="\t", index=False, header=False)
 # sort bed file
 tsss = pybedtools.BedTool("../data/GRCh37_hg19_ensembl_genes.tss.bed")
 tsss.sort().saveas("../data/GRCh37_hg19_ensembl_genes.tss.bed")
@@ -147,13 +147,13 @@ os.system("mv E032_15_coreMarks_mnemonics.bed ../data/E032_15_coreMarks_mnemonic
 # Footprinting
 # get all jaspar motifs
 "wget http://jaspar.genereg.net/html/DOWNLOAD/JASPAR_CORE/pfm/nonredundant/pfm_all.txt"
-jaspar = motifs.parse(open("data/pfm_all.txt", 'r'), "jaspar")
+jaspar = motifs.parse(open("data/external/pfm_all.txt", 'r'), "jaspar")
 # motif annotation
 "wget http://jaspar.genereg.net/html/DOWNLOAD/database/MATRIX.txt"
-annot = pd.read_table("data/MATRIX.txt", names=["index", "db", "id", 0, "TF"])
+annot = pd.read_table("data/external/MATRIX.txt", names=["index", "db", "id", 0, "TF"])
 # get species annotation
 "wget http://jaspar.genereg.net/html/DOWNLOAD/database/MATRIX_SPECIES.txt"
-spec = pd.read_table("data/MATRIX_SPECIES.txt", names=["index", "species_id"])
+spec = pd.read_table("data/external/MATRIX_SPECIES.txt", names=["index", "species_id"])
 # merge both
 annot = pd.merge(annot, spec, on=['index'])
 
@@ -172,11 +172,11 @@ human_annot = human_annot[
 human_motifs = [m for m in jaspar if m.base_id in human_annot['id'].tolist()]
 
 # write back
-with open("data/jaspar_human_motifs.txt", "w") as handle:
+with open("data/external/jaspar_human_motifs.txt", "w") as handle:
     handle.write(motifs.jaspar.write(human_motifs, format='jaspar'))
 
 # write mapping of TF index and name
-with open("data/jaspar_human_motifs.id_mapping.txt", "w") as handle:
+with open("data/external/jaspar_human_motifs.id_mapping.txt", "w") as handle:
     handle.write("\n".join(["\t".join([str(i), human_motifs[i - 1].base_id, human_motifs[i - 1].name.split(";")[1].upper()]) for i in range(1, 1 + len(human_motifs))]))
 
 
@@ -199,7 +199,7 @@ names = [
     "cdsEndStat",  # enum('none','unk','incmpl','cmpl')
     "exonFra"  # Exon frame offsets {0,1,2}
 ]
-genes = pd.read_table("data/ensGene.txt", names=names).reset_index(drop=True)
+genes = pd.read_table("data/external/ensGene.txt", names=names).reset_index(drop=True)
 genes = genes[['chrom', 'txStart', 'txEnd', 'name2', 'name', 'strand']]
 genes.columns = ['chrom', 'start', 'end', 'ensembl_gene', 'ensembl_transcript', 'strand']
 
@@ -209,17 +209,17 @@ genes = genes.ix[indexes.unique().tolist()]
 
 # make region with TSS
 tss = genes.apply(get_tss, axis=1)
-tss.to_csv("data/ensembl.tss.bed", sep="\t", index=False, header=False)
+tss.to_csv("data/external/ensembl.tss.bed", sep="\t", index=False, header=False)
 
 # make region with promoter + gene body
 promoter_and_genesbody = genes.apply(get_promoter_and_genebody, axis=1)
-promoter_and_genesbody.to_csv("data/ensembl.promoter_and_genesbody.bed", sep="\t", index=False, header=False)
+promoter_and_genesbody.to_csv("data/external/ensembl.promoter_and_genesbody.bed", sep="\t", index=False, header=False)
 
 
 # Get GOtermID - GOtermDescription mapping
 # download data from Biomart (for some reason the GOterm name cannot be get automatically - probably I cannot figure out how :s)
 # http://www.ensembl.org/biomart/martview/6451fcd5296302994382deee7bd9c8eb?VIRTUALSCHEMANAME=default&ATTRIBUTES=hsapiens_gene_ensembl.default.feature_page.name_1006|hsapiens_gene_ensembl.default.feature_page.go_id&FILTERS=&VISIBLEPANEL=resultspanel
-"mv x data/goID_goName.csv"
+"mv x data/external/goID_goName.csv"
 
 
 # Puente 2015
@@ -227,7 +227,7 @@ promoter_and_genesbody.to_csv("data/ensembl.promoter_and_genesbody.bed", sep="\t
 cmds = list()
 cmds.append("wget http://www.nature.com/nature/journal/vaop/ncurrent/extref/nature14666-s3.zip")
 cmds.append("unzip nature14666-s3.zip")
-supFile = "data/Puente2015.supplementaryTable2.csv"
+supFile = "data/external/Puente2015.supplementaryTable2.csv"
 cmds.append("mv supplementaryTable2.tsv %s" % supFile)
 for cmd in cmds:
     os.system(cmd)
@@ -266,7 +266,7 @@ df2 = pd.merge(df, mapping, on=['PUBMEDID'])
 # subset columns
 df3 = df2[['CHR_ID', 'CHR_POS', 'PUBMEDID', 'DISEASE/TRAIT', 'PARENT', 'SNPS', 'STRONGEST SNP-RISK ALLELE', 'P-VALUE', 'OR or BETA']]
 df3.columns = ['chr', 'pos', 'pubmed_id', 'trait', 'ontology_group', 'snp', 'snp_strongest_allele', 'p_value', 'beta']
-df3.to_csv("gwas_catalog.csv", index=False)
+df3.to_csv("data/external/gwas_catalog.csv", index=False)
 
 # filter on p-value
 df4 = df3[df3['p_value'] < 5e-8]
@@ -297,7 +297,7 @@ for group in df4['ontology_group'].unique():
 
 # save regionset index
 regionset_index.columns = ["species", "description", "dataSource", "filename"]
-regionset_index.to_csv("index.txt", sep="\t", index=False)
+regionset_index.to_csv("data/external/index.txt", sep="\t", index=False)
 
 
 # CD19 DNase, Roadmap

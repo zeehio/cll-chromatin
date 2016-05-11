@@ -5,7 +5,7 @@ This script makes plots to describe the cohort.
 """
 
 import os
-# from pipelines.models import Project
+from pipelines.models import Project
 import pandas as pd
 import numpy as np
 import matplotlib
@@ -13,10 +13,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import Counter
 import re
-from lifelines import KaplanMeierFitter
-from lifelines import NelsonAalenFitter
-from lifelines.statistics import logrank_test
-
 
 # Set settings
 pd.set_option("date_dayfirst", True)
@@ -29,14 +25,14 @@ matplotlib.rc('font', serif='Helvetica Neue')
 matplotlib.rc('text', usetex='false')
 
 
-# # start project
-# prj = Project('cll-patients')
-# prj.addSampleSheet("metadata/sequencing_sample_annotation.csv")
+# start project
+prj = Project("metadata/annotation.csv")
+prj.add_sample_sheet()
 
 plots_dir = os.path.join('results', 'plots')
 
 # Get clinical info
-clinical = pd.read_csv(os.path.join('metadata', 'clinical_annotation.csv'))
+clinical = pd.read_csv(os.path.join('metadata', 'annotation.csv'))
 clinical.index = clinical['patient_id']
 
 # replace dubious/inconsistent
