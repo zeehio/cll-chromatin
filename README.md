@@ -1,11 +1,11 @@
 ### Chromatin accessibility maps of chronic lymphocytic leukemia identify subtype-specific epigenome signatures and transcription regulatory networks
 
 André F. Rendeiro<sup>\*</sup>, Christian Schmidl<sup>\*</sup>, Jonathan C. Strefford<sup>\*</sup>, Renata Walewska, Zadie Davis, Matthias Farlik, David Oscier, Christoph Bock
-Chromatin accessibility maps of chronic lymphocytic leukemia identify subtype-specific epigenome signatures and transcription regulatory networks.
+Chromatin accessibility maps of chronic lymphocytic leukemia identify subtype-specific epigenome signatures and transcription regulatory networks. Nat. Commun. 7:11938 doi: 10.1038/ncomms11938 (2016).
 
 <sup>\*</sup>Shared first authors
 
-**Paper**: [http://dx.doi.org/](http://dx.doi.org/)
+**Paper**: [http://dx.doi.org/10.1038/ncomms11938](http://dx.doi.org/10.1038/ncomms11938)
 
 **Website**: [cll-chromatin.computational-epigenetics.org](http://cll-chromatin.computational-epigenetics.org)
 
