@@ -5,7 +5,7 @@ matplotlib
 seaborn
 multiprocessing
 pybedtools
-parmap
+parmap==1.5.1
 pysam
 pandas>=0.16
 numpy

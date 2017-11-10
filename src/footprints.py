@@ -176,7 +176,7 @@ def get_reads_in_intervals(bam, intervals, strand_specific=False):
         intervals.values(),
         bam,
         strand_specific=strand_specific,
-        parallel=True)
+        pm_parallel=True)
 
     if not strand_specific:
         coverage = np.vstack(coverage)

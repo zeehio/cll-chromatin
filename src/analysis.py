@@ -426,7 +426,7 @@ class Analysis(object):
                         count_reads_in_intervals,
                         [sample.filtered for sample in samples],
                         sites_str,
-                        parallel=True
+                        pm_parallel=True
                     )
             ),
             index=[sample.name for sample in samples]
@@ -3417,7 +3417,7 @@ def characterize_regions_chromatin(analysis, traits, extend=False):
                         count_reads_in_intervals,
                         [sample.filtered for sample in samples],
                         sites_str,
-                        parallel=True
+                        pm_parallel=True
                     )
             ),
             index=[sample.name for sample in samples]
